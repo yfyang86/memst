@@ -1,0 +1,18 @@
+[package]
+name = "memst-lib"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+memst-core = { path = "../memst-core" }
+pyo3 = { version = "0.22.6", optional = true, features = ["extension-module"] }
+
+[features]
+python = ["pyo3"]
+
+[dev-dependencies]
+pyo3 = { version = "0.22.6", features = ["auto-initialize"] }
