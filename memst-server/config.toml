@@ -1,0 +1,36 @@
+# MemSt Configuration File
+# Copy this to config.toml in your project root or memst-store directory
+
+[llm]
+## LLM provider type: openai, claude, lmstudio, ollama
+type = "openai"
+## API endpoint URL (OpenAI-compatible)
+## This is a [VLLM] example with GPT-OSS
+api_url = "http://127.0.0.1:1378/v1"
+## Model name or path
+model = "/workspace/models/openai-mirror/gpt-oss-120b/"
+## Request timeout in seconds
+timeout = 60
+## Maximum tokens to generate
+max_tokens = 8192
+## Temperature (0.0-2.0)
+temperature = 0.7
+## API key (can be empty/null for local LLMs)
+api_key = ""
+
+[embedding]
+## Embedding provider type: openai, claude, lmstudio, ollama
+type = "lmstudio"
+## API endpoint URL
+## This is an [LM studio] example: 
+api_url = "http://127.0.0.1:1378/v1/embeddings"
+## Model name
+model = "text-embedding-bge_m3"
+## Request timeout in seconds
+timeout = 30
+## Expected embedding dimension (for validation, optional)
+expected_dimension = 1024
+
+[server]
+## Session data storage path
+store_path = "/tmp/data"

@@ -383,7 +383,7 @@ class TestConfiguration:
         # Configuration from Readme.md:
         llm_config = {
             "type": "openai format",
-            "url": "http://172.16.180.69:9536/v1",
+            "url": "http://127.0.0.1:1378/v1",
             "apikey": "sk",
             "model": "/workspace/models/openai-mirror/gpt-oss-120b/",
         }

@@ -580,13 +580,14 @@ Create a `config.toml` file with your LLM and embedding settings:
 
 ```toml
 # MemSt Configuration File
-# Copy this to config.toml and modify as needed
+# Copy this to config.toml in your project root or memst-store directory
 
 [llm]
 ## LLM provider type: openai, claude, lmstudio, ollama
 type = "openai"
 ## API endpoint URL (OpenAI-compatible)
-api_url = "http://172.16.180.69:9536/v1"
+## This is a [VLLM] example with GPT-OSS
+api_url = "http://127.0.0.1:1378/v1"
 ## Model name or path
 model = "/workspace/models/openai-mirror/gpt-oss-120b/"
 ## Request timeout in seconds
@@ -602,6 +603,7 @@ api_key = ""
 ## Embedding provider type: openai, claude, lmstudio, ollama
 type = "lmstudio"
 ## API endpoint URL
+## This is an [LM studio] example:
 api_url = "http://127.0.0.1:1378/v1/embeddings"
 ## Model name
 model = "text-embedding-bge_m3"
@@ -609,6 +611,11 @@ model = "text-embedding-bge_m3"
 timeout = 30
 ## Expected embedding dimension (for validation, optional)
 expected_dimension = 1024
+
+[server]
+## Session data storage path
+store_path = "/tmp/data"
+
 ```
 
 #### Loading Configuration in Rust
