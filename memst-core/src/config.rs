@@ -222,7 +222,7 @@ pub const EXAMPLE_CONFIG: &str = r#"# MemSt Configuration File
 ## LLM provider type: openai, claude, lmstudio, ollama
 type = "openai"
 ## API endpoint URL (OpenAI-compatible)
-api_url = "http://172.16.180.69:9536/v1"
+api_url = "http://127.0.0.1:1378/v1"
 ## Model name or path
 model = "/workspace/models/openai-mirror/gpt-oss-120b/"
 ## Request timeout in seconds
