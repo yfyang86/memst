@@ -61,7 +61,7 @@ print(len(messages))
 
 ### Web Server (FastAPI + React UI)
 
-![ui-chat](./assets/figures/memst-ui-chat.png')
+![ui-chat](./assets/figures/memst-ui-chat.png)
 
 
 ```bash
