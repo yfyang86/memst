@@ -91,3 +91,10 @@ memst-server/data/*
 
 # Temp PID
 memst-server/server.pid
+
+*.log
+
+
+PRD*
+PRD*/*
+

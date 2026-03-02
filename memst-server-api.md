@@ -2,7 +2,7 @@
 
 This document describes the REST API for the MemSt backend server.
 
-**Base URL:** `http://127.0.0.1:8193/api/v1`
+**Base URL (Default):** `http://127.0.0.1:8193/api/v1`
 
 **Note:** This documentation reflects the API running on port 8193 by default. Ensure your `config.toml` has the correct port and CORS origins configured.
 

@@ -867,21 +867,6 @@ async def chat_stream(session_id: str, request: ChatRequest):
                         _memst_client.add_message(session_id, "user", user_content)
                         _memst_client.add_message(session_id, "assistant", accumulated_content)
 
-                        # Save to working memory
-                        user_message = {
-                            "id": str(uuid.uuid4()),
-                            "session_id": session_id,
-                            "role": "user",
-                            "content": user_content,
-                            "timestamp": datetime.utcnow().isoformat(),
-                        }
-                        assistant_message = {
-                            "id": str(uuid.uuid4()),
-                            "session_id": session_id,
-                            "role": "assistant",
-                            "content": accumulated_content,
-                            "timestamp": datetime.utcnow().isoformat(),
-                        }
                         # Save to working memory with correct parameter order
                         _save_to_working_memory(_memst_client, session_id, user_content, accumulated_content)
 
