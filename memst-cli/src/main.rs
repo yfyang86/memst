@@ -5,7 +5,7 @@ use memst_core::search::SearchQuery;
 use memst_core::store::SessionStore;
 use memst_core::types::{
     Entity, EntityQuery, MemoryItem, MemoryQuery, MemoryTier, Message, OperationQuery, Relationship,
-    RelationshipQuery, Role, SessionMetadata, SessionSummary,
+    Role, SessionMetadata,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -726,24 +726,29 @@ fn main() -> Result<()> {
 
         Command::Graph { command } => {
             let store = SessionStore::open(&args.store)?;
-            let session_path = store.session_path(*session_id);
+            
+            // Extract session_id from the command
+            let session_id = match &command {
+                GraphCommand::AddEntity { session_id, .. } => *session_id,
+                GraphCommand::AddRel { session_id, .. } => *session_id,
+                GraphCommand::Query { session_id, .. } => *session_id,
+                GraphCommand::Stats { session_id } => *session_id,
+            };
+            
+            let session_path = store.session_path(session_id);
             let mut graph = KnowledgeGraph::new(&session_path)?;
 
             match command {
                 GraphCommand::AddEntity {
-                    session_id: _,
+                    session_id,
                     name,
                     entity_type,
                     attributes,
                 } => {
-                    let mut entity = Entity::new(name, entity_type);
+                    let mut entity = Entity::new(name, entity_type, *session_id);
                     if let Some(attrs) = attributes {
                         if let Ok(attrs_map) = serde_json::from_str::<serde_json::Value>(attrs) {
-                            if let Some(attrs_obj) = attrs_map.as_object() {
-                                for (k, v) in attrs_obj {
-                                    entity.attributes.insert(k.clone(), v.to_string());
-                                }
-                            }
+                            entity = entity.with_attributes(attrs_map);
                         }
                     }
                     let added = graph.add_entity(entity)?;
@@ -751,7 +756,7 @@ fn main() -> Result<()> {
                 }
 
                 GraphCommand::AddRel {
-                    session_id: _,
+                    session_id,
                     subject,
                     predicate,
                     object,
@@ -767,7 +772,7 @@ fn main() -> Result<()> {
                         source_message_id: None,
                         created_at: chrono::Utc::now(),
                     };
-                    let added = graph.add_relationship(relationship)?;
+                    let _added = graph.add_relationship(relationship)?;
                     println!(
                         "Added relationship: {} --[{}]--> {}",
                         subject, predicate, object
@@ -781,7 +786,7 @@ fn main() -> Result<()> {
                     json,
                 } => {
                     let query = EntityQuery::new().with_limit(*limit);
-                    let entities = graph.query_entities(query)?;
+                    let entities = graph.find_entities(query);
 
                     let filtered: Vec<_> = if let Some(et) = entity_type {
                         entities
@@ -825,12 +830,12 @@ fn main() -> Result<()> {
                 }
 
                 GraphCommand::Stats { session_id: _ } => {
-                    let stats = graph.graph_stats();
+                    let stats = graph.stats();
                     println!("Graph Statistics for Session");
                     println!("==============================");
                     println!("Total Entities: {}", stats.entity_count);
                     println!("Total Relationships: {}", stats.relationship_count);
-                    println!("Entity Types: {}", stats.entity_type_count);
+                    println!("Entity Types: {}", stats.entity_types.len());
                 }
             }
         }

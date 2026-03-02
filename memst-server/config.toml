@@ -8,11 +8,11 @@ type = "openai"
 ## This is a [VLLM] example with GPT-OSS
 api_url = "http://127.0.0.1:1378/v1"
 ## Model name or path
-model = "/workspace/models/openai-mirror/gpt-oss-120b/"
+model = "qwen3-8b-128k-q8_0.gguf"
 ## Request timeout in seconds
 timeout = 60
 ## Maximum tokens to generate
-max_tokens = 8192
+max_tokens = 8193
 ## Temperature (0.0-2.0)
 temperature = 0.7
 ## API key (can be empty/null for local LLMs)
@@ -32,5 +32,9 @@ timeout = 30
 expected_dimension = 1024
 
 [server]
+## Server port
+port = 8193
 ## Session data storage path
 store_path = "/tmp/data"
+## CORS origins (comma-separated list of allowed origins, or "*" for all)
+cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
