@@ -88,3 +88,6 @@ third/nanobot/*
 # database/static data
 memst-server/data/
 memst-server/data/*
+
+# Temp PID
+memst-server/server.pid

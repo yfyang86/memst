@@ -105,7 +105,11 @@ Available environment variables:
 - `VITE_API_PORT` - Backend API port (default: `8193`)
 - `VITE_DEV_PORT` - Frontend dev server port (default: `3000`)
 
-**Note:** Ensure `cors_origins` is set in server's `config.toml` to allow frontend access:
+**Note:** Ensure `cors_origins` is set in server's `config.toml` to allow frontend access.
+
+### API Documentation
+
+For detailed API documentation, see [memst-server-api.md](memst-server-api.md).
 
 ### Rust
 
