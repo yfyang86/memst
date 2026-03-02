@@ -1,5 +1,6 @@
 """Nanobot client wrapper for agent-based conversations."""
 
+import sys
 import re
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -8,14 +9,15 @@ import json
 
 # Add nanobot to path
 NANOBOT_PATH = Path(__file__).parent.parent.parent / "third" / "nanobot"
-import sys
 if str(NANOBOT_PATH) not in sys.path:
     sys.path.insert(0, str(NANOBOT_PATH))
+
 
 NANOBOT_AVAILABLE = False
 AgentLoop = None
 LiteLLMProvider = None
 MessageBus = None
+
 
 # Global config path override
 _NANOBOT_CONFIG_PATH: str | None = None
@@ -29,6 +31,7 @@ def set_nanobot_config_path(path: str | None) -> None:
     global _nanobot_client  # noqa: F824
     if _nanobot_client is not None:
         _nanobot_client._config = None
+
 
 try:
     from nanobot.agent.loop import AgentLoop
