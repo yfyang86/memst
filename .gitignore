@@ -2,6 +2,13 @@
 .idea
 .vscode
 
+## Frontend (memst-ui)
+memst-ui/node_modules/
+memst-ui/dist/
+memst-ui/.env
+memst-ui/.env.local
+# Note: config.local.ts is deprecated, use .env.local instead
+
 ## Core latex/pdflatex auxiliary files:
 *.aux
 *.lof
@@ -70,3 +77,14 @@ __pycache__
 
 .venv
 */.venv
+
+trunc
+trunc/*
+
+# Third Party Nanobot
+third/nanobot
+third/nanobot/*
+
+# database/static data
+memst-server/data/
+memst-server/data/*

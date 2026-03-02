@@ -1,0 +1,20 @@
+[workspace]
+members = [
+    "memst-core",
+    "memst-cli",
+    "memst-py",
+    "memst-lib",
+]
+exclude = [
+    "memst-ui/src-tauri",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.93"
+authors = ["Yifan Yang <yfyang.86@hotmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/yfyang86/memst"
+description = "Git-like memory architecture for LLM session management"

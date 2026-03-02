@@ -668,16 +668,122 @@ Notes:
 
 MemSt includes a web-based graphical interface built with React and TypeScript for easy session management, chat, and search operations.
 
-### Starting the Web Server
+### Setup and Installation
+
+#### 1. Backend Server Setup
 
 ```bash
-# Start the web server (default: http://127.0.0.1:8192)
+# Navigate to the server directory
 cd memst-server
-python -m memst_server.main
 
-# With custom config
-MEMST_CONFIG_PATH=/path/to/config.toml python -m memst_server.main
+# Create a virtual environment with Python 3.12 (recommended)
+uv venv --python 3.12
+
+# Install dependencies
+uv pip install fastapi uvicorn duckdb python-dotenv pydantic pydantic-settings httpx toml
+
+# Install nanobot (local dependency)
+uv pip install -e ../third/nanobot
+
+# Install maturin for building Python bindings
+uv pip install maturin
+
+# Build and install memst-py module
+cd ../memst-py
+VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop
+
+# Return to server directory
+cd ../memst-server
 ```
+
+#### 2. Configure CORS
+
+Edit `memst-server/config.toml` to add your frontend origin:
+
+```toml
+[server]
+## Server port
+port = 8193
+## Session data storage path
+store_path = "/tmp/data"
+## CORS origins (comma-separated list of allowed origins, or "*" for all)
+cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+```
+
+#### 3. Start the Backend
+
+```bash
+cd memst-server
+PYTHONPATH=src .venv/bin/python -m memst_server.main
+
+# Or with custom config
+MEMST_CONFIG_PATH=/path/to/config.toml PYTHONPATH=src .venv/bin/python -m memst_server.main
+```
+
+#### 4. Start the Frontend
+
+```bash
+# In a new terminal
+cd memst-ui
+
+# Configure the API backend URL (optional)
+# By default, frontend connects to http://127.0.0.1:8193
+# Create .env.local to override defaults:
+
+echo 'VITE_API_HOST=127.0.0.1' > .env.local
+echo 'VITE_API_PORT=8193' >> .env.local
+
+# For a different backend server:
+# echo 'VITE_API_HOST=192.168.1.100' > .env.local
+# echo 'VITE_API_PORT=8193' >> .env.local
+# echo 'VITE_DEV_PORT=3001' >> .env.local
+
+# Start the development server
+npm run dev
+```
+
+The web UI will be available at `http://localhost:3000` and will communicate with the API at `http://127.0.0.1:8193`.
+
+**Frontend Configuration:**
+
+Create `.env.local` in the `memst-ui` directory to override default settings:
+
+```
+# .env.local in memst-ui directory
+VITE_API_HOST=127.0.0.1
+VITE_API_PORT=8193
+VITE_DEV_PORT=3000
+```
+
+Available environment variables:
+- `VITE_API_HOST` - Backend API host (default: `127.0.0.1`)
+- `VITE_API_PORT` - Backend API port (default: `8193`)
+- `VITE_DEV_PORT` - Frontend dev server port (default: `3000`)
+
+Note: `.env.local` is automatically ignored by git.
+
+### Troubleshooting
+
+#### Common Issues
+
+1. **ModuleNotFoundError: No module named 'memst_server'**
+   - Ensure `PYTHONPATH=src` is set before running the server
+
+2. **CORS Policy Error**
+   - Add your frontend origin to `cors_origins` in `config.toml`
+   - Restart the server after modifying config
+
+3. **Frontend Can't Connect to Backend**
+   - Check the API URL in `memst-ui/src/config.local.ts`
+   - Make sure the backend server is running
+   - Ensure CORS is configured on the server
+
+4. **SIGABRT / Library not loaded: libpython3.13.dylib**
+   - Recreate the venv with Python 3.12: `uv venv --python 3.12`
+   - Python 3.13 has known compatibility issues with some packages
+
+4. **memst module not available**
+   - Ensure memst-py is installed: `VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop`
 
 ### Web GUI Features
 
@@ -785,7 +891,7 @@ MemSt supports agent-based conversations with autonomous capabilities:
 
 **Creating an Agent Session:**
 ```bash
-curl -X POST http://127.0.0.1:8192/api/v1/agent/sessions \
+curl -X POST http://127.0.0.1:8193/api/v1/agent/sessions \
   -H "Content-Type: application/json" \
   -d '{"name": "Research Agent", "model": "gpt-4"}'
 ```
@@ -793,12 +899,12 @@ curl -X POST http://127.0.0.1:8192/api/v1/agent/sessions \
 **Chatting with an Agent:**
 ```bash
 # Non-streaming response
-curl -X POST http://127.0.0.1:8192/api/v1/agent/chat/{session_id} \
+curl -X POST http://127.0.0.1:8193/api/v1/agent/chat/{session_id} \
   -H "Content-Type: application/json" \
   -d '{"message": "Research the latest in Rust async"}'
 
 # Streaming response
-curl -X POST http://127.0.0.1:8192/api/v1/agent/chat/{session_id}/stream \
+curl -X POST http://127.0.0.1:8193/api/v1/agent/chat/{session_id}/stream \
   -H "Content-Type: application/json" \
   -d '{"message": "Write a summary of Rust async"}'
 ```
@@ -868,6 +974,11 @@ memst-server/       # FastAPI backend
 ```bash
 # Frontend development with hot reload
 cd memst-ui
+
+# Configure API URL (optional - defaults to http://127.0.0.1:8193)
+cp src/config.ts src/config.local.ts
+# Edit config.local.ts to change the backend URL
+
 npm run dev
 
 # Build for production
@@ -876,8 +987,10 @@ npm run build
 
 # Backend development
 cd memst-server
-python -m memst_server.main --reload
+PYTHONPATH=src .venv/bin/python -m memst_server.main --reload
 ```
+
+**Note:** Always set `PYTHONPATH=src` when running the backend to ensure the `memst_server` module can be found.
 
 ---
 
@@ -1357,6 +1470,72 @@ results = store.search(query, limit=10)
 ---
 
 ## Troubleshooting
+
+### Common Issues
+
+#### 1. Python Module Not Found
+
+If you get `ModuleNotFoundError: No module named 'memst_server'`:
+
+```bash
+# Ensure PYTHONPATH is set
+cd memst-server
+PYTHONPATH=src .venv/bin/python -m memst_server.main
+```
+
+#### 2. CORS Policy Errors
+
+If you see CORS errors in the browser console:
+
+```
+Access to fetch at 'http://127.0.0.1:8193/api/...' 
+from origin 'http://localhost:3000' has been blocked by CORS policy
+```
+
+**Fix:** Add your frontend origin to `config.toml`:
+
+```toml
+[server]
+cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+```
+
+Then restart the server.
+
+#### 3. Python 3.13 Compatibility Issues
+
+If you get `SIGABRT` or `Library not loaded: libpython3.13.dylib`:
+
+```bash
+# Recreate the virtual environment with Python 3.12
+cd memst-server
+rm -rf .venv
+uv venv --python 3.12
+uv pip install fastapi uvicorn duckdb python-dotenv pydantic pydantic-settings httpx toml
+uv pip install -e ../third/nanobot
+```
+
+#### 4. memst Module Not Available
+
+If you see "Warning: memst module not available":
+
+```bash
+# Build and install memst-py
+cd memst-py
+VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop
+```
+
+#### 5. Port Already in Use
+
+If port 8192/8193 is already in use:
+
+```bash
+# Check what's using the port
+lsof -i :8192
+
+# Change port in config.toml
+[server]
+port = 8194
+```
 
 ### Lock Errors
 

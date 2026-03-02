@@ -306,10 +306,6 @@ class NanobotClient:
         if model in self._agents:
             return self._agents[model]
 
-        # Get builtin skills directory
-        nanobot_path = Path(__file__).parent.parent.parent / "third" / "nanobot"
-        builtin_skills_dir = nanobot_path / "nanobot" / "skills"
-
         # Create new agent for this model
         provider = self._get_provider_for_model(model)
         bus = MessageBus()
@@ -319,7 +315,6 @@ class NanobotClient:
             provider=provider,
             workspace=self.workspace,
             model=model,
-            builtin_skills_dir=builtin_skills_dir,
         )
 
         # Cache it
