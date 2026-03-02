@@ -772,6 +772,10 @@ Available environment variables:
 
 Note: `.env.local` is automatically ignored by git.
 
+### API Documentation
+
+For detailed API documentation, see [memst-server-api.md](memst-server-api.md). This includes all REST endpoints, request/response formats, and curl examples.
+
 ### Troubleshooting
 
 #### Common Issues
@@ -784,7 +788,7 @@ Note: `.env.local` is automatically ignored by git.
    - Restart the server after modifying config
 
 3. **Frontend Can't Connect to Backend**
-   - Check the API URL in `memst-ui/src/config.local.ts`
+   - Check the API URL in `memst-ui/.env.local`
    - Make sure the backend server is running
    - Ensure CORS is configured on the server
 
