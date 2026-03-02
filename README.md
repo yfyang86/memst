@@ -158,6 +158,16 @@ PYTHONPATH=src .venv/bin/python -c "import memst; print(memst.__version__)"
 **Running the server:**
 
 ```bash
+# Option 1: Using the management script (recommended)
+./server.sh --start      # Start server
+./server.sh --stop       # Stop server
+./server.sh --restart    # Restart server
+./server.sh --status     # Check status
+./server.sh --check      # Validate configuration
+./server.sh --maintain   # Run maintenance checks (config validation, status, logs)
+./server.sh --logs       # View server logs
+
+# Option 2: Manual start
 cd memst-server
 
 # Set PYTHONPATH to include the src directory

@@ -713,6 +713,16 @@ cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 #### 3. Start the Backend
 
 ```bash
+# Option 1: Using the management script (recommended)
+./server.sh --start      # Start server
+./server.sh --stop       # Stop server
+./server.sh --restart    # Restart server
+./server.sh --status     # Check status
+./server.sh --check      # Validate configuration
+./server.sh --maintain   # Run maintenance checks (config validation, status, logs)
+./server.sh --logs       # View server logs
+
+# Option 2: Manual start
 cd memst-server
 PYTHONPATH=src .venv/bin/python -m memst_server.main
 
