@@ -7,6 +7,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+
 MemSt is a Rust workspace that provides:
 
 - A persistent session store for chat history and tiered memories
@@ -59,6 +60,9 @@ print(len(messages))
 ```
 
 ### Web Server (FastAPI + React UI)
+
+![ui-chat](./assets/figures/memst-ui-chat.png')
+
 
 ```bash
 # Terminal 1: Start the backend server
@@ -236,3 +240,8 @@ python -m pytest memst-py/tests
 ## License
 
 Apache License 2.0. See `LICENSE`.
+
+
+## Future work
+
+Currently, the `nanobot` in Web-frontend is just for illustration. We will further provide a `memst` backend for the project to enhance the memory management with full features. 
