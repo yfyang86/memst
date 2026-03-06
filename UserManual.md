@@ -1,1034 +1,394 @@
 # MemSt User Manual
 
-MemSt is a hybrid storage system for LLM session memory with full-text search, operations logging, and memory tier management.
+MemSt is a hybrid, searchable session memory library for LLM applications, written in Rust with Python bindings and a REST API server.
+
+Author: Yifan Yang <yfyang.86@hotmail.com>
+
+Date: 2025
+
+---
 
 ## Table of Contents
 
-1. [Installation](#installation)
-2. [Quick Start](#quick-start)
-3. [Architecture](#architecture)
-4. [CLI Commands](#cli-commands)
-5. [Search Features](#search-features)
-6. [Semantic & Hybrid Search](#semantic--hybrid-search-phase-12)
-7. [Configuration](#configuration)
-8. [Web GUI](#web-gui)
-9. [Git-Like Architecture](#git-like-architecture-phase-8)
-10. [Python Bindings](#python-bindings-phase-9)
+1. [Overview](#overview)
+2. [Installation](#installation)
+3. [Core Concepts](#core-concepts)
+4. [Sessions](#sessions)
+5. [Messages](#messages)
+6. [Memory Items](#memory-items)
+7. [Search](#search)
+8. [Git-Like Architecture (Phase 8)](#git-like-architecture-phase-8)
+9. [Context Assembly (Phase 9)](#context-assembly-phase-9)
+10. [Sleep-Time Consolidation (Phase 10)](#sleep-time-consolidation-phase-10)
+11. [Semantic Merge (Phase 11)](#semantic-merge-phase-11)
+12. [Skills (Phase 12)](#skills-phase-12)
+13. [Multi-Agent Support (Phase 13)](#multi-agent-support-phase-13)
+14. [MCP Adapter (Phase 14)](#mcp-adapter-phase-14)
+15. [Python Bindings](#python-bindings)
+16. [Configuration](#configuration)
+17. [CLI Reference](#cli-reference)
+18. [API Reference](#api-reference)
+
+---
+
+## Overview
+
+MemSt provides a session-based memory system for LLM applications with the following key features:
+
+| Feature | Description |
+|---------|-------------|
+| Session Storage | Store and retrieve chat sessions with metadata |
+| Message History | Append messages with roles (System, User, Assistant, Tool) |
+| Hybrid Search | Combine BM25 text search with HNSW vector search |
+| Git-Like Objects | Content-addressable storage with branching and merging |
+| Context Assembly | Token-budget-aware memory retrieval |
+| Sleep-Time Consolidation | Async background memory maintenance |
+| Multi-Agent Support | Isolated worktrees for concurrent agents |
+| MCP Protocol | Native integration with Claude/Cursor |
 
 ---
 
 ## Installation
 
-### Prerequisites
-
-- Rust 1.93 (see rust-toolchain.toml)
-- Cargo
-- Python 3.8+ (for Python bindings)
-- uv (recommended) or pip
-
-### Install via uv (Recommended for Python)
-
-```bash
-# Install uv if not already installed
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Clone and build
-git clone https://github.com/yfyang86/memst.git
-cd memst
-
-# uv sync
-# You may need to use Python ~ 3.13
-# check the `.python-version`, verified `3.13`
-uv sync
-source ./venv/bin/activate 
-
-# Build and install Python package
-cd memst-py
-maturin build --release
-uv pip install ../target/wheels/memst-*.whl
-
-# Verify installation
-python -c "import memst; print(memst.__version__)"
-```
-
-### Building
+### From Source (Rust)
 
 ```bash
 # Clone the repository
-git clone https://github.com/yfyang86/memst.git
+git clone <repository-url>
 cd memst
 
-# Build with both search backends (default)
+# Build the workspace
 cargo build --release
 
-# Build with native backend only
-cargo build --release --no-default-features --features native-backend
-
-# Build with Tantivy backend only
-cargo build --release --no-default-features --features tantivy-backend
-
-# Verify
-./target/release/memst-cli --help
-```
-
-### Installation
-
-```bash
-# Install to ~/.cargo/bin
+# Install CLI
 cargo install --path memst-cli
+```
 
-# Or copy manually
-cp target/release/memst ~/.local/bin/
+### Python Bindings
+
+```bash
+cd memst-py
+maturin build --release
+pip install target/wheels/memst-*.whl
 ```
 
 ---
 
-## Quick Start
+## Core Concepts
 
-### Initialize a Store
+### Memory Tiers
 
-```bash
-# use a short name
-alias memst=memst-cli
-memst init ./my-store
-```
+MemSt organizes memories into three tiers:
 
-This creates:
-```
-my-store/
-├── manifest.json              # Global config, session index
-├── schema_version             # Format: "1.0.0"
-├── sessions/                  # Session directories
-├── search_index/              # Full-text search index
-├── memories/                  # Memory tier storage
-└── store.lock                 # Advisory lock file
-```
+| Tier | Description | Access Speed | Capacity |
+|------|-------------|--------------|----------|
+| **Working** | Active conversation context | Fastest | Limited |
+| **Short-term** | Recent facts and user preferences | Fast | Moderate |
+| **Long-term** | Important knowledge and historical data | Slower | Large |
+| **Archival** | Rarely accessed historical data | Slowest | Unlimited |
 
-### Create a Session
+Memories automatically transition between tiers based on access patterns, importance, and age.
 
-```bash
-# Create a new session
-memst session new --name "Rust Project" --model "gpt-4" --tags "rust,programming"
+### Memory Types
 
-# List all sessions
-memst session list
-
-# Show session details
-memst session show 550e8400-e5b2-4c8f-9f0a-1a2b3c4d5e6f
-```
-
-### Add Messages
-
-```bash
-# Add a user message
-memst message add 550e8400-e5b2-4c8f-9f0a-1a2b3c4d5e6f --role user --content "Hello, I need help with Rust async"
-
-# Add an assistant message
-memst message add 550e8400-e5b2-4c8f-9f0a-1a2b3c4d5e6f --role assistant --content "I'd be happy to help! What specific async question do you have?"
-```
-
-### View Messages
-
-```bash
-# View all messages in a session
-memst message list 550e8400-e5b2-4c8f-9f0a-1a2b3c4d5e6f
-
-# View messages with pagination
-memst message list 550e8400 --limit 50 --offset 0
-```
+| Type | Description | Use Case |
+|------|-------------|----------|
+| **Episodic** | Specific events and experiences | "User said...", "Error occurred..." |
+| **Semantic** | Facts and concepts | "User prefers dark mode", "API endpoint is..." |
+| **Procedural** | How-to knowledge (Skills) | "To deploy, run...", "Debug steps: ..." |
+| **Resource** | External references | URLs, file paths, documentation |
+| **MetaCognitive** | System reflections | "Model consistently makes..." |
 
 ---
 
-## Architecture
+## Sessions
 
-### Directory Structure
+A session represents a conversation with an LLM, identified by a UUID and associated with metadata.
 
-```
-store/
-├── manifest.json              # Global session index (JSON, grep-friendly)
-├── schema_version             # "1.0.0" (plain text)
-├── sessions/
-│   └── {session_id}/
-│       ├── metadata.json      # Session config (JSON)
-│       ├── messages.bin       # Bincode + zstd compressed messages
-│       ├── messages.idx       # Message index (grep-friendly text)
-│       └── operations.log     # Append-only operations log (JSON Lines)
-├── search_index/
-│   ├── native/                # Native Rust inverted index
-│   └── tantivy/               # Tantivy full-text index
-└── memories/
-    ├── working.bin            # Active working memories
-    ├── short.bin              # Short-term memories
-    └── long.bin               # Long-term memories
-```
-
-### Data Storage Formats
-
-#### Messages (Binary)
-- Format: Bincode-serialized Message structs
-- Compression: zstd
-- Access: Random access via messages.idx
-
-#### Index Files (Human-Readable)
-```
-# messages.idx format (grep-friendly)
-# message_id byte_offset byte_length timestamp role
-msg-001 0 256 2026-01-31T10:00:00Z user
-msg-002 256 312 2026-01-31T10:01:00Z assistant
-```
-
-#### Operations Log (JSON Lines)
-```json
-{"id":"op-001","timestamp":"2026-01-31T10:00:00Z","type":"tool_call","input":{"name":"web_search"},"duration_ms":1250}
-{"id":"op-002","timestamp":"2026-01-31T10:02:00Z","type":"thinking_step","input":{"step":1},"duration_ms":50}
-```
-
----
-
-## CLI Commands
-
-### Global Options
-
-```bash
---store PATH, -s # Store directory (default: ./data)
---help, -h       # Show help
---version        # Show version
-```
-
-### CLI Overview
-
-The `memst` command is the Rust CLI binary (memst-cli) for common operations:
-
-```bash
-memst --help
-memst init ./my-store                    # Initialize store
-memst session new --name "Chat"          # Create session
-memst session list                       # List sessions
-memst message add <id> --role user --content "Hello"  # Add message
-memst memory add <id> --tier working --content "Fact" # Add memory
-memst search "query" --limit 20          # Search
-memst stats                              # Show statistics
-```
-
-### Init
-
-Initialize a new MemSt store.
-
-```bash
-memst init [PATH]
-
-# Examples
-memst init ./my-store           # Create store in my-store/
-memst init                      # Create in ./data/
-```
-
-### Session
-
-Session management commands.
-
-```bash
-# Create a new session
-memst session new [OPTIONS]
-
-Options:
-  --name TEXT       Session name
-  --model TEXT      LLM model name (e.g., "gpt-4")
-  --tags TAGS       Comma-separated tags
-
-# Examples
-memst session new --name "Project Alpha" --model "claude-3"
-memst session new --name "Debug Session" --tags "debug,rust" --model "gpt-4"
-
-# List all sessions
-memst session list
-
-# Show session details
-memst session show SESSION_ID
-
-# Delete a session
-memst session delete SESSION_ID
-```
-
-### Message
-
-Message management within sessions.
-
-```bash
-# Add a message
-memst message add SESSION_ID [OPTIONS]
-
-Options:
-  --role ROLE       Message role: user, assistant, system, tool
-    --content TEXT    Message content (optional if --file is used)
-    --file PATH       Read message content from stdin or file
-
-# Examples
-memst message add 550e8400 --role user --content "Hello world"
-echo "Hi there!" | memst message add 550e8400 --role assistant --file -
-
-# List messages
-memst message list SESSION_ID [OPTIONS]
-
-Options:
-  --limit NUM       Maximum messages (default: 100)
-  --offset NUM      Skip first N messages (default: 0)
-```
-
-### Trace
-
-View operation history (from operations.log).
-
-```bash
-memst trace show SESSION_ID [OPTIONS]
-
-Options:
-    --op-type TYPE    Filter by operation type
-  --limit NUM       Maximum operations (default: 100)
-  --json            JSON output
-
-# Examples
-memst trace 550e8400                          # All operations
-memst trace show 550e8400 --op-type tool_call  # Tool calls only
-memst trace 550e8400 --json | jq '.'
-```
-
-### Memory
-
-Memory tier management.
-
-```bash
-# Add a memory
-memst memory add SESSION_ID [OPTIONS]
-
-Options:
-    --tier TIER       Memory tier: working, short, long
-    --content TEXT    Memory content
-    --tags TAGS       Comma-separated tags
-    --confidence NUM  Confidence score (0.0-1.0)
-
-# Examples
-memst memory add 550e8400 --tier working --content "User prefers dark mode" --tags "preference,ui"
-memst memory add 550e8400 --tier short --content "Project deadline: March 1" --tags "project"
-
-# List memories in a tier
-memst memory list SESSION_ID [--tier TIER]
-
-# Retrieve relevant memories
-memst memory retrieve SESSION_ID QUERY [--limit NUM]
-```
-
-### Search
-
-Full-text search across sessions.
-
-```bash
-memst search QUERY [OPTIONS]
-
-Options:
-  --session ID      Filter by session ID
-    --doc-type TYPE   Filter by document type: message, memory
-  --limit NUM       Maximum results (default: 20)
-  --backend BACKEND Search backend: native, tantivy (auto-detect)
-  --json            JSON output
-
-# Examples
-memst search "rust async"                                    # Basic search
-memst search "debug error" --session 550e8400               # Session filter
-memst search "api" --doc-type message --limit 50            # Type filter
-memst search "pattern" --backend tantivy                    # Force Tantivy
-memst search "rust" --json | jq '.results[].snippet'       # JSON output
-```
-
-### Stats
-
-Show storage statistics.
-
-```bash
-memst stats [--store PATH]
-
-# Output example
-Sessions: 5
-Messages: 1,234
-Operations: 5,678
-Memories: 89
-  - Working: 45
-  - Short-term: 30
-  - Long-term: 14
-Search Index: 1,234 documents
-Storage Size: 12.5 MB
-```
-
----
-
-## Search Features
-
-### Backends
-
-MemSt supports two search backends:
-
-#### Native Backend (Default)
-- No external dependencies
-- Custom Rust inverted index
-- BM25 scoring with k1=1.2, b=0.75
-- Case-insensitive tokenization
-- Bincode + zstd compression
-
-#### Tantivy Backend (Optional)
-- Advanced full-text search
-- Phrase search: `"exact phrase"`
-- Fuzzy matching: `~2` suffix for edit distance
-- Regex queries: `/pattern/`
-- Requires Rust 1.88+
-
-```bash
-# Use specific backend
-memst search "query" --backend native
-memst search "query" --backend tantivy
-```
-
-### Semantic & Hybrid Search (Phase 12)
-
-MemSt supports semantic search using vector embeddings and hybrid search combining keyword and semantic results.
-
-#### Semantic Search
-
-Semantic search finds conceptually similar content using vector embeddings (cosine similarity).
-
-**Configuration** (in config.toml):
-```toml
-[embedding]
-api_url = "http://127.0.0.1:1378/v1/embeddings"
-model = "text-embedding-bge_m3"
-dimension = 1024
-```
-
-**How it works**:
-1. Text content is converted to 1024-dimensional vectors using the embedding model
-2. Queries are similarly converted to vectors
-3. Similarity is computed using cosine similarity
-4. Results are ranked by similarity score (0.0 to 1.0)
-
-```bash
-# Semantic search finds conceptually similar content
-memst search "machine learning concepts" --semantic
-
-# Hybrid search combines keyword + semantic (default)
-memst search "python async programming" --hybrid
-
-# Force keyword-only search
-memst search "exact error message" --keyword
-```
-
-#### Hybrid Search
-
-Hybrid search combines keyword (BM25) and semantic (cosine) search using Reciprocal Rank Fusion (RRF).
-
-**Fusion Strategies**:
-- **RRF (Default)**: Reciprocal Rank Fusion - combines rankings from both methods
-- **Weighted**: Weighted sum of keyword and semantic scores
-- **Interleave**: Round-robin interleaving of results
-
-**Configuration**:
-```toml
-[search.hybrid]
-keyword_weight = 0.5        # Weight for keyword search (0.0-1.0)
-semantic_weight = 0.5       # Weight for semantic search (0.0-1.0)
-fusion_strategy = "rrf"     # rrf, weighted, interleave
-max_results = 20            # Maximum results to return
-min_score = 0.1             # Minimum fusion score threshold
-```
-
-#### Query Router
-
-The QueryRouter automatically selects the best search strategy based on query characteristics:
-
-| Query Type | Strategy | Reason |
-|------------|----------|--------|
-| Short (< 3 words) | Keyword | Exact matches better |
-| Contains quotes | Keyword | Phrase search |
-| Long (> 5 words) | Semantic | Conceptual matching |
-| Medium (3-5 words) | Hybrid | Balance of both |
-
-```bash
-# Query router automatically selects strategy
-memst search "What are the best practices for Rust error handling?" --auto
-
-# Explain routing decision
-memst search "python web framework" --explain
-```
-
-#### HNSW Vector Index
-
-The HNSW (Hierarchical Navigable Small World) algorithm provides fast approximate nearest neighbor search.
-
-**Configuration**:
-```toml
-[vector]
-m = 16                    # Number of neighbors per node
-ef_construction = 200     # Search width during construction
-ef_search = 100           # Search width during query
-similarity_threshold = 0.5 # Minimum similarity to return
-```
-
-### Search Query Syntax
-
-#### Basic Search
-```bash
-# Search for any term
-memst search rust
-
-# Search for multiple terms (AND)
-memst search rust async debugging
-```
-
-#### Session Filter
-```bash
-# Search in specific session
-memst search "error" --session 550e8400-e5b2-4c8f-9f0a-1a2b3c4d5e6f
-```
-
-#### Type Filter
-```bash
-# Messages only
-memst search "debug" --type message
-
-# Memories only
-memst search "preference" --type memory
-```
-
-#### Combining Filters
-```bash
-# Session and type filter
-memst search "api" --session 550e8400 --type message --limit 10
-```
-
-### Search Results
-
-Search results include:
-- **score**: BM25 relevance score (0.0 - 100.0)
-- **snippet**: Text preview with matched terms
-- **session_id**: Source session
-- **doc_type**: message or memory
-- **timestamp**: Document timestamp
-
-```json
-{
-  "id": "msg-123",
-  "session_id": "550e8400-e5b2-4c8f-9f0a-1a2b3c4d5e6f",
-  "doc_type": "message",
-  "score": 12.5,
-  "snippet": "...debugging Rust async code requires...",
-  "timestamp": "2026-01-31T10:00:00Z"
-}
-```
-
----
-
-## Configuration
-
-### Feature Flags
-
-Edit `memst-core/Cargo.toml` to customize:
-
-```toml
-[features]
-# Enable/disable backends
-tantivy-backend = ["tantivy"]  # Set to disable Tantivy
-native-backend = []            # Set to disable native backend
-
-default = ["native-backend", "tantivy-backend"]
-```
-
-### Environment Variables
-
-```bash
-# Config file override
-MEMST_CONFIG_PATH=/path/to/config.toml
-
-# LLM configuration (fallbacks when no config.toml is found)
-MEMST_LLM_API_URL=http://localhost:8080/v1
-MEMST_LLM_MODEL=gpt-4
-
-# Embedding configuration (fallbacks when no config.toml is found)
-# api_url can be either a base URL (.../v1) or a full embeddings endpoint (.../v1/embeddings)
-MEMST_EMBEDDING_API_URL=http://localhost:8081/v1
-MEMST_EMBEDDING_MODEL=text-embedding-bge_m3
-
-# Enable long-running / network integration tests
-MEMST_RUN_INTEGRATION_TESTS=1
-```
-
-### Tantivy Configuration
-
-When using Tantivy backend, configure in code:
+### Creating Sessions
 
 ```rust
-use memst_core::search::TantivySearchConfig;
+use memst_core::store::SessionStore;
+use memst_core::types::SessionMetadata;
 
-let config = TantivySearchConfig {
-    k1: 1.2,           // BM25 term frequency saturation
-    b: 0.75,           // BM25 length normalization
-    enable_phrase_search: true,
-    enable_fuzzy: true,
-    enable_regex: true,
-    snippet_length: 100,
+let store = SessionStore::init("./data")?;
+
+let metadata = SessionMetadata::new("Project Planning", "gpt-4");
+let session_id = store.create_session(metadata)?;
+println!("Session ID: {}", session_id);
+```
+
+### Session Metadata
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `String` | Human-readable session name |
+| `model` | `String` | LLM model identifier |
+| `system_prompt` | `Option<String>` | System prompt for the session |
+| `tags` | `Vec<String>` | Searchable session tags |
+| `user_preferences` | `Vec<String>` | Session-specific preferences |
+| `suspended` | `bool` | Whether session is paused |
+
+### Listing Sessions
+
+```rust
+// List all non-archived sessions
+let sessions = store.list_sessions()?;
+
+for session in sessions {
+    println!("{}: {} ({})", session.id, session.name, session.model);
+}
+
+// List with filters
+let filters = SessionFilters {
+    model: Some("gpt-4".to_string()),
+    tags: vec!["project".to_string()],
+    suspended: Some(false),
+    created_after: Some(start_time),
     ..Default::default()
 };
+let filtered = store.list_sessions_filtered(&filters)?;
 ```
 
-### Config.toml Support
-
-MemSt supports loading LLM and embedding settings from a `config.toml` file. The configuration file is searched in the following order:
-
-1. `MEMST_CONFIG_PATH` (if set)
-2. Search the current directory and parent directories for `config.toml`
-3. Search the current directory and parent directories for `memst-store/config.toml`
-4. `~/.config/memst/config.toml` (user config directory)
-
-#### Configuration File Format
-
-Create a `config.toml` file with your LLM and embedding settings:
-
-```toml
-# MemSt Configuration File
-# Copy this to config.toml in your project root or memst-store directory
-
-[llm]
-## LLM provider type: openai, claude, lmstudio, ollama
-type = "openai"
-## API endpoint URL (OpenAI-compatible)
-## This is a [VLLM] example with GPT-OSS
-api_url = "http://127.0.0.1:1378/v1"
-## Model name or path
-model = "/workspace/models/openai-mirror/gpt-oss-120b/"
-## Request timeout in seconds
-timeout = 60
-## Maximum tokens to generate
-max_tokens = 8192
-## Temperature (0.0-2.0)
-temperature = 0.7
-## API key (can be empty/null for local LLMs)
-api_key = ""
-
-[embedding]
-## Embedding provider type: openai, claude, lmstudio, ollama
-type = "lmstudio"
-## API endpoint URL
-## This is an [LM studio] example:
-api_url = "http://127.0.0.1:1378/v1/embeddings"
-## Model name
-model = "text-embedding-bge_m3"
-## Request timeout in seconds
-timeout = 30
-## Expected embedding dimension (for validation, optional)
-expected_dimension = 1024
-
-[server]
-## Session data storage path
-store_path = "/tmp/data"
-
-```
-
-#### Loading Configuration in Rust
+### Suspending Sessions
 
 ```rust
-use memst_core::config::MemStConfig;
-
-let config = MemStConfig::load_from_file(&path)?;
-
-// Convert to LLM config
-let llm_config = config.to_llm_config();
-
-// Convert to embedding config
-let embedding_config = config.to_embedding_config();
-```
-
-#### Running Tests with config.toml (LLM + Embedding)
-
-By default, `cargo test --workspace` only runs offline/unit tests.
-
-Network integration tests (LLM calls + embedding calls) are gated behind `MEMST_RUN_INTEGRATION_TESTS=1`.
-
-To ensure the test binaries always find your configuration regardless of their working directory, prefer setting `MEMST_CONFIG_PATH` to an absolute (or `$PWD`-prefixed) path.
-
-```bash
-# Option A: copy the template
-cp config.example.toml config.toml
-
-# Run all tests (offline + integration)
-MEMST_RUN_INTEGRATION_TESTS=1 \
-MEMST_CONFIG_PATH="$PWD/config.toml" \
-cargo test --workspace -- --nocapture
-```
-
-```bash
-# Option B: point directly at the example file
-MEMST_RUN_INTEGRATION_TESTS=1 \
-MEMST_CONFIG_PATH="$PWD/config.example.toml" \
-cargo test --workspace -- --nocapture
-```
-
-Notes:
-
-- For embeddings, `api_url` may be either a base URL like `http://host:port/v1` or the full embeddings endpoint like `http://host:port/v1/embeddings`.
-- If you don't set `MEMST_CONFIG_PATH`, MemSt searches `config.toml` and `memst-store/config.toml` by walking up parent directories from the current working directory.
-
----
-
-## Web GUI
-
-MemSt includes a web-based graphical interface built with React and TypeScript for easy session management, chat, and search operations.
-
-### Setup and Installation
-
-#### 1. Backend Server Setup
-
-```bash
-# Navigate to the server directory
-cd memst-server
-
-# Create a virtual environment with Python 3.12 (recommended)
-uv venv --python 3.12
-
-# Install dependencies
-uv pip install fastapi uvicorn duckdb python-dotenv pydantic pydantic-settings httpx toml
-
-# Install nanobot (local dependency)
-uv pip install -e ../third/nanobot
-
-# Install maturin for building Python bindings
-uv pip install maturin
-
-# Build and install memst-py module
-cd ../memst-py
-VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop
-
-# Return to server directory
-cd ../memst-server
-```
-
-#### 2. Configure CORS
-
-Edit `memst-server/config.toml` to add your frontend origin:
-
-```toml
-[server]
-## Server port
-port = 8193
-## Session data storage path
-store_path = "/tmp/data"
-## CORS origins (comma-separated list of allowed origins, or "*" for all)
-cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
-```
-
-#### 3. Start the Backend
-
-```bash
-# Option 1: Using the management script (recommended)
-./server.sh --start      # Start server
-./server.sh --stop       # Stop server
-./server.sh --restart    # Restart server
-./server.sh --status     # Check status
-./server.sh --check      # Validate configuration
-./server.sh --maintain   # Run maintenance checks (config validation, status, logs)
-./server.sh --logs       # View server logs
-
-# Option 2: Manual start
-cd memst-server
-PYTHONPATH=src .venv/bin/python -m memst_server.main
-
-# Or with custom config
-MEMST_CONFIG_PATH=/path/to/config.toml PYTHONPATH=src .venv/bin/python -m memst_server.main
-```
-
-#### 4. Start the Frontend
-
-```bash
-# In a new terminal
-cd memst-ui
-
-# Configure the API backend URL (optional)
-# By default, frontend connects to http://127.0.0.1:8193
-# Create .env.local to override defaults:
-
-echo 'VITE_API_HOST=127.0.0.1' > .env.local
-echo 'VITE_API_PORT=8193' >> .env.local
-
-# For a different backend server:
-# echo 'VITE_API_HOST=192.168.1.100' > .env.local
-# echo 'VITE_API_PORT=8193' >> .env.local
-# echo 'VITE_DEV_PORT=3001' >> .env.local
-
-# Start the development server
-npm run dev
-```
-
-The web UI will be available at `http://localhost:3000` and will communicate with the API at `http://127.0.0.1:8193`.
-
-**Frontend Configuration:**
-
-Create `.env.local` in the `memst-ui` directory to override default settings:
-
-```
-# .env.local in memst-ui directory
-VITE_API_HOST=127.0.0.1
-VITE_API_PORT=8193
-VITE_DEV_PORT=3000
-```
-
-Available environment variables:
-- `VITE_API_HOST` - Backend API host (default: `127.0.0.1`)
-- `VITE_API_PORT` - Backend API port (default: `8193`)
-- `VITE_DEV_PORT` - Frontend dev server port (default: `3000`)
-
-Note: `.env.local` is automatically ignored by git.
-
-### API Documentation
-
-For detailed API documentation, see [memst-server-api.md](memst-server-api.md). This includes all REST endpoints, request/response formats, and curl examples.
-
-### Troubleshooting
-
-#### Common Issues
-
-1. **ModuleNotFoundError: No module named 'memst_server'**
-   - Ensure `PYTHONPATH=src` is set before running the server
-
-2. **CORS Policy Error**
-   - Add your frontend origin to `cors_origins` in `config.toml`
-   - Restart the server after modifying config
-
-3. **Frontend Can't Connect to Backend**
-   - Check the API URL in `memst-ui/.env.local`
-   - Make sure the backend server is running
-   - Ensure CORS is configured on the server
-
-4. **SIGABRT / Library not loaded: libpython3.13.dylib**
-   - Recreate the venv with Python 3.12: `uv venv --python 3.12`
-   - Python 3.13 has known compatibility issues with some packages
-
-4. **memst module not available**
-   - Ensure memst-py is installed: `VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop`
-
-### Web GUI Features
-
-#### Sidebar Navigation
-
-The sidebar provides access to:
-
-| Tab | Description |
-|-----|-------------|
-| **Sessions** | Active chat sessions with quick access |
-| **Resources** | Recent files and documents |
-| **History** | Chronological session history grouped by date |
-
-**Session Management:**
-- Click a session to load it in the chat view
-- New sessions can be created via the "+ New Session" button
-- Delete sessions with the ellipsis menu
-- Sessions are grouped: Today, Yesterday, This Week, This Month, Earlier
-
-#### Chat Interface
-
-The main chat area supports:
-
-- **Streaming Responses**: Real-time message streaming from LLM
-- **Markdown Rendering**: Code blocks, lists, formatting with `react-markdown`
-- **Message Actions**: Copy messages to clipboard
-- **Auto-scroll**: Automatic scroll to new messages
-- **Input History**: Previous prompts available via arrow keys
-
-**Session Types:**
-| Type | Icon | Use Case |
-|------|------|----------|
-| `chat` | Comment | General conversation |
-| `task` | Tasks | Task-oriented workflows |
-| `search` | Search | Information retrieval |
-| `recommend` | Lightbulb | Recommendations |
-
-#### Search Panel
-
-The search panel offers four search modes:
-
-| Mode | Description |
-|------|-------------|
-| **Text** | Keyword matching across all messages |
-| **Semantic** | Vector-based similarity search |
-| **Regex** | Regular expression pattern matching |
-| **Hybrid** | Combined text + semantic (RRF fusion) |
-
-**Search Results Display:**
-- Session ID and document type
-- Relevance score
-- Text snippet with highlighted matches
-- Click result to navigate to source message
-
-#### Knowledge Graph Visualization
-
-MemSt includes an interactive knowledge graph (D3.js powered):
-
-- **Nodes**: Entities extracted from conversations
-- **Edges**: Relationships between entities
-- **Interactions**: Zoom, pan, and drag support
-- **Filtering**: Filter by entity type or relationship strength
-
-**Node Types:**
-- `concept`: Abstract ideas
-- `entity`: Named entities (people, places, things)
-- `action`: Actions or operations
-- `memory`: Stored memories
-
-### API Integration
-
-The web GUI connects to MemSt via REST API:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/sessions` | GET | List all sessions |
-| `/api/v1/sessions` | POST | Create new session |
-| `/api/v1/sessions/{id}` | GET | Get session details |
-| `/api/v1/sessions/{id}/messages` | GET | Get session messages |
-| `/api/v1/sessions/{id}/messages` | POST | Add message |
-| `/api/v1/sessions/{id}/chat` | POST | Chat with streaming |
-| `/api/v1/sessions/{id}/memory` | GET | Get memories by tier |
-| `/api/v1/sessions/{id}/knowledge-graph` | GET | Get knowledge graph |
-| `/api/v1/search` | GET | Search all sessions |
-| `/api/v1/settings` | GET/PUT | Settings management |
-| `/api/v1/users` | GET/POST | User management |
-| `/api/v1/agent/sessions` | GET/POST | Agent session management |
-| `/api/v1/agent/chat/{id}` | POST | Agent chat (streaming/non-streaming) |
-
-### Agent Sessions
-
-MemSt supports agent-based conversations with autonomous capabilities:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/agent/sessions` | POST | Create new agent session |
-| `/api/v1/agent/sessions` | GET | List agent sessions |
-| `/api/v1/agent/sessions/{id}` | GET | Get agent session details |
-| `/api/v1/agent/sessions/{id}/history` | GET | Get agent message history |
-| `/api/v1/agent/chat/{id}` | POST | Send message to agent (non-streaming) |
-| `/api/v1/agent/chat/{id}/stream` | POST | Send message to agent (streaming) |
-
-**Agent Session Types:**
-- `agent`: Autonomous agent with tool use capabilities
-
-**Creating an Agent Session:**
-```bash
-curl -X POST http://127.0.0.1:8193/api/v1/agent/sessions \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Research Agent", "model": "gpt-4"}'
-```
-
-**Chatting with an Agent:**
-```bash
-# Non-streaming response
-curl -X POST http://127.0.0.1:8193/api/v1/agent/chat/{session_id} \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Research the latest in Rust async"}'
-
-# Streaming response
-curl -X POST http://127.0.0.1:8193/api/v1/agent/chat/{session_id}/stream \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Write a summary of Rust async"}'
-```
-
-**Agent Memory Synchronization:**
-Agent conversations automatically sync to memory tiers:
-- Messages are stored with correct `user` and `assistant` roles
-- Query-response pairs are preserved as conversation units in working memory
-- Memory tiers (working, short-term, long-term) populate correctly
-
-### Settings Configuration
-
-The web GUI supports real-time settings updates:
-
-```json
-{
-  "llm": {
-    "type": "openai",
-    "api_url": "http://localhost:8080/v1",
-    "model": "gpt-4",
-    "temperature": 0.7,
-    "max_tokens": 8192
-  },
-  "embedding": {
-    "type": "openai",
-    "api_url": "http://localhost:8081/v1/embeddings",
-    "model": "text-embedding-bge_m3",
-    "expected_dimension": 1024
-  }
+// Suspend a session (pauses background tasks)
+store.suspend_session(session_id)?;
+
+// Resume a suspended session
+store.resume_session(session_id)?;
+
+// Check suspension status
+if store.is_session_suspended(session_id)? {
+    println!("Session is suspended");
 }
 ```
 
-### Keyboard Shortcuts
+---
 
-| Shortcut | Action |
-|----------|--------|
-| `Cmd/Ctrl + K` | Open search dialog |
-| `Up Arrow` | Previous input in history |
-| `Down Arrow` | Next input in history |
-| `Enter` | Send message |
-| `Shift + Enter` | New line in input |
+## Messages
 
-### Architecture
+Messages represent the conversation history within a session.
 
-The web stack consists of:
+### Message Structure
 
-```
-memst-ui/          # React + TypeScript frontend
-├── src/
-│   ├── components/    # UI components
-│   ├── context/       # React context providers
-│   ├── hooks/         # Custom React hooks
-│   ├── types/         # TypeScript type definitions
-│   └── api/           # API client
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `Uuid` | Unique message identifier |
+| `session_id` | `Uuid` | Parent session |
+| `role` | `Role` | System, User, Assistant, or Tool |
+| `content` | `String` | Message content |
+| `created_at` | `DateTime<Utc>` | Timestamp |
+| `run_id` | `Option<Uuid>` | Associated run ID |
+| `metadata` | `Option<Value>` | Additional metadata |
 
-memst-server/       # FastAPI backend
-├── src/
-│   └── memst_server/
-│       ├── api/          # REST API routes
-│       ├── db.py         # DuckDB user/settings storage
-│       ├── memst_client.py  # MemSt Rust library wrapper
-│       └── config.py     # Configuration management
-```
+### Adding Messages
 
-### Development
+```rust
+use memst_core::types::{Message, Role};
 
-```bash
-# Frontend development with hot reload
-cd memst-ui
+// Simple message
+let msg = Message::new(Role::User, "Hello!".into());
+store.append_message(session_id, msg)?;
 
-# Configure API URL (optional - defaults to http://127.0.0.1:8193)
-cp src/config.ts src/config.local.ts
-# Edit config.local.ts to change the backend URL
+// Message with run_id
+let mut msg = Message::new(Role::Assistant, "Processing...".into());
+msg.run_id = Some(run_id);
+store.append_message(session_id, msg)?;
 
-npm run dev
-
-# Build for production
-cd memst-ui
-npm run build
-
-# Backend development
-cd memst-server
-PYTHONPATH=src .venv/bin/python -m memst_server.main --reload
+// Tool message
+let tool_msg = Message {
+    role: Role::Tool,
+    content: "{\"result\": 42}".into(),
+    run_id: Some(run_id),
+    ..Default::default()
+};
+store.append_message(session_id, tool_msg)?;
 ```
 
-**Note:** Always set `PYTHONPATH=src` when running the backend to ensure the `memst_server` module can be found.
+### Retrieving Messages
+
+```rust
+// Get all messages for a session (newest first)
+let messages = store.get_session_messages(session_id)?;
+
+// Get limited number
+let recent = store.get_session_messages_with_limit(session_id, 10)?;
+
+// Check message count
+let count = store.get_message_count(session_id)?;
+```
+
+---
+
+## Memory Items
+
+Memory items store important information extracted from conversations or added explicitly.
+
+### Memory Item Structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `Uuid` | Unique memory identifier |
+| `content` | `String` | Memory content |
+| `source` | `String` | Origin of the memory |
+| `created_at` | `DateTime<Utc>` | Creation timestamp |
+| `last_accessed` | `DateTime<Utc>` | Last access time |
+| `access_count` | `u32` | Number of times accessed |
+| `embedding` | `Option<Vec<f32>>` | Vector embedding |
+| `tags` | `Vec<String>` | Searchable tags |
+| `confidence` | `f32` | Confidence score (0.0-1.0) |
+| `importance` | `f32` | Importance score (0.0-1.0) |
+| `memory_type` | `MemoryType` | Episodic, Semantic, Procedural, etc. |
+| `tier` | `MemoryTier` | Working, ShortTerm, LongTerm |
+| `token_estimate` | `Option<u32>` | Estimated token count |
+| `supersedes` | `Option<Uuid>` | Previous version of this memory |
+| `retracted_by` | `Option<Uuid>` | Retraction memory ID |
+
+### Adding Memories
+
+```rust
+use memst_core::types::{MemoryItem, MemoryType, MemoryTier};
+
+let memory = MemoryItem::new(
+    "User prefers dark mode".into(),
+    "conversation".into(),
+);
+
+// With custom fields
+let mut memory = MemoryItem::new(
+    "API key: sk-xxx".into(),
+    "user_input".into(),
+);
+memory.tags = vec!["api".into(), "credentials".into()];
+memory.confidence = 0.95;
+memory.importance = 0.8;
+memory.memory_type = MemoryType::Semantic;
+memory.tier = MemoryTier::LongTerm;
+
+store.add_memory(memory)?;
+```
+
+### Updating Access
+
+```rust
+// Record access to update scores
+store.update_memory_access(memory_id)?;
+```
+
+### Importance Scoring
+
+```rust
+// Get memories sorted by importance
+let important = store.get_important_memories(10)?;
+
+// Update importance based on access patterns
+let decay_config = DecayConfig {
+    half_life_days: 7.0,
+    min_relevance: 0.1,
+    recompute_threshold: 100,
+};
+store.decay_memories(&decay_config)?;
+```
+
+---
+
+## Search
+
+MemSt provides three search modes: full-text (BM25), vector (HNSW), and hybrid.
+
+### Search Document Types
+
+| Type | Description |
+|------|-------------|
+| `Session` | Session metadata |
+| `Message` | Conversation messages |
+| `Memory` | Memory items |
+
+### Full-Text Search (BM25)
+
+```rust
+use memst_core::search::DocumentType;
+
+let results = store.search(
+    "error handling",
+    DocumentType::Message,
+    10,
+)?;
+
+for (doc, score) in results {
+    println!("{}: {:.4}", doc.id, score);
+}
+```
+
+### Vector Search (HNSW)
+
+Requires embedding configuration in `config.toml`.
+
+```rust
+use memst_core::semantic::SemanticSearch;
+
+let semantic = SemanticSearch::new(&store)?;
+
+// Vector search with embedding
+let results = semantic.vector_search(
+    "async programming",
+    DocumentType::Memory,
+    10,
+    Some(&filter),
+)?;
+
+for (doc, score) in results {
+    println!("{}: {:.4}", doc.id, score);
+}
+```
+
+### Hybrid Search (RRF)
+
+Combines BM25 and vector search using Reciprocal Rank Fusion.
+
+```rust
+// Hybrid search with weights
+let results = semantic.hybrid_search(
+    "error handling patterns",
+    DocumentType::Memory,
+    10,
+    Some(&filter),
+    0.3,  // BM25 weight
+    0.7,  // Vector weight
+)?;
+
+for (doc, score) in results {
+    println!("{}: {:.4}", doc.id, score);
+}
+```
+
+### Search Filters
+
+```rust
+use memst_core::search::DocumentFilter;
+
+let filter = DocumentFilter {
+    doc_types: Some(vec![DocumentType::Memory]),
+    tags: Some(vec!["rust".into()]),
+    date_from: Some(start_date),
+    date_to: Some(end_date),
+};
+```
 
 ---
 
 ## Git-Like Architecture (Phase 8)
 
-MemSt includes optional Git-like version control features for content-addressable storage and session branching.
+MemSt v1.0 includes Git-like version control features for content-addressable storage and session branching, powered by **Blake3** for 3× faster hashing than SHA-256.
 
 ### Content-Addressable Storage
 
-Objects are identified by their SHA-256 content hash (64 hex characters):
+Objects are identified by their Blake3 content hash (64 hex characters):
 
 ```rust
-use memst_core::objects::{ObjectId, Blob, Tree, Commit, Tag};
+use memst_core::objects::{ObjectId, Blob, Tree, Commit, Tag, ObjectType};
 
 // Create ObjectId from content
 let content = b"Hello, World!";
@@ -1047,6 +407,10 @@ let short = oid.abbreviate(); // 7 char prefix
 | `Tree` | Directory structure with entries |
 | `Commit` | Snapshot with parent references |
 | `Tag` | Annotated or lightweight tags |
+| `Skill` | Procedural memory with trigger patterns |
+| `ContextFile` | Markdown with JSON frontmatter |
+| `Entity` | Knowledge graph node |
+| `Relation` | Knowledge graph edge |
 
 ```rust
 // Create a blob
@@ -1066,6 +430,43 @@ let commit_oid = store.write_commit(&commit).unwrap();
 // Create an annotated tag
 let tag = Tag::new(commit_oid, "v1.0.0", author, "Release 1.0.0");
 let tag_oid = store.write_tag(&tag).unwrap();
+```
+
+### Write-Ahead Log (WAL)
+
+For crash recovery, MemSt uses a WAL:
+
+```rust
+use memst_repo::wal::{Wal, WalEntry, WalOp};
+
+let mut wal = Wal::open("./data/wal")?;
+
+// Append operation
+wal.append(WalEntry {
+    op: WalOp::Insert,
+    object_id: oid,
+    data: content,
+    timestamp: Utc::now(),
+})?;
+
+// Recover uncommitted operations
+let uncommitted = wal.recover()?;
+```
+
+### Memory Lifecycle
+
+```rust
+use memst_repo::lifecycle::{MemoryLifecycle, LifecycleConfig};
+
+let config = LifecycleConfig {
+    working_to_short_term_threshold: 10,
+    short_term_to_long_term_threshold: 5,
+    long_term_to_archival_days: 90,
+    checkpoint_interval_minutes: 60,
+};
+
+let lifecycle = MemoryLifecycle::new(config);
+lifecycle.transition_tier(&mut memory, MemoryTier::LongTerm)?;
 ```
 
 ### Branch Operations
@@ -1187,7 +588,508 @@ let branch = refs.get_branch_name().unwrap();
 
 ---
 
-## Python Bindings (Phase 9)
+## Context Assembly (Phase 9)
+
+MemSt v1.0 introduces token-budget-aware context assembly for optimal LLM context window usage.
+
+### Context Builder
+
+```rust
+use memst_core::context::{ContextBuilder, BuildContextConfig};
+use memst_core::types::Skill;
+
+let config = BuildContextConfig {
+    token_budget: 8000,
+    reserved_for_response: 2000,
+    system_prompt_tokens: 500,
+    relevance_weight: 1.0,
+    recency_weight: 0.5,
+    importance_weight: 0.3,
+    confidence_threshold: 0.5,
+    max_memories: 20,
+    deduplicate: true,
+};
+
+let builder = ContextBuilder::new(token_counter, config);
+
+let assembly = builder.build_context(
+    query,
+    &memories,
+    &skills,
+    &entities,
+)?;
+
+println!("Total tokens: {}", assembly.total_tokens);
+println!("Budget remaining: {}", assembly.budget_remaining);
+```
+
+### Multi-Signal Scoring
+
+Memories are scored using multiple signals:
+
+| Signal | Weight | Description |
+|--------|--------|-------------|
+| Relevance | 1.0 | Semantic similarity to query |
+| Recency | 0.5 | Time since last access |
+| Importance | 0.3 | Explicit importance score |
+| Confidence | 0.2 | Memory confidence |
+
+### Context Block Types
+
+| Block Type | Description |
+|------------|-------------|
+| `Memory` | Retrieved memory item |
+| `Skill` | Matching procedural memory |
+| `Entity` | Knowledge graph node |
+| `SessionSummary` | Compressed conversation history |
+
+### Progressive Disclosure
+
+```rust
+// Progressive disclosure loads more memories as needed
+let assembly = builder.build_context_with_disclosure(
+    query,
+    &memories,
+    &skills,
+    &entities,
+    DisclosureLevel::Standard,  // Standard, Minimal, Exhaustive
+)?;
+```
+
+### Token Counter
+
+```rust
+use memst_core::context::SimpleTokenCounter;
+
+// Simple whitespace-based token estimation
+let counter = SimpleTokenCounter;
+let tokens = counter.count("Hello, world!");
+
+// Or use a more sophisticated tokenizer
+let counter = TiktokenCounter::new("cl100k_base");
+```
+
+---
+
+## Sleep-Time Consolidation (Phase 10)
+
+MemSt v1.0 includes async background processes for memory maintenance.
+
+### Consolidation Engine
+
+```rust
+use memst_sleep::consolidate::{ConsolidationEngine, ConsolidationConfig};
+
+let config = ConsolidationConfig {
+    cluster_similarity_threshold: 0.85,
+    min_cluster_size: 3,
+    max_summary_length: 200,
+};
+
+let engine = ConsolidationEngine::new(config);
+
+// Cluster memories by topic
+let clusters = engine.cluster_memories(memories);
+
+// Generate summaries
+for cluster in clusters {
+    if let Some(summary) = engine.summarize_cluster(&cluster).await {
+        println!("Summary: {}", summary.content);
+    }
+}
+```
+
+### Topic Clusters
+
+```rust
+pub struct TopicCluster {
+    pub id: Uuid,
+    pub memories: Vec<MemoryItem>,
+    pub centroid: Vec<f32>,
+    pub topic_label: String,
+    pub coherence_score: f32,
+}
+```
+
+### Evolution Engine (A-MEM)
+
+```rust
+use memst_sleep::evolve::{EvolutionEngine, MemoryRelation};
+
+let mut engine = EvolutionEngine::new();
+
+// Evolve memory network with new memory
+let result = engine.evolve_memory_network(&mut new_memory, &existing_memories);
+
+// Result includes:
+// - relations: Vec<(Uuid, MemoryRelation)> - links to existing memories
+// - updated_memories: Vec<MemoryItem> - memories with updated confidence
+// - conflicts: Vec<(Uuid, Uuid)> - detected contradictions
+
+for (memory_id, relation) in result.relations {
+    match relation {
+        MemoryRelation::Supports => println!("Supports memory {}", memory_id),
+        MemoryRelation::Contradicts => println!("Contradicts memory {}", memory_id),
+        MemoryRelation::Elaborates => println!("Elaborates memory {}", memory_id),
+        MemoryRelation::Supersedes => println!("Supersedes memory {}", memory_id),
+        _ => {}
+    }
+}
+```
+
+### Memory Relations
+
+| Relation | Description |
+|----------|-------------|
+| `Supports` | New memory strengthens existing memory |
+| `Contradicts` | New memory conflicts with existing memory |
+| `Elaborates` | New memory provides additional detail |
+| `Supersedes` | New memory replaces outdated information |
+| `Unrelated` | No significant relationship |
+
+### Job Scheduler
+
+```rust
+use memst_sleep::scheduler::{JobScheduler, ConsolidationJob, JobPriority};
+
+let scheduler = JobScheduler::new();
+
+// Schedule consolidation job
+let job_id = scheduler.schedule(
+    ConsolidationJob::new(session_id),
+    JobPriority::Normal,
+).await?;
+
+// Check job status
+let status = scheduler.get_status(job_id).await;
+println!("Job status: {:?}", status);
+```
+
+---
+
+## Semantic Merge (Phase 11)
+
+MemSt v1.0 provides intelligent three-way merge with semantic conflict detection.
+
+### Semantic Merger
+
+```rust
+use memst_repo::merge::{SemanticMerger, SemanticMergeResult};
+
+let merger = SemanticMerger::new();
+
+// Perform three-way semantic merge
+let result = merger.merge(
+    source_oid,
+    target_oid,
+    &mut object_store,
+    &ref_store,
+    author,
+    "Merge feature branch",
+)?;
+
+println!("Commit: {}", result.commit_hash);
+println!("Conflicts: {}", result.conflicts.len());
+println!("Added: {}", result.memories_added);
+println!("Removed: {}", result.memories_removed);
+```
+
+### Conflict Detection
+
+```rust
+// Conflicts are detected via semantic similarity
+let conflicts = merger.detect_conflicts(&source_memories, &target_memories);
+
+for conflict in conflicts {
+    match conflict.conflict_type {
+        ConflictType::Duplicate => {
+            println!("Duplicate: {} and {}", 
+                conflict.memory_a, conflict.memory_b);
+        }
+        ConflictType::Contradiction => {
+            println!("Contradiction: {} contradicts {}",
+                conflict.memory_a, conflict.memory_b);
+        }
+    }
+}
+```
+
+### Conflict Resolution
+
+```rust
+use memst_repo::merge::ConflictResolution;
+
+// Auto-resolve strategies
+let resolution = ConflictResolution::Auto {
+    strategy: ResolutionStrategy::NewestWins,
+};
+
+// Or manual resolution
+let resolution = ConflictResolution::Manual {
+    keep_a: vec![memory_a_id],
+    keep_b: vec![memory_b_id],
+    merge: vec![(memory_a_id, memory_b_id)],
+};
+
+// Apply resolution
+merger.resolve_conflicts(&conflicts, &resolution)?;
+```
+
+### Resolution Strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `NewestWins` | Keep the most recently created memory |
+| `HighestConfidence` | Keep the memory with highest confidence |
+| `KeepBoth` | Mark as related but keep both |
+| `Manual` | User specifies which to keep/merge |
+
+---
+
+## Skills (Phase 12)
+
+MemSt v1.0 supports procedural memory through Skills.
+
+### Skill Structure
+
+```rust
+use memst_core::objects::{Skill, SkillStep, SkillFailurePolicy};
+
+let skill = Skill {
+    id: "deploy-service".into(),
+    slug: "deploy-service".into(),
+    name: "Deploy Microservice".into(),
+    description: "Deploy a service to Kubernetes".into(),
+    trigger_patterns: vec![
+        "deploy".into(),
+        "push to production".into(),
+    ],
+    steps: vec![
+        SkillStep {
+            order: 1,
+            action: "Run tests".into(),
+            tool: Some("pytest".into()),
+            conditions: vec!["tests_pass".into()],
+            on_failure: SkillFailurePolicy::Stop,
+        },
+        SkillStep {
+            order: 2,
+            action: "Build image".into(),
+            tool: Some("docker".into()),
+            conditions: vec![],
+            on_failure: SkillFailurePolicy::Retry { max_attempts: 3 },
+        },
+        SkillStep {
+            order: 3,
+            action: "Deploy to k8s".into(),
+            tool: Some("kubectl".into()),
+            conditions: vec![],
+            on_failure: SkillFailurePolicy::Rollback,
+        },
+    ],
+    success_rate: 0.95,
+    usage_count: 42,
+};
+
+// Store skill
+let skill_oid = object_store.write_skill(&skill)?;
+```
+
+### Skill Failure Policies
+
+| Policy | Behavior |
+|--------|----------|
+| `Stop` | Halt execution on failure |
+| `Continue` | Log error and continue |
+| `Retry { max_attempts }` | Retry up to N times |
+| `Rollback` | Undo previous steps |
+| `Fallback { skill_id }` | Switch to alternative skill |
+
+### Trigger Patterns
+
+```rust
+// Skills are matched by trigger patterns
+let matched_skills = skill_registry.match_skills("deploy the api service");
+
+for skill in matched_skills {
+    println!("Matched: {}", skill.name);
+    println!("Success rate: {:.1}%", skill.success_rate * 100.0);
+}
+```
+
+### Skill Execution
+
+```rust
+use memst_sleep::skills::SkillExecutor;
+
+let executor = SkillExecutor::new();
+
+// Execute skill with context
+let result = executor.execute(&skill, &context).await?;
+
+// Update success rate based on outcome
+skill_registry.record_outcome(&skill.id, result.success).await?;
+```
+
+---
+
+## Multi-Agent Support (Phase 13)
+
+MemSt v1.0 supports concurrent agents through isolated worktrees.
+
+### Agent Registry
+
+```rust
+use memst_repo::multi_agent::{AgentRegistry, AgentInfo};
+
+let registry = AgentRegistry::new();
+
+// Register agent
+let agent = AgentInfo {
+    id: "agent-001".into(),
+    name: "Code Reviewer".into(),
+    permissions: vec!["read".into(), "write".into()],
+    parent_id: None,
+};
+registry.register(agent)?;
+
+// Get agent info
+let agent = registry.get("agent-001")?;
+```
+
+### Worktrees
+
+```rust
+use memst_repo::multi_agent::{WorktreeManager, Worktree};
+
+let worktree_mgr = WorktreeManager::new(repo_path);
+
+// Create worktree for agent
+let worktree = worktree_mgr.create(
+    "agent-001",
+    "feature-branch",
+    Some(commit_oid),
+)?;
+
+// Worktree isolation
+// Each agent sees only their worktree
+let agent_store = worktree.get_store()?;
+
+// List agent memories
+let memories = agent_store.search("async", DocumentType::Memory, 10)?;
+```
+
+### Cross-Agent Search
+
+```rust
+// Search across all agent worktrees (with permission)
+let results = worktree_mgr.cross_agent_search(
+    "error handling",
+    DocumentType::Memory,
+    &requesting_agent_id,
+)?;
+
+for (agent_id, memories) in results {
+    println!("Agent {}: {} memories", agent_id, memories.len());
+}
+```
+
+### Session Scopes
+
+| Scope | Description |
+|-------|-------------|
+| `user` | User-level memories |
+| `project` | Project-level memories |
+| `org` | Organization-level |
+| `session` | Current session only |
+| `agent` | Agent-specific |
+
+---
+
+## MCP Adapter (Phase 14)
+
+MemSt v1.0 includes a native MCP (Model Context Protocol) adapter for Claude Code, Cursor, and other MCP clients.
+
+### MCP Manifest
+
+```rust
+use memst_mcp::adapter::McpAdapter;
+
+let manifest = McpAdapter::manifest();
+
+println!("Tools available:");
+for tool in &manifest.tools {
+    println!("  - {}", tool.name);
+}
+```
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `memory_read` | Read memories by ID or search query |
+| `memory_write` | Store new memory |
+| `memory_search` | Semantic search across memories |
+| `skill_lookup` | Find skills by trigger pattern |
+| `context_build` | Assemble context within token budget |
+
+### Tool Examples
+
+```rust
+// memory_read
+let request = McpRequest {
+    tool: "memory_read".into(),
+    params: json!({
+        "memory_id": "uuid-here",
+        "include_embedding": false,
+    }),
+};
+let response = adapter.handle_memory_read(request).await?;
+
+// memory_search
+let request = McpRequest {
+    tool: "memory_search".into(),
+    params: json!({
+        "query": "async error handling",
+        "limit": 10,
+        "memory_type": "Semantic",
+    }),
+};
+let response = adapter.handle_memory_search(request).await?;
+
+// context_build
+let request = McpRequest {
+    tool: "context_build".into(),
+    params: json!({
+        "query": "help with Rust",
+        "token_budget": 4000,
+        "include_skills": true,
+    }),
+};
+let response = adapter.handle_context_build(request).await?;
+```
+
+### Integration with Claude Code
+
+```json
+// mcp.json configuration
+{
+  "tools": [
+    {
+      "name": "memst",
+      "command": "memst",
+      "args": ["mcp", "serve"],
+      "env": {
+        "MEMST_STORE_PATH": "./data"
+      }
+    }
+  ]
+}
+```
+
+---
+
+## Python Bindings
 
 MemSt provides Python bindings via PyO3 for seamless integration with Python applications.
 
@@ -1214,283 +1116,366 @@ pip install memst
 | `Role` | Enum: System, User, Assistant, Tool |
 | `MemoryTier` | Enum: Working, ShortTerm, LongTerm |
 
-### Phase 8: Git-Like Architecture Classes
-
-| Class | Description |
-|-------|-------------|
-| `ObjectId` | Content-addressable SHA-256 identifier |
-| `Blob` | Raw content storage |
-| `Tree` | Directory structure with entries |
-| `TreeEntry` | Entry in a tree (mode, oid, name) |
-| `Commit` | Commit with tree, author, message, parents |
-| `Tag` | Annotated or lightweight tags |
-| `Author` | Author with name, email, timestamp |
-| `RefType` | Branch or Tag reference type |
-| `MergeStrategy` | Merge strategy enum |
-| `MergeResult` | Result of merge operation |
-
-### Quick Start
-
-```python
-import tempfile
-from memst import SessionStore, Role, MemoryTier
-
-# Create a store
-store = SessionStore("/tmp/my-store")
-
-# Create a session
-session = store.create_session("My Chat", "gpt-4")
-print(f"Session: {session.id}")
-
-# Add messages
-store.add_message(session.id, Role.User, "Hello, I need help with Rust!")
-store.add_message(session.id, Role.Assistant, "I'd be happy to help with Rust!")
-
-# List sessions
-sessions = store.list_sessions()
-for s in sessions:
-    print(f"  - {s['name']} ({s['model']})")
-
-# Add memories to tiers
-store.add_memory(session.id, MemoryTier.Working, "User is learning Rust", tags=["learning"])
-store.add_memory(session.id, MemoryTier.ShortTerm, "Project deadline: March 1", tags=["project"])
-
-# Search
-results = store.search("Rust", limit=10)
-for r in results:
-    print(f"  {r['content'][:80]}...")
-```
-
-### Phase 8 Git-Like Python API
-
-```python
-from memst import ObjectId, Blob, Tree, Commit, Tag, Author
-
-# Create ObjectId from content
-oid = ObjectId(b"Hello, World!")
-print(f"Object ID: {oid.hex}")  # 64 char hex string
-print(f"Abbreviated: {oid.abbreviate()}")  # 7 char prefix
-print(f"Is nil: {oid.is_nil()}")
-
-# Create Author
-author = Author("Test User", "test@example.com")
-print(f"Author: {author.name} <{author.email}>")
-
-# Create Tree with entries
-tree = Tree()
-tree.add_entry(0o100644, oid.hex, "memory.txt")
-
-# Create Commit
-commit = Commit(oid.hex, author, "Initial commit")
-print(f"Commit message: {commit.message}")
-print(f"Is merge: {commit.is_merge()}")
-print(f"Parents: {len(commit.parent_oids)}")
-
-# Create Tag
-tag = Tag(oid.hex, "v1.0.0", author, "Release 1.0.0")
-print(f"Tag: {tag.name}, Lightweight: {tag.is_lightweight}")
-
-# Use enums
-from memst import RefType, MergeStrategy
-
-print(f"Branch ref: {RefType.Branch}")
-print(f"Merge strategy: {MergeStrategy.Recursive}")
-```
-
-### Phase 12: Advanced Search (Semantic & Hybrid) Python API
-
-MemSt provides Python bindings for the HNSW vector index and hybrid search system.
-
-#### Phase 12 Classes
-
-| Class | Description |
-|-------|-------------|
-| `HnswConfig` | HNSW configuration (m, ef_construction, ef_search, threshold) |
-| `HnswIndex` | Vector index for ANN search with add/search/delete |
-| `DocumentInfo` | Document metadata (id, session_id, doc_type, content, timestamp) |
-| `VectorSearchResult` | Search result with cosine similarity score |
-| `FusionStrategy` | RRF, Weighted, Interleave fusion strategies |
-| `HybridSearchConfig` | Configurable weights and fusion settings |
-| `HybridSearchResult` | Combined keyword + semantic results |
-| `QueryRouter` | Analyzes queries for optimal search strategy |
-| `SearchStrategy` | Keyword, Semantic, Hybrid recommendations |
-
-#### HNSW Vector Index API
+### Basic Operations
 
 ```python
 import memst
 
-# Create HNSW index with 1024 dimensions (for bge-m3)
-index = memst.HnswIndex(1024)
+# Initialize store
+store = memst.SessionStore("./data")
 
-# Or with custom configuration
-config = memst.HnswConfig()
-config.m = 16                    # Connections per node
-config.ef_construction = 200     # Search width during construction
-config.ef_search = 100           # Search width during query
-config.similarity_threshold = 0.5 # Minimum similarity
+# Create session
+session = store.create_session("My Chat", "gpt-4")
+print(f"Session ID: {session.id}")
 
-index = memst.HnswIndex(1024, config)
+# Add messages
+store.add_message(session.id, memst.Role.USER, "Hello!")
+store.add_message(session.id, memst.Role.ASSISTANT, "Hi there!")
 
-# Add documents with embeddings
-index.add_document(
-    id='msg-001',
-    vector=[0.1, 0.2, 0.3, ...],  # 1024-dimensional vector
-    session_id='session-123',
-    doc_type='message',
-    content='Hello, I need help with Rust async'
+# Get messages
+messages = store.get_session_messages(session.id)
+for msg in messages:
+    print(f"{msg.role}: {msg.content}")
+
+# Add memory
+memory = memst.MemoryItem(
+    content="User prefers Python",
+    source="conversation",
+    tags=["preference", "python"],
+    confidence=0.9,
+    importance=0.7,
 )
-
-# Search for similar documents
-results = index.search(query=[0.1, 0.2, 0.3, ...], limit=10)
-
-# Search with session filter
-results = index.search_filtered(
-    query=[0.1, 0.2, 0.3, ...],
-    limit=10,
-    session_filter='session-123'
-)
-
-# Delete a document
-deleted = index.delete('msg-001')
-
-# Get index statistics
-print(f"Documents: {index.len()}")
-print(f"Dimension: {index.dimension()}")
-```
-
-#### Search Result Types
-
-```python
-# DocumentInfo - document metadata
-doc = memst.DocumentInfo(
-    id='msg-001',
-    session_id='session-123',
-    doc_type='message',
-    content='Hello, I need help with Rust async',
-    timestamp='2024-01-01T00:00:00Z'
-)
-print(f"ID: {doc.id}")
-print(f"Session: {doc.session_id}")
-print(f"Type: {doc.doc_type}")
-print(f"Content: {doc.content}")
-
-# VectorSearchResult - search result with score
-result = memst.VectorSearchResult(
-    id='msg-001',
-    score=0.95,  # Cosine similarity (0.0-1.0)
-    document=doc
-)
-print(f"ID: {result.id}")
-print(f"Score: {result.score}")
-print(f"Content: {result.document.content}")
-```
-
-#### Fusion Strategies
-
-```python
-from memst import FusionStrategy, HybridSearchConfig
-
-# Default: RRF (Reciprocal Rank Fusion)
-config = memst.HybridSearchConfig()
-print(f"Keyword weight: {config.keyword_weight}")  # 0.5
-print(f"Semantic weight: {config.semantic_weight}")  # 0.5
-print(f"Fusion strategy: {config.fusion_strategy}")  # Rrf
-
-# Use different fusion strategy
-config = memst.HybridSearchConfig()
-config.keyword_weight = 0.7
-config.semantic_weight = 0.3
-config.fusion_strategy = FusionStrategy.Weighted
-
-# Interleave strategy
-config.fusion_strategy = FusionStrategy.Interleave
-```
-
-#### Query Router
-
-```python
-from memst import QueryRouter, SearchStrategy
-
-router = memst.QueryRouter()
-
-# Analyze query to get recommended strategy
-strategy = router.analyze_query("hello")
-print(f"Strategy: {strategy}")  # Keyword (short query)
-
-strategy = router.analyze_query("What are the key principles of effective software architecture?")
-print(f"Strategy: {strategy}")  # Semantic (long query)
-
-strategy = router.analyze_query("Rust async programming")
-print(f"Strategy: {strategy}")  # Hybrid (medium query)
-
-# Get explanation for recommendation
-explanation = router.explain_recommendation("hello", "Keyword")
-print(f"Explanation: {explanation}")
-```
-
-#### Search Strategy Enum
-
-```python
-from memst import SearchStrategy
-
-print(f"Keyword: {SearchStrategy.Keyword}")
-print(f"Semantic: {SearchStrategy.Semantic}")
-print(f"Hybrid: {SearchStrategy.Hybrid}")
-```
-
-### SessionStore Methods
-
-```python
-# Constructor / factory
-store = SessionStore(path)  # Create or open store
-
-# Session management
-session = store.create_session(name, model)
-sessions = store.list_sessions()
-session = store.get_session(session_id)
-store.delete_session(session_id)
-
-# Messages
-store.add_message(session_id, Role, content)
-messages = store.get_session_messages(session_id)
-
-# Memory
-store.add_memory(session_id, MemoryTier, content, tags=None)
-memories = store.get_session_memory(session_id, MemoryTier)
+store.add_memory(memory)
 
 # Search
-results = store.search(query, limit=10)
+results = store.search("python", memst.DocumentType.MEMORY, limit=10)
+for doc, score in results:
+    print(f"{doc.content}: {score}")
 
-# Statistics
-# (No dedicated stats method in Python bindings yet; use the CLI `memst stats`)
+# Context assembly (v1.0)
+assembly = store.build_context(
+    query="help with async",
+    token_budget=4000,
+    include_memories=True,
+)
+print(f"Total tokens: {assembly.total_tokens}")
 ```
+
+### Context Assembly (Python)
+
+```python
+# Build context with configuration
+config = memst.ContextAssemblyConfig(
+    token_budget=8000,
+    reserved_for_response=2000,
+    relevance_weight=1.0,
+    recency_weight=0.5,
+    importance_weight=0.3,
+)
+
+assembly = store.build_context_with_config(
+    query="error handling patterns",
+    config=config,
+)
+
+for block in assembly.context_blocks:
+    print(f"Block: {block.content[:100]}...")
+```
+
+### Memory Tiers (Python)
+
+```python
+# Create memory in specific tier
+memory = memst.MemoryItem(
+    content="Important API key",
+    source="user_input",
+    tier=memst.MemoryTier.LONG_TERM,
+    memory_type=memst.MemoryType.SEMANTIC,
+)
+store.add_memory(memory)
+
+# Get memories by tier
+working_memories = store.get_memories_by_tier(memst.MemoryTier.WORKING)
+```
+
+---
+
+## Configuration
+
+MemSt loads LLM + embedding settings from `config.toml` by default (and falls back to environment variables if no config is found).
+
+- Example config: `config.example.toml`
+- Override path explicitly: `MEMST_CONFIG_PATH=/path/to/config.toml`
+- Discovery: searches the current directory and its parent directories for `config.toml` and `memst-store/config.toml`, then falls back to `~/.config/memst/config.toml`
+
+### Server Configuration
+
+```toml
+[server]
+port = 8193
+store_path = "/tmp/data"
+cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+```
+
+### LLM Configuration
+
+```toml
+[llm]
+api_url = "http://localhost:8080/v1"
+model = "gpt-4"
+api_key = "sk-xxx"  # Or use LLM_API_KEY env var
+timeout_seconds = 30
+max_retries = 3
+```
+
+### Embedding Configuration
+
+```toml
+[embedding]
+api_url = "http://localhost:8081/v1"
+model = "text-embedding-bge_m3"
+api_key = "sk-xxx"  # Or use EMBEDDING_API_KEY env var
+dimension = 1024
+batch_size = 32
+```
+
+### Memory Configuration
+
+```toml
+[memory]
+working_capacity = 10
+short_term_capacity = 100
+long_term_capacity = 10000
+consolidation_threshold = 0.8
+```
+
+### Environment Variables
+
+```bash
+# LLM settings
+export MEMST_LLM_API_URL="http://localhost:8080/v1"
+export MEMST_LLM_MODEL="gpt-4"
+export LLM_API_KEY="sk-xxx"
+
+# Embedding settings
+export MEMST_EMBEDDING_API_URL="http://localhost:8081/v1"
+export MEMST_EMBEDDING_MODEL="text-embedding-bge_m3"
+export EMBEDDING_API_KEY="sk-xxx"
+
+# Store path
+export MEMST_STORE_PATH="./data"
+```
+
+---
+
+## CLI Reference
+
+### Global Options
+
+| Option | Description |
+|--------|-------------|
+| `--store <PATH>` | Path to store directory |
+| `--config <PATH>` | Path to config file |
+| `-v, --verbose` | Enable verbose output |
+| `-h, --help` | Print help |
+
+### Session Commands
+
+```bash
+# Create session
+memst session new --name "My Chat" --model "gpt-4"
+
+# List sessions
+memst session list
+memst session list --model "gpt-4" --tag "project"
+
+# Get session
+memst session get <session-id>
+
+# Suspend/Resume
+memst session suspend <session-id>
+memst session resume <session-id>
+
+# Rename
+memst session rename <session-id> "New Name"
+
+# Archive
+memst session archive <session-id>
+```
+
+### Message Commands
+
+```bash
+# Add message
+memst message add <session-id> --role user --content "Hello"
+
+# List messages
+memst message list <session-id>
+memst message list <session-id> --limit 10
+
+# Get message count
+memst message count <session-id>
+```
+
+### Memory Commands
+
+```bash
+# Add memory
+memst memory add "User prefers dark mode" --tag preference --importance 0.8
+
+# Search memories
+memst search "async" --doc-type memory --limit 20
+
+# Update access
+memst memory touch <memory-id>
+
+# Decay memories
+memst memory decay --half-life-days 7
+```
+
+### Context Commands (v1.0)
+
+```bash
+# Build context
+memst context build <session-id> --query "help with async" --budget 4000
+
+# Build with skills
+memst context build <session-id> --query "deploy service" --include-skills
+```
+
+### Repository Commands (v1.0)
+
+```bash
+# Initialize MemRepo
+memst repo init
+
+# Create commit
+memst repo commit --message "Add user preferences"
+
+# Branch operations
+memst repo branch create feature-x
+memst repo branch list
+memst repo branch switch feature-x
+
+# Merge
+memst repo merge feature-x --into main
+
+# Log
+memst repo log --limit 10
+```
+
+### Skill Commands (v1.0)
+
+```bash
+# List skills
+memst skill list
+
+# Trigger skill
+memst skill trigger "deploy the api"
+
+# Execute skill
+memst skill execute <skill-id>
+```
+
+### MCP Commands (v1.0)
+
+```bash
+# Start MCP server
+memst mcp serve
+
+# Get manifest
+memst mcp manifest
+```
+
+---
+
+## API Reference
+
+See [memst-server-api.md](memst-server-api.md) for detailed REST API documentation.
+
+### Quick Reference
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/sessions` | GET | List sessions |
+| `/sessions` | POST | Create session |
+| `/sessions/{id}` | GET | Get session |
+| `/sessions/{id}/messages` | GET | List messages |
+| `/sessions/{id}/messages` | POST | Add message |
+| `/search` | POST | Search documents |
+| `/context/build` | POST | Build context (v1.0) |
+| `/memrepo/commit` | POST | Create commit (v1.0) |
+| `/memrepo/merge` | POST | Merge branches (v1.0) |
+| `/sleep/jobs` | GET | List consolidation jobs (v1.0) |
+| `/skills` | GET | List skills (v1.0) |
+| `/mcp/tools` | GET | List MCP tools (v1.0) |
+
+---
+
+## Error Handling
+
+MemSt uses structured errors throughout:
+
+```rust
+use memst_core::store::StoreError;
+
+match result {
+    Ok(value) => println!("Success: {}", value),
+    Err(StoreError::NotFound(id)) => println!("Not found: {}", id),
+    Err(StoreError::InvalidInput(msg)) => println!("Invalid: {}", msg),
+    Err(StoreError::Io(e)) => println!("IO error: {}", e),
+    Err(e) => println!("Error: {:?}", e),
+}
+```
+
+### Common Error Types
+
+| Error | Description |
+|-------|-------------|
+| `NotFound` | Requested item doesn't exist |
+| `InvalidInput` | Invalid parameters provided |
+| `AlreadyExists` | Duplicate unique identifier |
+| `Io` | File system or network error |
+| `Serialization` | JSON/Bincode encoding error |
+| `Embedding` | Vector embedding generation failed |
 
 ---
 
 ## Best Practices
 
----
+### Memory Management
 
-### 1. Store Location
-- Use absolute paths for reliability
-- Backup store directory regularly
-- Use version control for manifest.json
+1. **Use appropriate memory types**: Mark facts as `Semantic`, events as `Episodic`, procedures as `Procedural`.
 
-### 2. Session Management
-- Use descriptive session names
-- Add relevant tags for filtering
-- Delete inactive sessions periodically
+2. **Set importance explicitly**: Important memories should have high importance scores (>0.7).
 
-### 3. Search Optimization
-- Use session filters for faster searches
-- Limit results with `--limit` for large datasets
-- Use Tantivy backend for complex queries
+3. **Tag consistently**: Use consistent tag naming for better searchability.
 
-### 4. Memory Tiers
-- Working tier: Active conversation context
-- Short tier: Session-relevant memories
-- Long tier: Persistent knowledge
+4. **Let tier transitions happen naturally**: Don't manually force tier changes unless necessary.
+
+### Context Assembly
+
+1. **Reserve tokens for response**: Always reserve ~25% of context budget for the LLM response.
+
+2. **Adjust weights for use case**: Increase recency weight for time-sensitive queries.
+
+3. **Use progressive disclosure**: Start with `Standard` level, escalate to `Exhaustive` if needed.
+
+### Multi-Agent
+
+1. **Use worktrees for isolation**: Each agent should have its own worktree.
+
+2. **Define clear permissions**: Use the agent registry to control access.
+
+3. **Share via cross-agent search**: Explicitly enable sharing when needed.
+
+### Git-Like Operations
+
+1. **Commit frequently**: Small, focused commits are easier to merge.
+
+2. **Use semantic merge**: Prefer semantic merge over standard merge for memory conflicts.
+
+3. **Tag important states**: Use tags for milestones or releases.
 
 ---
 
@@ -1498,227 +1483,78 @@ results = store.search(query, limit=10)
 
 ### Common Issues
 
-#### 1. Python Module Not Found
+| Issue | Solution |
+|-------|----------|
+| Session not found | Check UUID format and store path |
+| Search returns empty | Verify embedding service is running |
+| Context too large | Reduce token budget or max_memories |
+| Merge conflicts | Use semantic merge with manual resolution |
+| High memory usage | Run consolidation or archive old sessions |
 
-If you get `ModuleNotFoundError: No module named 'memst_server'`:
+### Debug Logging
 
 ```bash
-# Ensure PYTHONPATH is set
-cd memst-server
-PYTHONPATH=src .venv/bin/python -m memst_server.main
+# Enable debug logging
+RUST_LOG=debug memst --verbose session list
 ```
 
-#### 2. CORS Policy Errors
-
-If you see CORS errors in the browser console:
-
-```
-Access to fetch at 'http://127.0.0.1:8193/api/...' 
-from origin 'http://localhost:3000' has been blocked by CORS policy
-```
-
-**Fix:** Add your frontend origin to `config.toml`:
+### Performance Tuning
 
 ```toml
-[server]
-cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
-```
-
-Then restart the server.
-
-#### 3. Python 3.13 Compatibility Issues
-
-If you get `SIGABRT` or `Library not loaded: libpython3.13.dylib`:
-
-```bash
-# Recreate the virtual environment with Python 3.12
-cd memst-server
-rm -rf .venv
-uv venv --python 3.12
-uv pip install fastapi uvicorn duckdb python-dotenv pydantic pydantic-settings httpx toml
-uv pip install -e ../third/nanobot
-```
-
-#### 4. memst Module Not Available
-
-If you see "Warning: memst module not available":
-
-```bash
-# Build and install memst-py
-cd memst-py
-VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop
-```
-
-#### 5. Port Already in Use
-
-If port 8192/8193 is already in use:
-
-```bash
-# Check what's using the port
-lsof -i :8192
-
-# Change port in config.toml
-[server]
-port = 8194
-```
-
-### Lock Errors
-
-If you see `store.lock` errors:
-```bash
-# Check for running processes
-lsof | grep store.lock
-
-# Remove stale lock (only if no other process is using)
-rm store/store.lock
-```
-
-### Corrupted Index
-
-Rebuild search index:
-```bash
-# Delete and recreate
-rm -rf search_index/
-memst search "test"  # Auto-recreates on first search
-```
-
-### Rust Version
-
-Tantivy backend requires Rust 1.88+:
-```bash
-rustc --version
-rustup install 1.88
-rustup default 1.88
+# config.toml
+[performance]
+vector_index_cache_size = 1000
+search_batch_size = 100
+max_concurrent_jobs = 4
 ```
 
 ---
 
-## API Reference
+## Migration Notes
 
-### Rust Library
+### From v0.x to v1.0
 
-```rust
-use memst_core::{SessionStore, Message, Role, SearchQuery};
+1. **Update config format**: Add new sections for context assembly and sleep-time settings.
 
-// Open store
-let store = SessionStore::open("./my-store")?;
+2. **Re-index embeddings**: v1.0 uses improved embedding storage.
 
-// Create session
-let session_id = store.create_session(SessionMetadata {
-    name: "My Session".into(),
-    model: "gpt-4".into(),
-    tags: vec!["tag1".into()],
-    ..Default::default()
-})?;
+3. **Update Python imports**: Some class names may have changed.
 
-// Add message
-store.append_message(session_id, Message {
-    role: Role::User,
-    content: Content::Text("Hello".into()),
-    ..Default::default()
-})?;
+4. **Enable new features**: Context assembly and sleep-time features are opt-in.
 
-// Search
-let results = store.search(SearchQuery {
-    terms: vec!["hello".into()],
-    limit: 10,
-    ..Default::default()
-})?;
-```
+```toml
+# Add to config.toml for v1.0 features
+[context]
+enabled = true
+token_budget = 8000
 
-### Python Bindings
-
-The `memst` Python package provides full access to MemSt functionality.
-
-#### Installation
-
-```bash
-# From source (requires Rust toolchain)
-cd memst-py
-maturin build --release
-pip install target/wheels/memst-*.whl
-
-# Or from PyPI (when published)
-pip install memst
-```
-
-#### Quick Start
-
-```python
-import tempfile
-from memst import SessionStore, Role, MemoryTier
-
-# Create a store
-store = SessionStore("/tmp/my-store")
-
-# Create a session
-session = store.create_session("My Chat", "gpt-4")
-print(f"Session: {session.id}")
-
-# Add messages
-store.add_message(session.id, Role.User, "Hello, I need help with Rust!")
-store.add_message(session.id, Role.Assistant, "I'd be happy to help with Rust!")
-
-# List sessions
-sessions = store.list_sessions()
-for s in sessions:
-    print(f"  - {s['name']} ({s['model']})")
-
-# Get messages
-messages = store.get_session_messages(session.id)
-for msg in messages:
-    print(f"[{msg['role']}] {msg['content']}")
-
-# Add memories to tiers
-store.add_memory(session.id, MemoryTier.Working, "User is learning Rust", tags=["learning"])
-store.add_memory(session.id, MemoryTier.ShortTerm, "Project deadline: March 1", tags=["project"])
-
-# Search
-results = store.search("Rust", limit=10)
-for r in results:
-    print(f"  {r['content'][:80]}...")
-```
-
-#### API Reference
-
-| Class | Description |
-|-------|-------------|
-| `SessionStore` | Main store for managing sessions |
-| `Session` | Session with id, name, model, created_at |
-| `Message` | Message with id, role, content, timestamp |
-| `MemoryItem` | Memory with content, importance, confidence, tags |
-| `Role` | Enum: System, User, Assistant, Tool |
-| `MemoryTier` | Enum: Working, ShortTerm, LongTerm |
-
-#### SessionStore Methods
-
-```python
-# Constructor / factory
-store = SessionStore(path)  # Create or open store
-
-# Session management
-session = store.create_session(name, model)
-sessions = store.list_sessions()
-session = store.get_session(session_id)
-store.delete_session(session_id)
-
-# Messages
-store.add_message(session_id, Role, content)
-messages = store.get_session_messages(session_id)
-
-# Memory
-store.add_memory(session_id, MemoryTier, content, tags=None)
-memories = store.get_session_memory(session_id, MemoryTier)
-
-# Search
-results = store.search(query, limit=10)
-
-# Statistics
-stats = store.stats()
+[sleep]
+enabled = true
+consolidation_interval = 3600
 ```
 
 ---
 
-## License
+## Appendix: Feature Summary
 
-MemSt is licensed under the Apache License 2.0. See `LICENSE` in the repository root.
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 1 | SQLite session storage | ✅ |
+| 2 | Message CRUD | ✅ |
+| 3 | BM25 full-text search | ✅ |
+| 4 | HNSW vector search | ✅ |
+| 5 | Hybrid RRF search | ✅ |
+| 6 | Git-like objects (Blob/Tree/Commit) | ✅ |
+| 7 | Git-like merge (Branch/Merge) | ✅ |
+| 8 | Data Model (Blake3, WAL, lifecycle) | ✅ |
+| 9 | Context Assembly | ✅ |
+| 10 | Sleep-Time Consolidation | ✅ |
+| 11 | Semantic Merge | ✅ |
+| 12 | Skills | ✅ |
+| 13 | Multi-Agent Support | ✅ |
+| 14 | MCP Adapter | ✅ |
+
+---
+
+*Document version: 1.0*
+*Last updated: 2025*

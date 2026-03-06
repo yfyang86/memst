@@ -1,28 +1,58 @@
 # MemSt
 
-Hybrid, searchable session memory for LLM applications.
+Hybrid, searchable session memory for LLM applications with **semantic memory architecture** (v1.0).
 
 Author: Yifan Yang <yfyang.86@hotmail.com>
 
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+**MemSt v1.0** is a comprehensive memory management system for LLM agents featuring:
 
-MemSt is a Rust workspace that provides:
+- **Git-like version control** for memory with branching and merging
+- **Tiered memory architecture** (Working → Short-term → Long-term → Archival)
+- **Semantic search** with HNSW vector index and hybrid RRF fusion
+- **Context assembly** with token-budget-aware retrieval
+- **Sleep-time consolidation** for automatic memory maintenance
+- **Multi-agent support** with isolated worktrees
+- **MCP (Model Context Protocol)** adapter for Claude/Cursor integration
+- **Knowledge Graph** for entity and relationship tracking
+- **Procedural memory (Skills)** for learned workflows
 
-- A persistent session store for chat history and tiered memories
-- Keyword search (native / Tantivy)
-- Semantic search (HNSW) and hybrid search utilities
-- Python bindings via PyO3 (for embedding into existing Python apps)
+## What's New in v1.0
 
-## Workspace layout
+### Semantic Memory Architecture
+- **Blake3 content-addressable storage** - 3× faster hashing than SHA-256
+- **Write-Ahead Log (WAL)** - Crash recovery for durability
+- **Memory lifecycle** - Automatic tier transitions with checkpoints
+- **A-MEM style evolution** - Retroactive memory network updates
+- **Three-way semantic merge** - Conflict detection and resolution
 
-- memst-core: core library (store/search/vector/hybrid)
-- memst-cli: `memst` CLI binary
-- memst-py: Python extension module (`import memst`)
-- memst-lib: shared library/FFI glue
+### Multi-Agent Support
+- **Worktrees** - Isolated environments for concurrent agents
+- **Agent registry** - Track agent identity and permissions
+- **Cross-agent search** - Search across agent memory scopes
 
-## Quick start
+### Context Assembly
+- **Token-budget-aware retrieval** - Respects LLM context limits
+- **Multi-signal scoring** - Relevance, recency, importance, confidence
+- **Progressive disclosure** - Selective memory inclusion
+
+### MCP Integration
+- **Full MCP protocol support** for Claude Code, Cursor, and other MCP clients
+- **Tools**: memory_read, memory_write, memory_search, skill_lookup, context_build
+
+## Workspace Layout
+
+- **memst-core**: Core library (store/search/vector/hybrid/context/memory)
+- **memst-repo**: Git-alike MemRepo backend (WAL, merge, worktrees)
+- **memst-sleep**: Async sleep-time consolidation pipeline
+- **memst-mcp**: MCP (Model Context Protocol) adapter
+- **memst-cli**: `memst` CLI binary
+- **memst-py**: Python extension module (`import memst`)
+- **memst-lib**: Shared library/FFI glue
+
+## Quick Start
 
 ### CLI
 
@@ -42,6 +72,9 @@ memst --store ./data message add <session-uuid> --role assistant --content "Hi!"
 
 # Search
 memst --store ./data search "hello" --doc-type message --limit 20
+
+# Build context within token budget (v1.0)
+memst context build <session-uuid> --query "help with async" --budget 4000
 ```
 
 ### Python
@@ -55,6 +88,13 @@ session = store.create_session("My Chat", "gpt-4")
 store.add_message(session.id, memst.Role.User, "Hello")
 store.add_message(session.id, memst.Role.Assistant, "Hi!")
 
+# Context assembly with token budget (v1.0)
+context = store.build_context(
+    query="help with Rust async",
+    token_budget=4000,
+    include_memories=True
+)
+
 messages = store.get_session_messages(session.id)
 print(len(messages))
 ```
@@ -62,7 +102,6 @@ print(len(messages))
 ### Web Server (FastAPI + React UI)
 
 ![ui-chat](./assets/figures/memst-ui-chat.png)
-
 
 ```bash
 # Terminal 1: Start the backend server
@@ -117,9 +156,30 @@ For detailed API documentation, see [memst-server-api.md](memst-server-api.md).
 use memst_core::store::SessionStore;
 use memst_core::types::{Role, SessionMetadata};
 
+// Basic store operations
 let store = SessionStore::init("./data")?;
 let session_id = store.create_session(SessionMetadata::new("My Chat", "gpt-4"))?;
 store.append_message(session_id, memst_core::types::Message::new(Role::User, "Hello".into()))?;
+
+// Context assembly with token budget (v1.0)
+use memst_core::context::{ContextAssemblyConfig, ContextAssembler};
+use memst_core::memory::SimpleTokenCounter;
+
+let config = ContextAssemblyConfig {
+    token_budget: 4000,
+    reserved_for_response: 1000,
+    ..Default::default()
+};
+let counter = SimpleTokenCounter;
+let assembler = ContextAssembler::new(config, &counter);
+let assembly = assembler.build_context(
+    "help with async",
+    &memories,
+    &[],
+    &[],
+    &[],
+    "You are a helpful assistant."
+)?;
 ```
 
 ## Installation
@@ -240,6 +300,16 @@ Notes:
 # Fast, offline-friendly unit tests
 cargo test --workspace
 
+# Run UAT (User Acceptance Tests)
+cargo test --test uat_phase8_data_model
+cargo test --test uat_phase9_context_assembly
+cargo test --test uat_phase10_sleep_time
+cargo test --test uat_phase11_semantic_merge
+cargo test --test uat_phase12_skills
+cargo test --test uat_phase13_multi_agent
+cargo test --test uat_phase14_mcp
+cargo test --test end_to_end_simulation
+
 # Enable network integration tests (LLM/embedding)
 MEMST_RUN_INTEGRATION_TESTS=1 cargo test --workspace
 
@@ -250,12 +320,22 @@ python -m pytest memst-py/tests
 ## Documentation
 
 - User manual: `UserManual.md`
+- Architecture PRD: `SemanticTree/MemSt-PRD-v1.0.md`
+
+## Feature Roadmap
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| P1-P7 | Core storage, search, semantic search, git objects | ✅ Complete |
+| P8 | Data Model (Blake3, WAL, lifecycle, frontmatter) | ✅ Complete |
+| P9 | Context Assembly (token-budget, multi-signal scoring) | ✅ Complete |
+| P10 | Sleep-Time (async consolidation, A-MEM evolution) | ✅ Complete |
+| P11 | Semantic Merge (3-way merge, conflict detection) | ✅ Complete |
+| P12 | Skills (procedural memory) | ✅ Complete |
+| P13 | Multi-Agent (worktrees, agent registry) | ✅ Complete |
+| P14 | MCP Adapter | ✅ Complete |
+| P15 | Memory Evolution, KG decay | Planned |
 
 ## License
 
 Apache License 2.0. See `LICENSE`.
-
-
-## Future work
-
-Currently, the `nanobot` in Web-frontend is just for illustration. We will further provide a `memst` backend for the project to enhance the memory management with full features. 
