@@ -7,6 +7,7 @@ members = [
     "memst-repo",
     "memst-sleep",
     "memst-mcp",
+    "memst-extract-v2",
 ]
 exclude = [
     "memst-ui/src-tauri",
