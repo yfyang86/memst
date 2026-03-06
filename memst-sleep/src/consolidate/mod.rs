@@ -144,7 +144,7 @@ impl ConsolidationEngine {
     }
 
     /// Cluster memories by topic/similarity
-    fn cluster_memories(&self, memories: Vec<MemoryItem>) -> Vec<TopicCluster> {
+    pub fn cluster_memories(&self, memories: Vec<MemoryItem>) -> Vec<TopicCluster> {
         // Simple clustering: group by memory type first, then by simple similarity
         let mut clusters: Vec<TopicCluster> = Vec::new();
 
@@ -220,7 +220,7 @@ impl ConsolidationEngine {
     }
 
     /// Summarize a cluster of memories
-    async fn summarize_cluster(&self, cluster: &TopicCluster) -> Option<MemoryItem> {
+    pub async fn summarize_cluster(&self, cluster: &TopicCluster) -> Option<MemoryItem> {
         // Threshold: don't summarize small clusters
         if cluster.memories.len() < 2 {
             return cluster.memories.first().cloned();

@@ -77,6 +77,17 @@ pub enum Resolution {
     Merge { merged_content: String },
 }
 
+impl std::fmt::Display for Resolution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Resolution::KeepBoth { note } => write!(f, "KeepBoth: {}", note),
+            Resolution::PreferNew => write!(f, "PreferNew"),
+            Resolution::PreferExisting => write!(f, "PreferExisting"),
+            Resolution::Merge { .. } => write!(f, "Merge"),
+        }
+    }
+}
+
 /// Memory evolution engine
 pub struct EvolutionEngine {
     /// Similarity threshold for relation detection

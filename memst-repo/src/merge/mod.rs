@@ -373,7 +373,7 @@ impl SemanticMerger {
     }
 
     /// Check if text has contradiction markers
-    fn has_contradiction_marker(&self, text: &str) -> bool {
+    pub fn has_contradiction_marker(&self, text: &str) -> bool {
         let markers = ["not ", "no ", "never ", "false", "wrong", "instead", "switched", "changed"];
         let lower = text.to_lowercase();
         markers.iter().any(|m| lower.contains(m))
