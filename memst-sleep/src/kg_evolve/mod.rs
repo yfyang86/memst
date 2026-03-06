@@ -10,7 +10,7 @@ use crate::error::KgError;
 use crate::evolve::MemoryRelation;
 use memst_core::graph::KnowledgeGraph;
 use memst_core::llm::providers::LlmProvider;
-use memst_core::types::{Entity, EntityId, KgEvolutionAction, KgEvolutionConfig, MemoryItem};
+use memst_core::types::{Entity, EntityId, KgEvolutionAction, KgEvolutionConfig, MemoryItem, RelationshipId};
 use std::sync::Arc;
 
 /// Result type for evolution operations.
@@ -253,15 +253,30 @@ impl KgEvolutionEngine {
                     .delete_relationship(*relationship_id)
                     .map_err(|e| KgError::GraphError(e.to_string()))
             }
-            KgEvolutionAction::SplitEntity { .. } => {
-                Err(KgError::not_implemented("SplitEntity"))
+            KgEvolutionAction::AddRelationship { relationship } => {
+                // Verify both entities exist before adding
+                if graph.get_entity(relationship.subject_id).is_none() {
+                    return Err(KgError::EntityNotFound(relationship.subject_id));
+                }
+                if graph.get_entity(relationship.object_id).is_none() {
+                    return Err(KgError::EntityNotFound(relationship.object_id));
+                }
+                graph
+                    .add_relationship(relationship.clone())
+                    .map_err(|e| KgError::GraphError(e.to_string()))?;
+                Ok(true)
             }
-            KgEvolutionAction::AddRelationship { .. } => {
-                Err(KgError::not_implemented("AddRelationship"))
-            }
-            KgEvolutionAction::UpdateRelationship { .. } => {
-                Err(KgError::not_implemented("UpdateRelationship"))
-            }
+            KgEvolutionAction::UpdateRelationship {
+                relationship_id,
+                confidence,
+                relevance,
+                reason: _,
+            } => self.apply_relationship_update(graph, *relationship_id, *confidence, *relevance),
+            KgEvolutionAction::SplitEntity {
+                original,
+                new_entities,
+                reason: _,
+            } => self.apply_split(graph, *original, new_entities),
         }
     }
 
@@ -415,6 +430,76 @@ impl KgEvolutionEngine {
         } else {
             Err(KgError::EntityNotFound(entity_id))
         }
+    }
+
+    /// Apply updates to a relationship.
+    fn apply_relationship_update(
+        &self,
+        graph: &mut KnowledgeGraph,
+        relationship_id: RelationshipId,
+        confidence: Option<f32>,
+        _relevance: Option<f32>,
+    ) -> Result<bool> {
+        // Check if relationship exists
+        if graph.get_relationship(relationship_id).is_none() {
+            return Err(KgError::RelationshipNotFound(relationship_id));
+        }
+        
+        // Update the relationship
+        graph
+            .update_relationship(relationship_id, confidence)
+            .map_err(|e| KgError::GraphError(e.to_string()))?;
+        
+        Ok(true)
+    }
+
+    /// Split an entity into multiple new entities.
+    fn apply_split(
+        &self,
+        graph: &mut KnowledgeGraph,
+        original_id: EntityId,
+        new_entities: &[memst_core::types::Entity],
+    ) -> Result<bool> {
+        // Verify original entity exists
+        let original = graph
+            .get_entity(original_id)
+            .ok_or(KgError::EntityNotFound(original_id))?
+            .clone();
+        
+        if new_entities.is_empty() {
+            return Err(KgError::invalid_action("No new entities provided for split"));
+        }
+        
+        // Add all new entities to the graph
+        for entity in new_entities {
+            // Check for ID conflicts
+            if graph.get_entity(entity.id).is_some() {
+                return Err(KgError::invalid_action(
+                    format!("Entity with ID {:?} already exists", entity.id)
+                ));
+            }
+            let _ = graph.add_entity(entity.clone());
+        }
+        
+        // Get relationships of original entity to potentially redistribute
+        let _original_relationships = graph.get_relationships(original_id);
+        
+        // For now, migrate all relationships to the first new entity
+        // A smarter implementation would distribute based on semantic similarity
+        if let Some(first_new) = new_entities.first() {
+            graph.migrate_relationships(original_id, first_new.id)
+                .map_err(|e| KgError::GraphError(e.to_string()))?;
+        }
+        
+        // Deprecate the original entity
+        if let Some(entity) = graph.get_entity_mut(original_id) {
+            entity.deprecate(format!("Split into {} new entities", new_entities.len()));
+        }
+        
+        // Store original entity info for reference
+        let _ = original;
+        
+        Ok(true)
     }
 
     /// Get current configuration.

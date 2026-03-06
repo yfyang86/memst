@@ -328,6 +328,55 @@ impl KnowledgeGraph {
         Ok(false)
     }
 
+    /// Get a relationship by ID.
+    pub fn get_relationship(&self, relationship_id: RelationshipId) -> Option<(Relationship, Entity, Entity)> {
+        use chrono::Utc;
+        
+        self.edges
+            .iter()
+            .find(|e| e.relationship_id == relationship_id)
+            .and_then(|edge| {
+                let subject = self.get_entity(edge.subject_id)?.clone();
+                let object = self.get_entity(edge.object_id)?.clone();
+                
+                // Note: SerializableEdge doesn't store decay fields (relevance, half_life_days, etc.)
+                // These are initialized with defaults. This should be fixed by adding fields to SerializableEdge.
+                let relationship = Relationship {
+                    id: edge.relationship_id,
+                    subject_id: edge.subject_id,
+                    predicate: edge.predicate.clone(),
+                    object_id: edge.object_id,
+                    confidence: edge.confidence,
+                    session_id: edge.session_id,
+                    source_message_id: edge.source_message_id,
+                    created_at: edge.created_at,
+                    relevance: 1.0,
+                    half_life_days: 30.0,
+                    is_stable: false,
+                    last_decay_at: Utc::now(),
+                };
+                
+                Some((relationship, subject, object))
+            })
+    }
+
+    /// Update a relationship's properties.
+    pub fn update_relationship(
+        &mut self,
+        relationship_id: RelationshipId,
+        confidence: Option<f32>,
+    ) -> Result<bool> {
+        if let Some(edge) = self.edges.iter_mut().find(|e| e.relationship_id == relationship_id) {
+            if let Some(conf) = confidence {
+                edge.confidence = conf;
+            }
+            self.save()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Migrate relationships from one entity to another.
     ///
     /// This is used during entity merging to transfer all relationships

@@ -389,3 +389,191 @@ fn test_entity_similarity_calculation() {
     
     eprintln!("✓ Similarity calculation test passed");
 }
+
+
+#[test]
+fn test_evolution_add_relationship() {
+    common::setup();
+    
+    let (mut graph, entity_ids, _temp_dir) = create_test_graph_with_entities();
+    let engine = KgEvolutionEngine::new();
+    
+    let session_id = uuid::Uuid::new_v4();
+    
+    // Create a relationship between two entities
+    let relationship = Relationship::new(
+        entity_ids[0],
+        "related_to",
+        entity_ids[2],
+        session_id,
+    );
+    
+    let action = KgEvolutionAction::AddRelationship {
+        relationship: relationship.clone(),
+    };
+    
+    let result = engine.apply_action(&mut graph, &action);
+    assert!(result.is_ok(), "Should successfully add relationship: {:?}", result);
+    assert!(result.unwrap(), "Should return true for successful add");
+    
+    // Verify relationship was added
+    let relationships = graph.get_relationships(entity_ids[0]);
+    assert_eq!(relationships.len(), 1, "Should have one relationship");
+    assert_eq!(relationships[0].0.predicate, "related_to");
+    
+    eprintln!("✓ Add relationship test passed");
+}
+
+#[test]
+fn test_evolution_add_relationship_invalid_entity() {
+    common::setup();
+    
+    let (mut graph, _entity_ids, _temp_dir) = create_test_graph_with_entities();
+    let engine = KgEvolutionEngine::new();
+    
+    let session_id = uuid::Uuid::new_v4();
+    let fake_id = uuid::Uuid::new_v4();
+    
+    // Try to create a relationship with non-existent entity
+    let relationship = Relationship::new(
+        fake_id,
+        "related_to",
+        uuid::Uuid::new_v4(),
+        session_id,
+    );
+    
+    let action = KgEvolutionAction::AddRelationship {
+        relationship,
+    };
+    
+    let result = engine.apply_action(&mut graph, &action);
+    assert!(result.is_err(), "Should fail when entity doesn't exist");
+    
+    eprintln!("✓ Add relationship validation test passed");
+}
+
+#[test]
+fn test_evolution_update_relationship() {
+    common::setup();
+    
+    let (mut graph, entity_ids, _temp_dir) = create_test_graph_with_entities();
+    let engine = KgEvolutionEngine::new();
+    
+    let session_id = uuid::Uuid::new_v4();
+    
+    // First add a relationship
+    let relationship = Relationship::new(
+        entity_ids[0],
+        "uses",
+        entity_ids[2],
+        session_id,
+    );
+    let rel_id = relationship.id;
+    graph.add_relationship(relationship).expect("Failed to add relationship");
+    
+    // Now update its confidence
+    let action = KgEvolutionAction::UpdateRelationship {
+        relationship_id: rel_id,
+        confidence: Some(0.95),
+        relevance: None,
+        reason: "Increased confidence".to_string(),
+    };
+    
+    let result = engine.apply_action(&mut graph, &action);
+    assert!(result.is_ok(), "Should successfully update relationship: {:?}", result);
+    assert!(result.unwrap(), "Should return true for successful update");
+    
+    // Verify relationship was updated using get_relationship
+    let updated = graph.get_relationship(rel_id);
+    assert!(updated.is_some(), "Relationship should exist");
+    assert_eq!(updated.unwrap().0.confidence, 0.95, "Confidence should be updated");
+    
+    eprintln!("✓ Update relationship test passed");
+}
+
+#[test]
+fn test_evolution_split_entity() {
+    common::setup();
+    
+    let (mut graph, entity_ids, _temp_dir) = create_test_graph_with_entities();
+    let engine = KgEvolutionEngine::new();
+    
+    let session_id = uuid::Uuid::new_v4();
+    
+    // Create relationships for the entity to be split
+    let rel = Relationship::new(
+        entity_ids[0],
+        "uses",
+        entity_ids[2],
+        session_id,
+    );
+    graph.add_relationship(rel).expect("Failed to add relationship");
+    
+    // Create new entities to split into
+    let new_entity1 = Entity::new("Rust Language Core", "technology", session_id);
+    let new_entity2 = Entity::new("Rust Ecosystem", "technology", session_id);
+    let new_entity1_id = new_entity1.id;
+    
+    let action = KgEvolutionAction::SplitEntity {
+        original: entity_ids[0],
+        new_entities: vec![new_entity1, new_entity2],
+        reason: "Split for clarity".to_string(),
+    };
+    
+    let result = engine.apply_action(&mut graph, &action);
+    assert!(result.is_ok(), "Should successfully split entity: {:?}", result);
+    assert!(result.unwrap(), "Should return true for successful split");
+    
+    // Verify original entity is deprecated
+    let original = graph.get_entity(entity_ids[0]).expect("Original should exist");
+    assert!(original.is_deprecated, "Original entity should be deprecated");
+    
+    // Verify new entities exist
+    assert!(graph.get_entity(new_entity1_id).is_some(), "New entity 1 should exist");
+    
+    // Verify relationships were migrated
+    let new_rels = graph.get_relationships(new_entity1_id);
+    assert!(!new_rels.is_empty(), "Relationships should be migrated to first new entity");
+    
+    eprintln!("✓ Split entity test passed");
+}
+
+#[test]
+fn test_evolution_remove_relationship() {
+    common::setup();
+    
+    let (mut graph, entity_ids, _temp_dir) = create_test_graph_with_entities();
+    let engine = KgEvolutionEngine::new();
+    
+    let session_id = uuid::Uuid::new_v4();
+    
+    // Add a relationship
+    let relationship = Relationship::new(
+        entity_ids[0],
+        "uses",
+        entity_ids[2],
+        session_id,
+    );
+    let rel_id = relationship.id;
+    graph.add_relationship(relationship).expect("Failed to add relationship");
+    
+    // Verify it exists
+    let relationships_before = graph.get_relationships(entity_ids[0]);
+    assert_eq!(relationships_before.len(), 1, "Should have one relationship before removal");
+    
+    // Remove the relationship
+    let action = KgEvolutionAction::RemoveRelationship {
+        relationship_id: rel_id,
+        reason: "No longer relevant".to_string(),
+    };
+    
+    let result = engine.apply_action(&mut graph, &action);
+    assert!(result.is_ok(), "Should successfully remove relationship: {:?}", result);
+    assert!(result.unwrap(), "Should return true for successful removal");
+    
+    // Verify it was removed
+    let relationships_after = graph.get_relationships(entity_ids[0]);
+    assert!(relationships_after.is_empty(), "Should have no relationships after removal");
+    
+    eprintln!("✓ Remove relationship test passed");
+}
