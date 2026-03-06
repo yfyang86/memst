@@ -875,6 +875,9 @@ mod tests {
             tags: vec![],
             confidence: 0.8,
             importance: 0.5,
+            memory_type: crate::types::MemoryType::Semantic,
+            token_estimate: None,
+            supersedes: None,
         }];
 
         let action =
@@ -1105,6 +1108,9 @@ mod integration_tests {
             tags: vec![],
             confidence: 0.8,
             importance: 0.5,
+            memory_type: crate::types::MemoryType::Semantic,
+            token_estimate: None,
+            supersedes: None,
         }];
 
         let action = extractor.decide_memory_action(&fact, &existing).await;

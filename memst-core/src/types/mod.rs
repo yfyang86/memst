@@ -389,8 +389,23 @@ impl OperationQuery {
     }
 }
 
-/// Memory tier levels for automatic promotion/demotion.
+/// Memory types following MIRIX taxonomy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemoryType {
+    /// Episodic - "What happened" - conversation turns, event summaries
+    Episodic,
+    /// Semantic - "What is true" - facts, preferences, world knowledge
+    Semantic,
+    /// Procedural - "How to do X" - learned workflows, tool usage patterns
+    Procedural,
+    /// Resource - File paths, URLs, external references
+    Resource,
+    /// MetaCognitive - Agent's beliefs about its own knowledge quality
+    MetaCognitive,
+}
+
+/// Memory tier levels for automatic promotion/demotion.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MemoryTier {
     /// Working memory - most recent/frequently accessed
     Working,
@@ -433,6 +448,12 @@ pub struct MemoryItem {
     pub confidence: f32,
     /// Importance score (derived from access count and confidence)
     pub importance: f32,
+    /// Memory type
+    pub memory_type: MemoryType,
+    /// Token estimate
+    pub token_estimate: Option<u32>,
+    /// Superseded memory ID (if this memory replaces another)
+    pub supersedes: Option<Uuid>,
 }
 
 impl MemoryItem {
@@ -450,6 +471,9 @@ impl MemoryItem {
             tags: Vec::new(),
             confidence: 1.0,
             importance: 0.0,
+            memory_type: MemoryType::Semantic, // Default type
+            token_estimate: None,
+            supersedes: None,
         }
     }
 
@@ -474,6 +498,18 @@ impl MemoryItem {
     /// Set an embedding vector.
     pub fn with_embedding(mut self, embedding: Vec<f32>) -> Self {
         self.embedding = Some(embedding);
+        self
+    }
+
+    /// Set the memory type.
+    pub fn with_memory_type(mut self, memory_type: MemoryType) -> Self {
+        self.memory_type = memory_type;
+        self
+    }
+
+    /// Set the token estimate.
+    pub fn with_token_estimate(mut self, tokens: u32) -> Self {
+        self.token_estimate = Some(tokens);
         self
     }
 
@@ -548,6 +584,12 @@ pub type EntityId = Uuid;
 
 /// Unique identifier for a relationship.
 pub type RelationshipId = Uuid;
+
+/// Unique identifier for a memory.
+pub type MemoryId = Uuid;
+
+/// Unique identifier for a session.
+pub type SessionId = Uuid;
 
 /// Represents an entity in the knowledge graph.
 ///

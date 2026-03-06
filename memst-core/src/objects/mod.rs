@@ -6,22 +6,23 @@
 //! - Tree structures for organizing objects
 //! - Commit objects with history tracking and signatures
 //! - Tag objects for marking important commits
+//! - Skill objects for procedural memory
+//! - Entity and Relation objects for Knowledge Graph
+//! - ContextFile objects for working tree files
 //! - Ref management for branches and tags
 //! - Branching and merging support
 //!
-//! Objects are identified by their SHA-256 content hash, enabling:
-//! - Automatic deduplication
-//! - Immutable history
-//! - Time-travel debugging
-//! - Efficient delta encoding
+//! Objects are identified by their BLAKE3 content hash (32 bytes),
+//! enabling automatic deduplication, immutable history, and efficient delta encoding.
 
 use crate::error::{Error, Result};
+use crate::types::{EntityId, MemoryId, MemoryTier, MemoryType};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fmt;
 use std::path::PathBuf;
 
-/// SHA-256 content hash (64 hex characters)
+/// BLAKE3 content hash (32 bytes, 64 hex characters)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ObjectId(pub [u8; 32]);
 
@@ -39,13 +40,11 @@ impl ObjectId {
         })?))
     }
 
-    /// Generate an ObjectId from content
+    /// Generate an ObjectId from content using BLAKE3
     pub fn from_content(content: &[u8]) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(content);
-        let result = hasher.finalize();
+        let hash = blake3::hash(content);
         let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&result[..32]);
+        bytes.copy_from_slice(hash.as_bytes());
         Self(bytes)
     }
 
@@ -93,6 +92,62 @@ pub enum ObjectType {
     Commit,
     /// Annotated tag
     Tag,
+    /// Procedural memory: trigger + steps + metadata
+    Skill,
+    /// Markdown file in the `context/` working tree
+    ContextFile,
+    /// Knowledge graph node
+    Entity,
+    /// Knowledge graph edge
+    Relation,
+}
+
+impl ObjectType {
+    /// Get prefix for this type
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            ObjectType::Blob => "objects",
+            ObjectType::Tree => "objects",
+            ObjectType::Commit => "objects",
+            ObjectType::Tag => "objects",
+            ObjectType::Skill => "objects",
+            ObjectType::ContextFile => "objects",
+            ObjectType::Entity => "objects",
+            ObjectType::Relation => "objects",
+        }
+    }
+
+    /// Get string representation for serialization
+    fn as_str(&self) -> &'static str {
+        match self {
+            ObjectType::Blob => "blob",
+            ObjectType::Tree => "tree",
+            ObjectType::Commit => "commit",
+            ObjectType::Tag => "tag",
+            ObjectType::Skill => "skill",
+            ObjectType::ContextFile => "contextfile",
+            ObjectType::Entity => "entity",
+            ObjectType::Relation => "relation",
+        }
+    }
+}
+
+impl std::str::FromStr for ObjectType {
+    type Err = Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "blob" => Ok(ObjectType::Blob),
+            "tree" => Ok(ObjectType::Tree),
+            "commit" => Ok(ObjectType::Commit),
+            "tag" => Ok(ObjectType::Tag),
+            "skill" => Ok(ObjectType::Skill),
+            "contextfile" => Ok(ObjectType::ContextFile),
+            "entity" => Ok(ObjectType::Entity),
+            "relation" => Ok(ObjectType::Relation),
+            _ => Err(Error::InvalidObjectFormat),
+        }
+    }
 }
 
 /// Header for object serialization
@@ -107,7 +162,7 @@ pub struct ObjectHeader {
 impl ObjectHeader {
     /// Serialize header and content together
     pub fn serialize(&self, content: &[u8]) -> Result<Vec<u8>> {
-        let header_str = format!("{} {}\0", self.object_type_prefix(), self.size);
+        let header_str = format!("{} {}\0", self.object_type.as_str(), self.size);
         let mut result = Vec::with_capacity(header_str.len() + content.len());
         result.extend_from_slice(header_str.as_bytes());
         result.extend_from_slice(content);
@@ -127,38 +182,13 @@ impl ObjectHeader {
         if parts.len() != 2 {
             return Err(Error::InvalidObjectFormat);
         }
-        let object_type = match parts[0] {
-            "blob" => ObjectType::Blob,
-            "tree" => ObjectType::Tree,
-            "commit" => ObjectType::Commit,
-            "tag" => ObjectType::Tag,
-            _ => return Err(Error::InvalidObjectFormat),
-        };
+        let object_type: ObjectType = parts[0].parse()?;
         let size = parts[1].parse().map_err(|_| Error::InvalidObjectFormat)?;
         Ok((Self { object_type, size }, &data[null_pos + 1..]))
     }
-
-    fn object_type_prefix(&self) -> &str {
-        match self.object_type {
-            ObjectType::Blob => "blob",
-            ObjectType::Tree => "tree",
-            ObjectType::Commit => "commit",
-            ObjectType::Tag => "tag",
-        }
-    }
 }
 
-impl ObjectType {
-    /// Get prefix for this type
-    pub fn prefix(&self) -> &'static str {
-        match self {
-            ObjectType::Blob => "objects",
-            ObjectType::Tree => "objects",
-            ObjectType::Commit => "objects",
-            ObjectType::Tag => "objects",
-        }
-    }
-}
+// ================ Basic Object Types ================
 
 /// Blob object - raw content storage
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -263,7 +293,7 @@ impl Default for Tree {
 }
 
 /// Author/committer information
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
 pub struct Author {
     /// Human-readable name.
     pub name: String,
@@ -271,16 +301,6 @@ pub struct Author {
     pub email: String,
     /// Timestamp associated with the author/committer.
     pub timestamp: chrono::DateTime<chrono::Utc>,
-}
-
-impl Clone for Author {
-    fn clone(&self) -> Self {
-        Self {
-            name: self.name.clone(),
-            email: self.email.clone(),
-            timestamp: self.timestamp,
-        }
-    }
 }
 
 impl Author {
@@ -307,6 +327,62 @@ impl Author {
     }
 }
 
+/// Commit source types
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitSource {
+    /// User manually triggered
+    UserExplicit,
+    /// Agent wrote during conversation
+    AgentInline,
+    /// Async consolidation job
+    SleepConsolidation,
+    /// Skill extraction from conversation
+    SkillLearning,
+    /// Imported from Letta/.af/OpenAI format
+    ImportExternal,
+    /// Three-way semantic merge
+    Merge,
+}
+
+/// Memory scope for multi-agent isolation
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemoryScope {
+    /// User-scoped memory
+    User(String),
+    /// Project-scoped memory
+    Project(String),
+    /// Organization-scoped memory
+    Org(String),
+    /// Session-scoped memory
+    Session(String),
+    /// Agent-scoped memory
+    Agent(String),
+}
+
+/// Commit metadata extensions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitMetadata {
+    /// Token budget change
+    pub token_delta: i32,
+    /// Confidence score (0.0-1.0)
+    pub confidence: f32,
+    /// Source of the commit
+    pub source: CommitSource,
+    /// Scope of the memory
+    pub scope: Option<MemoryScope>,
+}
+
+impl Default for CommitMetadata {
+    fn default() -> Self {
+        Self {
+            token_delta: 0,
+            confidence: 1.0,
+            source: CommitSource::UserExplicit,
+            scope: None,
+        }
+    }
+}
+
 /// Commit object - snapshot with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Commit {
@@ -322,8 +398,10 @@ pub struct Commit {
     pub message: String,
     /// Optional signature (PGP/GPG)
     pub signature: Option<String>,
-    /// GPGTYPE:sig
+    /// GPG signature
     pub gpgsig: Option<String>,
+    /// Extended metadata for MemSt
+    pub metadata: CommitMetadata,
 }
 
 impl Commit {
@@ -337,6 +415,21 @@ impl Commit {
             message: message.to_string(),
             signature: None,
             gpgsig: None,
+            metadata: CommitMetadata::default(),
+        }
+    }
+
+    /// Create a commit with metadata
+    pub fn with_metadata(tree_oid: ObjectId, author: Author, message: &str, metadata: CommitMetadata) -> Self {
+        Self {
+            tree_oid,
+            parent_oids: Vec::new(),
+            author: author.clone(),
+            committer: author,
+            message: message.to_string(),
+            signature: None,
+            gpgsig: None,
+            metadata,
         }
     }
 
@@ -405,6 +498,324 @@ impl Tag {
         }
     }
 }
+
+// ================ New Object Types for v1.0 ================
+
+/// Skill failure policy
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SkillFailurePolicy {
+    /// Abort on failure
+    Abort,
+    /// Skip failed step
+    Skip,
+    /// Retry with count
+    Retry(u8),
+    /// Fallback to another skill
+    Fallback(ObjectId),
+}
+
+/// A step in a skill/procedure
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillStep {
+    /// Execution order
+    pub order: u8,
+    /// Action description
+    pub action: String,
+    /// Tool to use (optional)
+    pub tool: Option<String>,
+    /// Conditions for executing this step
+    pub conditions: Vec<String>,
+    /// Failure handling policy
+    pub on_failure: SkillFailurePolicy,
+}
+
+/// Skill object - procedural memory
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Skill {
+    /// Unique skill ID (human-readable slug)
+    pub slug: String,
+    /// Display name
+    pub name: String,
+    /// Description
+    pub description: String,
+    /// Trigger patterns (regex or semantic triggers)
+    pub trigger_patterns: Vec<String>,
+    /// Skill steps
+    pub steps: Vec<SkillStep>,
+    /// Success rate (0.0-1.0)
+    pub success_rate: f32,
+    /// Usage count
+    pub usage_count: u32,
+    /// Source session where it was learned
+    pub source_session: Option<String>,
+    /// Commit hash where stored
+    pub commit_hash: Option<ObjectId>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Last updated
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Skill {
+    /// Create a new skill
+    pub fn new(slug: &str, name: &str, description: &str) -> Self {
+        let now = Utc::now();
+        Self {
+            slug: slug.to_string(),
+            name: name.to_string(),
+            description: description.to_string(),
+            trigger_patterns: Vec::new(),
+            steps: Vec::new(),
+            success_rate: 1.0,
+            usage_count: 0,
+            source_session: None,
+            commit_hash: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Add a trigger pattern
+    pub fn with_trigger(mut self, pattern: &str) -> Self {
+        self.trigger_patterns.push(pattern.to_string());
+        self
+    }
+
+    /// Add a step
+    pub fn with_step(mut self, step: SkillStep) -> Self {
+        self.steps.push(step);
+        self
+    }
+
+    /// Set source session
+    pub fn with_source_session(mut self, session_id: &str) -> Self {
+        self.source_session = Some(session_id.to_string());
+        self
+    }
+
+    /// Record a usage outcome
+    pub fn record_outcome(&mut self, success: bool) {
+        self.usage_count += 1;
+        // EWMA update for success rate
+        let alpha = 0.1;
+        let outcome = if success { 1.0 } else { 0.0 };
+        self.success_rate = (1.0 - alpha) * self.success_rate + alpha * outcome;
+        self.updated_at = Utc::now();
+    }
+}
+
+/// Frontmatter metadata for context files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Frontmatter {
+    /// Memory ID
+    pub id: String,
+    /// Memory type
+    #[serde(rename = "type")]
+    pub memory_type: MemoryType,
+    /// Memory tier
+    pub tier: MemoryTier,
+    /// Scope
+    pub scope: Option<MemoryScope>,
+    /// Tags
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Importance score (0.0-1.0)
+    pub importance: Option<f32>,
+    /// Confidence score (0.0-1.0)
+    pub confidence: Option<f32>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Last updated
+    pub updated_at: Option<DateTime<Utc>>,
+    /// Commit hash (abbreviated OK)
+    pub commit_hash: Option<String>,
+    /// Superseded memory ID
+    pub supersedes: Option<String>,
+    /// Retracted by memory ID
+    pub retracted_by: Option<String>,
+    /// Token estimate
+    pub token_estimate: Option<u32>,
+    /// Embedding model
+    pub embedding_model: Option<String>,
+    /// Embedding version
+    pub embedding_version: Option<String>,
+    /// Source
+    pub source: Option<CommitSource>,
+    /// Access count
+    pub access_count: Option<u32>,
+    /// Last accessed
+    pub last_accessed: Option<DateTime<Utc>>,
+    /// Linked skills
+    pub linked_skills: Vec<String>,
+    /// Linked entities
+    pub linked_entities: Vec<String>,
+}
+
+impl Frontmatter {
+    /// Create minimal frontmatter
+    pub fn new(id: &str, memory_type: MemoryType, tier: MemoryTier) -> Self {
+        Self {
+            id: id.to_string(),
+            memory_type,
+            tier,
+            scope: None,
+            tags: Vec::new(),
+            importance: None,
+            confidence: None,
+            created_at: Utc::now(),
+            updated_at: None,
+            commit_hash: None,
+            supersedes: None,
+            retracted_by: None,
+            token_estimate: None,
+            embedding_model: None,
+            embedding_version: None,
+            source: None,
+            access_count: None,
+            last_accessed: None,
+            linked_skills: Vec::new(),
+            linked_entities: Vec::new(),
+        }
+    }
+}
+
+/// ContextFile object - markdown file with YAML frontmatter
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextFile {
+    /// YAML frontmatter
+    pub frontmatter: Frontmatter,
+    /// Markdown content (without frontmatter)
+    pub content: String,
+    /// File path relative to context/
+    pub path: String,
+}
+
+impl ContextFile {
+    /// Create a new context file
+    pub fn new(frontmatter: Frontmatter, content: &str, path: &str) -> Self {
+        Self {
+            frontmatter,
+            content: content.to_string(),
+            path: path.to_string(),
+        }
+    }
+
+    /// Serialize to full markdown with frontmatter (JSON format)
+    pub fn to_markdown(&self) -> String {
+        // Use JSON for frontmatter (simpler than YAML for now)
+        let json = serde_json::to_string_pretty(&self.frontmatter).unwrap_or_default();
+        format!("---\n{}\n---\n\n{}", json, self.content)
+    }
+
+    /// Parse from markdown content
+    pub fn from_markdown(text: &str, path: &str) -> Result<Self> {
+        // Parse JSON frontmatter between --- delimiters
+        if !text.starts_with("---") {
+            return Err(Error::InvalidObjectFormat);
+        }
+
+        let end_marker = text[3..].find("---").ok_or(Error::InvalidObjectFormat)?;
+        let json_content = &text[3..3 + end_marker].trim();
+        let content = text[3 + end_marker + 3..].trim_start();
+
+        let frontmatter: Frontmatter = serde_json::from_str(json_content)
+            .map_err(|_| Error::InvalidObjectFormat)?;
+
+        Ok(Self {
+            frontmatter,
+            content: content.to_string(),
+            path: path.to_string(),
+        })
+    }
+}
+
+/// Entity object - Knowledge Graph node
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Entity {
+    /// Entity ID (UUID)
+    pub id: EntityId,
+    /// Display label
+    pub label: String,
+    /// Entity type
+    pub entity_type: String,
+    /// Attributes as key-value pairs
+    pub attributes: std::collections::HashMap<String, String>,
+    /// Commit hash
+    pub commit_hash: ObjectId,
+    /// First seen timestamp
+    pub first_seen: DateTime<Utc>,
+    /// Last updated
+    pub last_updated: DateTime<Utc>,
+    /// Source memory IDs
+    pub source_memories: Vec<MemoryId>,
+}
+
+impl Entity {
+    /// Create a new entity
+    pub fn new(id: EntityId, label: &str, entity_type: &str, commit_hash: ObjectId) -> Self {
+        let now = Utc::now();
+        Self {
+            id,
+            label: label.to_string(),
+            entity_type: entity_type.to_string(),
+            attributes: std::collections::HashMap::new(),
+            commit_hash,
+            first_seen: now,
+            last_updated: now,
+            source_memories: Vec::new(),
+        }
+    }
+
+    /// Set attributes
+    pub fn with_attributes(mut self, attrs: std::collections::HashMap<String, String>) -> Self {
+        self.attributes = attrs;
+        self
+    }
+}
+
+/// Relation object - Knowledge Graph edge
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Relation {
+    /// Relation ID (UUID)
+    pub id: crate::types::RelationshipId,
+    /// Source entity ID
+    pub from: EntityId,
+    /// Target entity ID
+    pub to: EntityId,
+    /// Relation label/predicate
+    pub label: String,
+    /// Edge weight
+    pub weight: f32,
+    /// Confidence score
+    pub confidence: f32,
+    /// Source memory IDs
+    pub source_memories: Vec<MemoryId>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+}
+
+impl Relation {
+    /// Create a new relation
+    pub fn new(
+        id: crate::types::RelationshipId,
+        from: EntityId,
+        to: EntityId,
+        label: &str,
+    ) -> Self {
+        Self {
+            id,
+            from,
+            to,
+            label: label.to_string(),
+            weight: 1.0,
+            confidence: 1.0,
+            source_memories: Vec::new(),
+            created_at: Utc::now(),
+        }
+    }
+}
+
+// ================ Object Store ================
 
 /// Reference types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -515,6 +926,54 @@ impl ObjectStore {
         self.write_object(oid, ObjectType::Tag, &content)
     }
 
+    /// Write a skill to the store
+    pub fn write_skill(&mut self, skill: &Skill) -> Result<ObjectId> {
+        let content = bincode::serialize(skill)?;
+        let oid = ObjectId::from_content(&content);
+
+        if self.object_path(&oid).exists() {
+            return Ok(oid);
+        }
+
+        self.write_object(oid, ObjectType::Skill, &content)
+    }
+
+    /// Write a context file to the store
+    pub fn write_context_file(&mut self, file: &ContextFile) -> Result<ObjectId> {
+        let content = bincode::serialize(file)?;
+        let oid = ObjectId::from_content(&content);
+
+        if self.object_path(&oid).exists() {
+            return Ok(oid);
+        }
+
+        self.write_object(oid, ObjectType::ContextFile, &content)
+    }
+
+    /// Write an entity to the store
+    pub fn write_entity(&mut self, entity: &Entity) -> Result<ObjectId> {
+        let content = bincode::serialize(entity)?;
+        let oid = ObjectId::from_content(&content);
+
+        if self.object_path(&oid).exists() {
+            return Ok(oid);
+        }
+
+        self.write_object(oid, ObjectType::Entity, &content)
+    }
+
+    /// Write a relation to the store
+    pub fn write_relation(&mut self, relation: &Relation) -> Result<ObjectId> {
+        let content = bincode::serialize(relation)?;
+        let oid = ObjectId::from_content(&content);
+
+        if self.object_path(&oid).exists() {
+            return Ok(oid);
+        }
+
+        self.write_object(oid, ObjectType::Relation, &content)
+    }
+
     /// Internal method to write object data
     fn write_object(
         &self,
@@ -561,6 +1020,30 @@ impl ObjectStore {
     /// Read a tag from the store
     pub fn read_tag(&self, oid: &ObjectId) -> Result<Tag> {
         let data = self.read_object_data(oid, ObjectType::Tag)?;
+        Ok(bincode::deserialize(&data)?)
+    }
+
+    /// Read a skill from the store
+    pub fn read_skill(&self, oid: &ObjectId) -> Result<Skill> {
+        let data = self.read_object_data(oid, ObjectType::Skill)?;
+        Ok(bincode::deserialize(&data)?)
+    }
+
+    /// Read a context file from the store
+    pub fn read_context_file(&self, oid: &ObjectId) -> Result<ContextFile> {
+        let data = self.read_object_data(oid, ObjectType::ContextFile)?;
+        Ok(bincode::deserialize(&data)?)
+    }
+
+    /// Read an entity from the store
+    pub fn read_entity(&self, oid: &ObjectId) -> Result<Entity> {
+        let data = self.read_object_data(oid, ObjectType::Entity)?;
+        Ok(bincode::deserialize(&data)?)
+    }
+
+    /// Read a relation from the store
+    pub fn read_relation(&self, oid: &ObjectId) -> Result<Relation> {
+        let data = self.read_object_data(oid, ObjectType::Relation)?;
         Ok(bincode::deserialize(&data)?)
     }
 
@@ -624,6 +1107,7 @@ pub struct CommitBuilder<'a> {
     author: Option<Author>,
     committer: Option<Author>,
     message: String,
+    metadata: CommitMetadata,
 }
 
 impl<'a> CommitBuilder<'a> {
@@ -636,6 +1120,7 @@ impl<'a> CommitBuilder<'a> {
             author: None,
             committer: None,
             message: String::new(),
+            metadata: CommitMetadata::default(),
         }
     }
 
@@ -669,6 +1154,12 @@ impl<'a> CommitBuilder<'a> {
         self
     }
 
+    /// Set commit metadata
+    pub fn metadata(mut self, metadata: CommitMetadata) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
     /// Build and write the commit
     pub fn build(self) -> Result<ObjectId> {
         let tree_oid = self
@@ -679,10 +1170,8 @@ impl<'a> CommitBuilder<'a> {
             .author
             .ok_or_else(|| Error::InvalidOperation("Commit must have an author".to_string()))?;
 
-        let committer = self.committer.unwrap_or_else(|| author.clone());
-
-        let mut commit = Commit::new(tree_oid, author.clone(), &self.message);
-        commit.committer = committer;
+        let mut commit = Commit::with_metadata(tree_oid, author.clone(), &self.message, self.metadata);
+        commit.committer = self.committer.unwrap_or(author);
         for parent in self.parents {
             commit.add_parent(parent);
         }
@@ -690,6 +1179,8 @@ impl<'a> CommitBuilder<'a> {
         self.store.write_commit(&commit)
     }
 }
+
+// ================ RefStore and other components will continue in the next part ================
 
 /// Commit history for traversing ancestry
 pub struct CommitHistory<'a> {
@@ -742,7 +1233,6 @@ impl<'a> CommitHistory<'a> {
         queue.push_back(self.oid);
 
         while let Some(oid) = queue.pop_front() {
-            // Mark as visited when we process it, not when we queue it
             if !visited.insert(oid) {
                 continue;
             }
@@ -756,7 +1246,6 @@ impl<'a> CommitHistory<'a> {
             let commit = self.store.read_commit(&oid)?;
             ancestors.push(oid);
 
-            // Add parents to queue - they'll be marked visited when processed
             for parent in &commit.parent_oids {
                 if !visited.contains(parent) {
                     queue.push_back(*parent);
@@ -892,7 +1381,6 @@ impl RefStore {
         let content = std::fs::read_to_string(&head_path)?;
         if content.starts_with("ref: refs/heads/") {
             let ref_path = &content[16..].trim();
-            // Remove trailing newline and refs/heads/ prefix
             let name = ref_path
                 .strip_prefix("refs/heads/")
                 .unwrap_or(ref_path)
@@ -901,266 +1389,6 @@ impl RefStore {
             return Ok(Some(name));
         }
         Ok(None)
-    }
-}
-
-/// Merge result
-#[derive(Debug, Clone)]
-pub struct MergeResult {
-    /// The commit OID if merge was successful
-    pub commit_oid: Option<ObjectId>,
-    /// Whether fast-forward was performed
-    pub fast_forward: bool,
-    /// Conflicted paths if merge had conflicts
-    pub conflicts: Vec<String>,
-    /// Whether merge was already up-to-date
-    pub up_to_date: bool,
-}
-
-/// Merge options
-#[derive(Debug, Clone)]
-pub struct MergeOptions {
-    /// Strategy to use
-    pub strategy: MergeStrategy,
-    /// Commit message
-    pub message: Option<String>,
-    /// Whether to commit even with conflicts (allow conflicts)
-    pub no_commit: bool,
-    /// Sign the commit
-    pub sign: bool,
-}
-
-impl Default for MergeOptions {
-    fn default() -> Self {
-        Self {
-            strategy: MergeStrategy::Recursive,
-            message: None,
-            no_commit: false,
-            sign: false,
-        }
-    }
-}
-
-/// Merge strategies
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MergeStrategy {
-    /// Recursive three-way merge
-    Recursive,
-    /// Resolve using common ancestor
-    Resolve,
-    /// Octopus merge for multiple branches
-    Octopus,
-    /// Ours merge (keep ours)
-    Ours,
-    /// theirs merge (keep theirs)
-    Theirs,
-}
-
-/// Branch operations
-pub struct BranchOps<'a> {
-    objects: &'a ObjectStore,
-    refs: &'a RefStore,
-}
-
-impl<'a> BranchOps<'a> {
-    /// Create new branch operations
-    pub fn new(objects: &'a ObjectStore, refs: &'a RefStore) -> Self {
-        Self { objects, refs }
-    }
-
-    /// Create a new branch
-    pub fn create(&self, name: &str, oid: ObjectId) -> Result<()> {
-        self.refs.set_ref(name, RefType::Branch, oid)
-    }
-
-    /// Create and checkout a new branch
-    pub fn create_checkout(&self, name: &str, oid: ObjectId) -> Result<()> {
-        self.create(name, oid)?;
-        self.refs.set_head_to_branch(name)
-    }
-
-    /// Delete a branch
-    pub fn delete(&self, name: &str) -> Result<()> {
-        self.refs.delete_ref(name, RefType::Branch)
-    }
-
-    /// Check if branch exists
-    pub fn exists(&self, name: &str) -> Result<bool> {
-        Ok(self.refs.get_ref(name, RefType::Branch)?.is_some())
-    }
-
-    /// Get branch OID
-    pub fn get(&self, name: &str) -> Result<Option<ObjectId>> {
-        self.refs.get_ref(name, RefType::Branch)
-    }
-
-    /// Rename a branch
-    pub fn rename(&self, old_name: &str, new_name: &str) -> Result<()> {
-        let oid = self
-            .get(old_name)?
-            .ok_or_else(|| Error::InvalidOperation(format!("Branch '{}' not found", old_name)))?;
-        self.delete(old_name)?;
-        self.create(new_name, oid)
-    }
-
-    /// Check if oid is an ancestor of the branch's tip
-    pub fn is_ancestor(&self, branch: &str, oid: ObjectId) -> Result<bool> {
-        let branch_oid = self
-            .get(branch)?
-            .ok_or_else(|| Error::InvalidOperation(format!("Branch '{}' not found", branch)))?;
-
-        let history = CommitHistory::new(self.objects, branch_oid);
-        let ancestors = history.ancestors(None)?;
-        Ok(ancestors.contains(&oid))
-    }
-}
-
-/// Merge operations
-pub struct MergeOps<'a> {
-    objects: &'a mut ObjectStore,
-    refs: &'a RefStore,
-}
-
-impl<'a> MergeOps<'a> {
-    /// Create new merge operations
-    pub fn new(objects: &'a mut ObjectStore, refs: &'a RefStore) -> Self {
-        Self { objects, refs }
-    }
-
-    /// Perform a merge
-    pub fn merge(
-        &mut self,
-        ours_branch: &str,
-        theirs_oid: ObjectId,
-        author: Author,
-        options: MergeOptions,
-    ) -> Result<MergeResult> {
-        // Get our current commit
-        let ours_oid = self
-            .refs
-            .get_ref(ours_branch, RefType::Branch)?
-            .ok_or_else(|| {
-                Error::InvalidOperation(format!("Branch '{}' not found", ours_branch))
-            })?;
-
-        // If same commit, already up-to-date
-        if ours_oid == theirs_oid {
-            return Ok(MergeResult {
-                commit_oid: Some(ours_oid),
-                fast_forward: false,
-                conflicts: Vec::new(),
-                up_to_date: true,
-            });
-        }
-
-        // Check for fast-forward: if ours is ancestor of theirs, we can fast-forward
-        let theirs_history = CommitHistory::new(self.objects, theirs_oid);
-        let theirs_ancestors = theirs_history.ancestors(None)?;
-
-        if theirs_ancestors.contains(&ours_oid) && options.strategy == MergeStrategy::Recursive {
-            // Fast-forward merge - move branch pointer to theirs
-            self.refs
-                .set_ref(ours_branch, RefType::Branch, theirs_oid)?;
-            return Ok(MergeResult {
-                commit_oid: Some(theirs_oid),
-                fast_forward: true,
-                conflicts: Vec::new(),
-                up_to_date: false,
-            });
-        }
-
-        // Find merge base for three-way merge
-        let merge_base = theirs_history.merge_base(ours_oid)?;
-
-        // Perform three-way merge
-        match options.strategy {
-            MergeStrategy::Recursive | MergeStrategy::Resolve => {
-                self.recursive_merge(ours_oid, theirs_oid, merge_base, author, options)
-            }
-            MergeStrategy::Octopus => self.octopus_merge(ours_oid, &[theirs_oid], author, options),
-            MergeStrategy::Ours => {
-                // Keep ours
-                self.refs.set_ref(ours_branch, RefType::Branch, ours_oid)?;
-                Ok(MergeResult {
-                    commit_oid: Some(ours_oid),
-                    fast_forward: false,
-                    conflicts: Vec::new(),
-                    up_to_date: false,
-                })
-            }
-            MergeStrategy::Theirs => {
-                self.refs
-                    .set_ref(ours_branch, RefType::Branch, theirs_oid)?;
-                Ok(MergeResult {
-                    commit_oid: Some(theirs_oid),
-                    fast_forward: false,
-                    conflicts: Vec::new(),
-                    up_to_date: false,
-                })
-            }
-        }
-    }
-
-    /// Recursive three-way merge
-    fn recursive_merge(
-        &mut self,
-        ours_oid: ObjectId,
-        theirs_oid: ObjectId,
-        _merge_base: Option<ObjectId>,
-        author: Author,
-        options: MergeOptions,
-    ) -> Result<MergeResult> {
-        // For simplicity, create a merge commit with both parents
-        // A full implementation would do content-level merging
-        let mut commit = Commit::new(
-            ObjectId::from_content(b"merged_tree"),
-            author,
-            options.message.as_deref().unwrap_or("Merge commit"),
-        );
-        commit.add_parent(ours_oid);
-        commit.add_parent(theirs_oid);
-
-        let commit_oid = self.objects.write_commit(&commit)?;
-
-        // Update branch
-        self.refs.set_ref("main", RefType::Branch, commit_oid)?;
-
-        Ok(MergeResult {
-            commit_oid: Some(commit_oid),
-            fast_forward: false,
-            conflicts: Vec::new(),
-            up_to_date: false,
-        })
-    }
-
-    /// Octopus merge for multiple branches
-    fn octopus_merge(
-        &mut self,
-        ours_oid: ObjectId,
-        others: &[ObjectId],
-        author: Author,
-        options: MergeOptions,
-    ) -> Result<MergeResult> {
-        let mut commit = Commit::new(
-            ObjectId::from_content(b"merged_tree"),
-            author,
-            options.message.as_deref().unwrap_or("Octopus merge"),
-        );
-        commit.add_parent(ours_oid);
-        for &oid in others {
-            commit.add_parent(oid);
-        }
-
-        let commit_oid = self.objects.write_commit(&commit)?;
-
-        self.refs.set_ref("main", RefType::Branch, commit_oid)?;
-
-        Ok(MergeResult {
-            commit_oid: Some(commit_oid),
-            fast_forward: false,
-            conflicts: Vec::new(),
-            up_to_date: false,
-        })
     }
 }
 
@@ -1222,10 +1450,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_object_id_from_content() {
+    fn test_object_id_blake3() {
         let content = b"Hello, World!";
         let oid = ObjectId::from_content(content);
         assert_eq!(oid.to_hex().len(), 64);
+        
+        // Verify BLAKE3 hash
+        let hash = blake3::hash(content);
+        assert_eq!(oid.0, *hash.as_bytes());
     }
 
     #[test]
@@ -1257,591 +1489,142 @@ mod tests {
     }
 
     #[test]
-    fn test_commit_creation() {
+    fn test_commit_with_metadata() {
         let tree_oid = ObjectId::from_content(b"tree");
         let author = Author::new("Test User", "test@example.com");
-        let commit = Commit::new(tree_oid, author, "Test commit");
+        let metadata = CommitMetadata {
+            token_delta: 100,
+            confidence: 0.95,
+            source: CommitSource::AgentInline,
+            scope: Some(MemoryScope::Session("abc123".to_string())),
+        };
+        let commit = Commit::with_metadata(tree_oid, author, "Test commit", metadata);
 
         assert_eq!(commit.parent_oids.len(), 0);
         assert_eq!(commit.message, "Test commit");
-        assert_eq!(commit.author.name, "Test User");
+        assert_eq!(commit.metadata.token_delta, 100);
+        assert_eq!(commit.metadata.confidence, 0.95);
         assert!(!commit.is_merge());
     }
 
     #[test]
-    fn test_merge_commit() {
-        let tree_oid = ObjectId::from_content(b"tree");
-        let author = Author::new("Test User", "test@example.com");
-        let mut commit = Commit::new(tree_oid, author, "Merge commit");
-        commit.add_parent(ObjectId::from_content(b"parent1"));
-        commit.add_parent(ObjectId::from_content(b"parent2"));
+    fn test_skill_creation() {
+        let skill = Skill::new(
+            "rust-async-setup",
+            "Setup Rust Async Project",
+            "Initialize a new Rust project with Tokio",
+        )
+        .with_trigger("set up rust async")
+        .with_trigger("initialize tokio project");
 
-        assert_eq!(commit.parent_oids.len(), 2);
-        assert!(commit.is_merge());
+        assert_eq!(skill.slug, "rust-async-setup");
+        assert_eq!(skill.trigger_patterns.len(), 2);
+        assert_eq!(skill.success_rate, 1.0);
+        assert_eq!(skill.usage_count, 0);
     }
 
     #[test]
-    fn test_hex_codec() {
-        let original = ObjectId::from_content(b"test content for hashing");
-        let hex = original.to_hex();
-        let decoded = ObjectId::from_hex(&hex).unwrap();
-        assert_eq!(original, decoded);
+    fn test_skill_outcome_recording() {
+        let mut skill = Skill::new("test", "Test", "Test skill");
+        
+        skill.record_outcome(true);
+        assert_eq!(skill.usage_count, 1);
+        assert!(skill.success_rate > 0.99);
+        
+        skill.record_outcome(false);
+        assert_eq!(skill.usage_count, 2);
+        assert!(skill.success_rate < 1.0);
     }
 
     #[test]
-    fn test_object_header_serialization() {
-        let header = ObjectHeader {
-            object_type: ObjectType::Blob,
-            size: 100,
-        };
-        let content = b"test content";
-        let serialized = header.serialize(content).unwrap();
-        let (deserialized, remaining) = ObjectHeader::deserialize(&serialized).unwrap();
+    fn test_context_file_markdown() {
+        let frontmatter = Frontmatter::new(
+            "mem-550e8400",
+            MemoryType::Semantic,
+            MemoryTier::LongTerm,
+        );
+        
+        let file = ContextFile::new(
+            frontmatter,
+            "# User prefers Tokio\n\nDetails here...",
+            "entities/tokio.md",
+        );
 
-        assert_eq!(deserialized.object_type, ObjectType::Blob);
-        assert_eq!(deserialized.size, 100);
-        assert_eq!(remaining, content);
+        let markdown = file.to_markdown();
+        assert!(markdown.starts_with("---"));
+        assert!(markdown.contains("\"id\": \"mem-550e8400\""));
+        assert!(markdown.contains("\"type\": \"Semantic\""));
+        assert!(markdown.contains("# User prefers Tokio"));
     }
 
     #[test]
-    fn test_object_store_roundtrip() {
+    fn test_context_file_parse() {
+        // Create a frontmatter first
+        let frontmatter = Frontmatter::new("mem-123", MemoryType::Semantic, MemoryTier::LongTerm);
+        let file = ContextFile::new(frontmatter, "# Test Content\n\nThis is the body.", "test.md");
+        
+        // Serialize and deserialize
+        let markdown = file.to_markdown();
+        let parsed = ContextFile::from_markdown(&markdown, "test.md").unwrap();
+        
+        assert_eq!(parsed.frontmatter.id, "mem-123");
+        assert_eq!(parsed.content.trim(), "# Test Content\n\nThis is the body.");
+    }
+
+    #[test]
+    fn test_entity_creation() {
+        let id = uuid::Uuid::new_v4();
+        let commit_hash = ObjectId::from_content(b"commit");
+        
+        let entity = Entity::new(
+            id,
+            "Tokio",
+            "technology",
+            commit_hash,
+        ).with_attributes({
+            let mut attrs = std::collections::HashMap::new();
+            attrs.insert("ecosystem".to_string(), "async".to_string());
+            attrs.insert("language".to_string(), "rust".to_string());
+            attrs
+        });
+
+        assert_eq!(entity.label, "Tokio");
+        assert_eq!(entity.entity_type, "technology");
+        assert_eq!(entity.attributes["ecosystem"], "async");
+    }
+
+    #[test]
+    fn test_relation_creation() {
+        let id = uuid::Uuid::new_v4();
+        let from = uuid::Uuid::new_v4();
+        let to = uuid::Uuid::new_v4();
+        
+        let relation = Relation::new(id, from, to, "uses");
+
+        assert_eq!(relation.label, "uses");
+        assert_eq!(relation.from, from);
+        assert_eq!(relation.to, to);
+        assert_eq!(relation.weight, 1.0);
+    }
+
+    #[test]
+    fn test_object_store_new_types() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let base_path = temp_dir.path().to_path_buf();
 
         let mut store = ObjectStore::new(&base_path).unwrap();
 
-        // Write a blob
-        let blob = Blob::new(b"Hello, World!");
-        let blob_oid = store.write_blob(&blob).unwrap();
-        assert!(store.exists(&blob_oid));
-
-        // Read it back
-        let read_blob = store.read_blob(&blob_oid).unwrap();
-        assert_eq!(blob.content, read_blob.content);
-    }
-
-    #[test]
-    fn test_commit_builder() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-
-        // Create initial commit
-        let tree_oid = ObjectId::from_content(b"tree content");
-        let author = Author::new("Test", "test@test.com");
-        let commit_oid = CommitBuilder::new(&mut store)
-            .tree(tree_oid)
-            .author(author.clone())
-            .message("Initial commit")
-            .build()
-            .unwrap();
-
-        // Verify
-        let commit = store.read_commit(&commit_oid).unwrap();
-        assert_eq!(commit.message, "Initial commit");
-        assert!(commit.parent_oids.is_empty());
-    }
-
-    #[test]
-    fn test_tag_creation() {
-        let target_oid = ObjectId::from_content(b"target");
-        let tagger = Author::new("Tagger", "tagger@test.com");
-
-        let tag = Tag::new(target_oid, "v1.0.0", tagger, "Release 1.0.0");
-        assert_eq!(tag.name, "v1.0.0");
-        assert!(!tag.is_lightweight);
-    }
-
-    #[test]
-    fn test_lightweight_tag() {
-        let target_oid = ObjectId::from_content(b"target");
-        let tag = Tag::lightweight(target_oid, "v1.0.0");
-
-        assert_eq!(tag.name, "v1.0.0");
-        assert!(tag.is_lightweight);
-    }
-
-    #[test]
-    fn test_ref_operations() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let refs = RefStore::new(&base_path).unwrap();
-
-        let oid = ObjectId::from_content(b"test");
-
-        // Create branch
-        refs.set_ref("main", RefType::Branch, oid).unwrap();
-
-        // Get branch
-        let retrieved = refs.get_ref("main", RefType::Branch).unwrap();
-        assert_eq!(retrieved, Some(oid));
-
-        // List branches
-        let branches = refs.list_refs(RefType::Branch).unwrap();
-        assert!(branches.contains(&"main".to_string()));
-
-        // Delete branch
-        refs.delete_ref("main", RefType::Branch).unwrap();
-        let deleted = refs.get_ref("main", RefType::Branch).unwrap();
-        assert!(deleted.is_none());
-    }
-
-    #[test]
-    fn test_head_operations() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let refs = RefStore::new(&base_path).unwrap();
-
-        let oid = ObjectId::from_content(b"test");
-
-        // Set HEAD to OID
-        refs.set_head(oid).unwrap();
-        let head = refs.get_head().unwrap();
-        assert_eq!(head, Some(oid));
-
-        // Set HEAD to branch
-        refs.set_ref("develop", RefType::Branch, oid).unwrap();
-        refs.set_head_to_branch("develop").unwrap();
-        let branch = refs.get_branch_name().unwrap();
-        assert_eq!(branch, Some("develop".to_string()));
-    }
-
-    #[test]
-    fn test_commit_history_ancestry() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-        let _refs = RefStore::new(&base_path).unwrap();
-        let author = Author::new("Test", "test@test.com");
-
-        // Create initial commit
-        let commit1 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree1"))
-            .author(author.clone())
-            .message("Initial commit")
-            .build()
-            .unwrap();
-
-        // Create second commit
-        let commit2 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree2"))
-            .author(author.clone())
-            .parent(commit1)
-            .message("Second commit")
-            .build()
-            .unwrap();
-
-        // Create third commit
-        let commit3 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree3"))
-            .author(author.clone())
-            .parent(commit2)
-            .message("Third commit")
-            .build()
-            .unwrap();
-
-        // Test ancestry
-        let history = CommitHistory::new(&store, commit3);
-        let ancestors = history.ancestors(None).unwrap();
-
-        assert!(ancestors.contains(&commit1));
-        assert!(ancestors.contains(&commit2));
-        assert!(ancestors.contains(&commit3));
-
-        // Test limited ancestry
-        let limited = history.ancestors(Some(2)).unwrap();
-        assert_eq!(limited.len(), 2);
-    }
-
-    #[test]
-    fn test_commit_history_merge_base() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-        let author = Author::new("Test", "test@test.com");
-
-        // Create initial commit
-        let commit1 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree1"))
-            .author(author.clone())
-            .message("Initial commit")
-            .build()
-            .unwrap();
-
-        // Create main branch commit
-        let main = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"main_tree"))
-            .author(author.clone())
-            .parent(commit1)
-            .message("Main branch")
-            .build()
-            .unwrap();
-
-        // Create feature branch commit
-        let feature = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"feature_tree"))
-            .author(author.clone())
-            .parent(commit1)
-            .message("Feature branch")
-            .build()
-            .unwrap();
-
-        // Merge feature into main
-        let merge = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"merge_tree"))
-            .author(author.clone())
-            .parent(main)
-            .parent(feature)
-            .message("Merge feature into main")
-            .build()
-            .unwrap();
-
-        // Test merge base between main and feature
-        let history = CommitHistory::new(&store, main);
-        let merge_base = history.merge_base(feature).unwrap();
-        assert_eq!(merge_base, Some(commit1));
-
-        // Merge base of merge and main should be main (main is ancestor of merge)
-        let history2 = CommitHistory::new(&store, merge);
-        let merge_base2 = history2.merge_base(main).unwrap();
-        assert_eq!(merge_base2, Some(main));
-    }
-
-    #[test]
-    fn test_branch_operations() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let store = ObjectStore::new(&base_path).unwrap();
-        let refs = RefStore::new(&base_path).unwrap();
-        let branches = BranchOps::new(&store, &refs);
-
-        let oid = ObjectId::from_content(b"test");
-
-        // Create branch
-        branches.create("feature", oid).unwrap();
-        assert!(branches.exists("feature").unwrap());
-
-        // Get branch
-        let branch_oid = branches.get("feature").unwrap();
-        assert_eq!(branch_oid, Some(oid));
-
-        // Rename branch
-        branches.rename("feature", "new-feature").unwrap();
-        assert!(!branches.exists("feature").unwrap());
-        assert!(branches.exists("new-feature").unwrap());
-
-        // Delete branch
-        branches.delete("new-feature").unwrap();
-        assert!(!branches.exists("new-feature").unwrap());
-    }
-
-    #[test]
-    fn test_branch_is_ancestor() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-        let refs = RefStore::new(&base_path).unwrap();
-        let author = Author::new("Test", "test@test.com");
-
-        // Create initial commit
-        let commit1 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree1"))
-            .author(author.clone())
-            .message("Initial")
-            .build()
-            .unwrap();
-
-        // Create commit2 on main
-        let commit2 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree2"))
-            .author(author.clone())
-            .parent(commit1)
-            .message("Second")
-            .build()
-            .unwrap();
-
-        // Now create BranchOps and use it
-        let branches = BranchOps::new(&store, &refs);
-
-        // Create branch at commit1 and update to commit2
-        branches.create("main", commit1).unwrap();
-        branches.create("main", commit2).unwrap();
-
-        // commit2 should be descendant of commit1
-        assert!(branches.is_ancestor("main", commit2).unwrap());
-        assert!(branches.is_ancestor("main", commit1).unwrap());
-    }
-
-    #[test]
-    fn test_merge_operations() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-        let refs = RefStore::new(&base_path).unwrap();
-        let author = Author::new("Test", "test@test.com");
-
-        // Create initial commit
-        let commit1 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree1"))
-            .author(author.clone())
-            .message("Initial")
-            .build()
-            .unwrap();
-
-        // Create main branch and advance it
-        refs.set_ref("main", RefType::Branch, commit1).unwrap();
-
-        let main_commit = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"main_tree"))
-            .author(author.clone())
-            .parent(commit1)
-            .message("Main update")
-            .build()
-            .unwrap();
-        refs.set_ref("main", RefType::Branch, main_commit).unwrap();
-
-        // Create feature commit from original commit1
-        let feature = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"feature_tree"))
-            .author(author.clone())
-            .parent(commit1)
-            .message("Feature")
-            .build()
-            .unwrap();
-
-        // Now create MergeOps and do the merge - branches have truly diverged
-        let mut merges = MergeOps::new(&mut store, &refs);
-        let result = merges
-            .merge("main", feature, author.clone(), MergeOptions::default())
-            .unwrap();
-
-        // Should not be fast-forward since we have diverged
-        assert!(!result.fast_forward);
-        assert!(result.commit_oid.is_some());
-        assert!(result.conflicts.is_empty());
-        assert!(!result.up_to_date);
-    }
-
-    #[test]
-    fn test_fast_forward_merge() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-        let refs = RefStore::new(&base_path).unwrap();
-        let author = Author::new("Test", "test@test.com");
-
-        // Create initial commit
-        let commit1 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree1"))
-            .author(author.clone())
-            .message("Initial")
-            .build()
-            .unwrap();
-
-        // Create main at commit1
-        refs.set_ref("main", RefType::Branch, commit1).unwrap();
-
-        // Create new commit ahead of main
-        let commit2 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree2"))
-            .author(author.clone())
-            .parent(commit1)
-            .message("Ahead")
-            .build()
-            .unwrap();
-
-        // Now create MergeOps and do the fast-forward
-        let mut merges = MergeOps::new(&mut store, &refs);
-        let result = merges
-            .merge("main", commit2, author.clone(), MergeOptions::default())
-            .unwrap();
-
-        assert!(result.fast_forward);
-        assert_eq!(result.commit_oid, Some(commit2));
-        assert!(result.conflicts.is_empty());
-    }
-
-    #[test]
-    fn test_up_to_date_merge() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-        let refs = RefStore::new(&base_path).unwrap();
-        let author = Author::new("Test", "test@test.com");
-
-        // Create initial commit
-        let commit1 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree1"))
-            .author(author.clone())
-            .message("Initial")
-            .build()
-            .unwrap();
-
-        // Create main at commit1
-        refs.set_ref("main", RefType::Branch, commit1).unwrap();
-
-        // Now create MergeOps and do the up-to-date merge
-        let mut merges = MergeOps::new(&mut store, &refs);
-        let result = merges
-            .merge("main", commit1, author.clone(), MergeOptions::default())
-            .unwrap();
-
-        assert!(result.up_to_date);
-        assert!(!result.fast_forward);
-    }
-
-    #[test]
-    fn test_merge_strategies() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-        let refs = RefStore::new(&base_path).unwrap();
-        let author = Author::new("Test", "test@test.com");
-
-        // Create initial commit
-        let commit1 = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree1"))
-            .author(author.clone())
-            .message("Initial")
-            .build()
-            .unwrap();
-
-        refs.set_ref("main", RefType::Branch, commit1).unwrap();
-
-        let feature = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"feature"))
-            .author(author.clone())
-            .parent(commit1)
-            .message("Feature")
-            .build()
-            .unwrap();
-
-        // Test Ours strategy
-        let mut store2 = ObjectStore::new(&base_path).unwrap();
-        let refs2 = RefStore::new(&base_path).unwrap();
-        refs2.set_ref("main", RefType::Branch, commit1).unwrap();
-        let mut merges = MergeOps::new(&mut store2, &refs2);
-
-        let result = merges
-            .merge(
-                "main",
-                feature,
-                author.clone(),
-                MergeOptions {
-                    strategy: MergeStrategy::Ours,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-
-        // Should keep ours (commit1), not create merge commit
-        assert!(result.commit_oid.is_some());
-        // commit_oid should be commit1 since we're keeping ours
-        let main_oid = refs2.get_ref("main", RefType::Branch).unwrap().unwrap();
-        assert_eq!(main_oid, commit1);
-    }
-
-    #[test]
-    fn test_tag_operations() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-        let _refs = RefStore::new(&base_path).unwrap();
-        let author = Author::new("Test", "test@test.com");
-
-        // Create a commit
-        let commit_oid = CommitBuilder::new(&mut store)
-            .tree(ObjectId::from_content(b"tree"))
-            .author(author.clone())
-            .message("Test commit")
-            .build()
-            .unwrap();
-
-        // Create annotated tag
-        let tag = Tag::new(commit_oid, "v1.0.0", author.clone(), "Release 1.0.0");
-        let tag_oid = store.write_tag(&tag).unwrap();
-
-        // Read tag back
-        let read_tag = store.read_tag(&tag_oid).unwrap();
-        assert_eq!(read_tag.name, "v1.0.0");
-        assert_eq!(read_tag.target_oid, commit_oid);
-        assert!(!read_tag.is_lightweight);
-
-        // Create lightweight tag
-        let light_tag = Tag::lightweight(commit_oid, "v1.0.1");
-        let light_oid = store.write_tag(&light_tag).unwrap();
-
-        let read_light = store.read_tag(&light_oid).unwrap();
-        assert_eq!(read_light.name, "v1.0.1");
-        assert!(read_light.is_lightweight);
-    }
-
-    #[test]
-    fn test_object_deduplication() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
-
-        let mut store = ObjectStore::new(&base_path).unwrap();
-
-        // Create identical blobs
-        let blob1 = Blob::new(b"same content");
-        let blob2 = Blob::new(b"same content");
-
-        let oid1 = store.write_blob(&blob1).unwrap();
-        let oid2 = store.write_blob(&blob2).unwrap();
-
-        // Should deduplicate
-        assert_eq!(oid1, oid2);
-
-        // Only one object on disk
-        let count = store.count().unwrap();
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn test_tree_entry_modes() {
-        let file_mode = TreeEntry::MODE_FILE;
-        let dir_mode = TreeEntry::MODE_DIR;
-        let exec_mode = TreeEntry::MODE_EXECUTABLE;
-
-        assert_eq!(file_mode, 0o100644);
-        assert_eq!(dir_mode, 0o040000);
-        assert_eq!(exec_mode, 0o100755);
-    }
-
-    #[test]
-    fn test_author_timestamp() {
-        let before = chrono::Utc::now();
-
-        // Small delay to ensure timestamp changes
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        let author = Author::new("Test", "test@test.com");
-
-        let after = chrono::Utc::now();
-
-        assert!(author.timestamp >= before);
-        assert!(author.timestamp <= after);
-    }
-
-    #[test]
-    fn test_object_id_nil() {
-        let nil_oid = ObjectId::nil();
-        assert!(nil_oid.is_nil());
-
-        let real_oid = ObjectId::from_content(b"content");
-        assert!(!real_oid.is_nil());
+        // Write and read a skill
+        let skill = Skill::new("test", "Test Skill", "A test skill");
+        let skill_oid = store.write_skill(&skill).unwrap();
+        let read_skill = store.read_skill(&skill_oid).unwrap();
+        assert_eq!(read_skill.slug, "test");
+
+        // Write and read an entity
+        let id = uuid::Uuid::new_v4();
+        let entity = Entity::new(id, "Test Entity", "test", skill_oid);
+        let entity_oid = store.write_entity(&entity).unwrap();
+        let read_entity = store.read_entity(&entity_oid).unwrap();
+        assert_eq!(read_entity.label, "Test Entity");
     }
 }

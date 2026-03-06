@@ -4,6 +4,9 @@ members = [
     "memst-cli",
     "memst-py",
     "memst-lib",
+    "memst-repo",
+    "memst-sleep",
+    "memst-mcp",
 ]
 exclude = [
     "memst-ui/src-tauri",
