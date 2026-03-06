@@ -4,10 +4,14 @@
 //! - Job scheduler for sleep-time tasks
 //! - Memory consolidation and clustering
 //! - A-MEM-style memory evolution
+//! - KG decay and evolution (Phase 15)
 
 pub mod consolidate;
 pub mod evolve;
 pub mod jobs;
+pub mod kg_decay;
+pub mod kg_evolve;
+pub mod kg_extract;
 
 use jobs::{ConsolidationJob, JobScheduler};
 

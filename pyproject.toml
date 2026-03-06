@@ -6,5 +6,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "maturin>=1.12.6",
+    "openai>=2.26.0",
     "pytest>=8.4.2",
+    "requests>=2.32.5",
 ]

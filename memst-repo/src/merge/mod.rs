@@ -300,7 +300,8 @@ impl SemanticMerger {
     }
 
     /// Detect if two memories conflict
-    fn detect_conflict(&self, ours: &MemoryItem, theirs: &MemoryItem) -> Option<Conflict> {
+    #[allow(dead_code)]
+    pub fn detect_conflict(&self, ours: &MemoryItem, theirs: &MemoryItem) -> Option<Conflict> {
         // Check for duplication
         let similarity = self.calculate_similarity(&ours.content, &theirs.content);
         
@@ -338,7 +339,8 @@ impl SemanticMerger {
     }
 
     /// Auto-resolve a conflict
-    fn auto_resolve_conflict(&self, conflict: &Conflict) -> Conflict {
+    #[allow(dead_code)]
+    pub fn auto_resolve_conflict(&self, conflict: &Conflict) -> Conflict {
         let mut resolved = conflict.clone();
 
         match conflict.conflict_type {
@@ -358,7 +360,8 @@ impl SemanticMerger {
     }
 
     /// Calculate similarity between two texts
-    fn calculate_similarity(&self, a: &str, b: &str) -> f32 {
+    #[allow(dead_code)]
+    pub fn calculate_similarity(&self, a: &str, b: &str) -> f32 {
         let a_words: std::collections::HashSet<&str> = a.split_whitespace().collect();
         let b_words: std::collections::HashSet<&str> = b.split_whitespace().collect();
 

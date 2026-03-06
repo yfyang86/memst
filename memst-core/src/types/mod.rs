@@ -615,7 +615,35 @@ pub struct Entity {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// Access count for frequency tracking
     pub access_count: u32,
+    
+    // ===== Phase 15: KG Decay Fields =====
+    /// Current relevance score (0.0-1.0), decays over time
+    #[serde(default = "default_relevance")]
+    pub relevance: f32,
+    
+    /// Half-life in days (time for relevance to decay by 50%)
+    #[serde(default = "default_half_life")]
+    pub half_life_days: f32,
+    
+    /// Whether this entity is decay-resistant (e.g., core facts)
+    #[serde(default)]
+    pub is_stable: bool,
+    
+    /// Last decay calculation timestamp
+    #[serde(default = "chrono::Utc::now")]
+    pub last_decay_at: chrono::DateTime<chrono::Utc>,
+    
+    /// Whether entity is deprecated (soft delete)
+    #[serde(default)]
+    pub is_deprecated: bool,
+    
+    /// Deprecation reason if deprecated
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecation_reason: Option<String>,
 }
+
+fn default_relevance() -> f32 { 1.0 }
+fn default_half_life() -> f32 { 30.0 }  // 30 days default
 
 impl Entity {
     /// Create a new entity.
@@ -630,6 +658,33 @@ impl Entity {
             confidence: 1.0,
             created_at: chrono::Utc::now(),
             access_count: 0,
+            relevance: 1.0,
+            half_life_days: 30.0,
+            is_stable: false,
+            last_decay_at: chrono::Utc::now(),
+            is_deprecated: false,
+            deprecation_reason: None,
+        }
+    }
+    
+    /// Create a stable (non-decaying) entity for core facts.
+    pub fn stable(name: impl Into<String>, entity_type: impl Into<String>, session_id: Uuid) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            entity_type: entity_type.into(),
+            attributes: serde_json::json!({}),
+            session_id,
+            source_message_id: None,
+            confidence: 1.0,
+            created_at: chrono::Utc::now(),
+            access_count: 0,
+            relevance: 1.0,
+            half_life_days: 365.0,  // 1 year half-life for stable entities
+            is_stable: true,
+            last_decay_at: chrono::Utc::now(),
+            is_deprecated: false,
+            deprecation_reason: None,
         }
     }
 
@@ -654,11 +709,29 @@ impl Entity {
     /// Record an access to this entity.
     pub fn record_access(&mut self) {
         self.access_count += 1;
+        // Boost relevance on access
+        self.relevance = (self.relevance + 0.1).min(1.0);
     }
 
     /// Get importance score based on confidence and access count.
     pub fn importance(&self) -> f32 {
         self.confidence * (1.0 + (self.access_count as f32 * 0.1))
+    }
+    
+    /// Get effective importance considering relevance decay.
+    pub fn effective_importance(&self) -> f32 {
+        self.importance() * self.relevance
+    }
+    
+    /// Mark entity as deprecated.
+    pub fn deprecate(&mut self, reason: impl Into<String>) {
+        self.is_deprecated = true;
+        self.deprecation_reason = Some(reason.into());
+    }
+    
+    /// Check if entity is active (not deprecated).
+    pub fn is_active(&self) -> bool {
+        !self.is_deprecated && self.relevance > 0.1
     }
 }
 
@@ -684,6 +757,23 @@ pub struct Relationship {
     pub source_message_id: Option<Uuid>,
     /// When the relationship was created
     pub created_at: chrono::DateTime<chrono::Utc>,
+    
+    // ===== Phase 15: KG Decay Fields =====
+    /// Current relevance score (0.0-1.0), decays over time
+    #[serde(default = "default_relevance")]
+    pub relevance: f32,
+    
+    /// Half-life in days (time for relevance to decay by 50%)
+    #[serde(default = "default_half_life")]
+    pub half_life_days: f32,
+    
+    /// Whether this relationship is decay-resistant
+    #[serde(default)]
+    pub is_stable: bool,
+    
+    /// Last decay calculation timestamp
+    #[serde(default = "chrono::Utc::now")]
+    pub last_decay_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl Relationship {
@@ -703,6 +793,33 @@ impl Relationship {
             session_id,
             source_message_id: None,
             created_at: chrono::Utc::now(),
+            relevance: 1.0,
+            half_life_days: 30.0,
+            is_stable: false,
+            last_decay_at: chrono::Utc::now(),
+        }
+    }
+    
+    /// Create a stable (non-decaying) relationship for core facts.
+    pub fn stable(
+        subject_id: EntityId,
+        predicate: impl Into<String>,
+        object_id: EntityId,
+        session_id: Uuid,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            subject_id,
+            predicate: predicate.into(),
+            object_id,
+            confidence: 1.0,
+            session_id,
+            source_message_id: None,
+            created_at: chrono::Utc::now(),
+            relevance: 1.0,
+            half_life_days: 365.0,
+            is_stable: true,
+            last_decay_at: chrono::Utc::now(),
         }
     }
 
@@ -812,6 +929,289 @@ impl RelationshipQuery {
     pub fn with_min_confidence(mut self, confidence: f32) -> Self {
         self.min_confidence = Some(confidence);
         self
+    }
+}
+
+// ================ Phase 15: KG Extraction & Evolution Types ================
+
+/// Temporal relevance classification for extracted entities/relationships.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TemporalRelevance {
+    /// Permanent facts (e.g., "Rust is a programming language")
+    Permanent,
+    /// Long-term relevant (e.g., user preferences)
+    LongTerm,
+    /// Short-term relevant (e.g., current project details)
+    ShortTerm,
+    /// Temporary/transient (e.g., "I'm busy right now")
+    Temporary,
+}
+
+impl TemporalRelevance {
+    /// Get default half-life in days for this relevance type.
+    pub fn default_half_life_days(&self) -> f32 {
+        match self {
+            TemporalRelevance::Permanent => 365.0 * 10.0,  // 10 years
+            TemporalRelevance::LongTerm => 90.0,
+            TemporalRelevance::ShortTerm => 30.0,
+            TemporalRelevance::Temporary => 7.0,
+        }
+    }
+    
+    /// Whether this should be marked as stable (non-decaying).
+    pub fn is_stable(&self) -> bool {
+        matches!(self, TemporalRelevance::Permanent)
+    }
+}
+
+impl Default for TemporalRelevance {
+    fn default() -> Self {
+        TemporalRelevance::ShortTerm
+    }
+}
+
+/// An event extracted from text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtractedEvent {
+    /// Event name/description
+    pub name: String,
+    /// Event type (meeting, decision, milestone, change, etc.)
+    pub event_type: String,
+    /// Names of participating entities
+    pub participants: Vec<String>,
+    /// Timestamp if available
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    /// Additional attributes
+    pub attributes: serde_json::Value,
+    /// Confidence score
+    pub confidence: f32,
+}
+
+impl ExtractedEvent {
+    /// Create a new extracted event.
+    pub fn new(name: impl Into<String>, event_type: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            event_type: event_type.into(),
+            participants: Vec::new(),
+            timestamp: None,
+            attributes: serde_json::json!({}),
+            confidence: 1.0,
+        }
+    }
+}
+
+/// Entity extracted from text via LLM.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtractedEntity {
+    /// Entity name
+    pub name: String,
+    /// Entity type
+    pub entity_type: String,
+    /// Attributes
+    pub attributes: serde_json::Value,
+    /// Confidence score
+    pub confidence: f32,
+    /// Temporal relevance
+    #[serde(default)]
+    pub temporal_relevance: TemporalRelevance,
+}
+
+/// Relationship extracted from text via LLM.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtractedRelationship {
+    /// Subject entity name
+    pub subject: String,
+    /// Predicate
+    pub predicate: String,
+    /// Object entity name
+    pub object: String,
+    /// Confidence score
+    pub confidence: f32,
+    /// Temporal type
+    #[serde(default)]
+    pub temporal_type: TemporalRelevance,
+}
+
+/// Result of KG extraction from text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KgExtractionResult {
+    /// Extracted entities
+    pub entities: Vec<ExtractedEntity>,
+    /// Extracted relationships
+    pub relationships: Vec<ExtractedRelationship>,
+    /// Extracted events
+    pub events: Vec<ExtractedEvent>,
+    /// Overall confidence
+    pub confidence: f32,
+}
+
+impl KgExtractionResult {
+    /// Create an empty result.
+    pub fn empty() -> Self {
+        Self {
+            entities: Vec::new(),
+            relationships: Vec::new(),
+            events: Vec::new(),
+            confidence: 0.0,
+        }
+    }
+    
+    /// Check if result is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entities.is_empty() && self.relationships.is_empty() && self.events.is_empty()
+    }
+}
+
+/// Actions that can be performed during KG evolution.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KgEvolutionAction {
+    /// Merge two entities into one
+    MergeEntities {
+        /// Entity to keep
+        keep: EntityId,
+        /// Entity to merge (will be deprecated)
+        merge: EntityId,
+        /// Reason for merge
+        reason: String,
+    },
+    /// Split entity into multiple
+    SplitEntity {
+        /// Original entity
+        original: EntityId,
+        /// New entities to create
+        new_entities: Vec<Entity>,
+        /// Reason for split
+        reason: String,
+    },
+    /// Update entity attributes
+    UpdateEntity {
+        /// Entity to update
+        entity_id: EntityId,
+        /// New name (if changed)
+        new_name: Option<String>,
+        /// New type (if changed)
+        new_type: Option<String>,
+        /// Attribute changes
+        attribute_changes: serde_json::Value,
+        /// Reason for update
+        reason: String,
+    },
+    /// Add new relationship
+    AddRelationship {
+        /// Relationship to add
+        relationship: Relationship,
+    },
+    /// Remove stale relationship
+    RemoveRelationship {
+        /// Relationship ID to remove
+        relationship_id: RelationshipId,
+        /// Reason for removal
+        reason: String,
+    },
+    /// Mark entity as deprecated
+    DeprecateEntity {
+        /// Entity to deprecate
+        entity_id: EntityId,
+        /// Deprecation reason
+        reason: String,
+        /// Replacement entity (if any)
+        replacement: Option<EntityId>,
+    },
+    /// Update relationship confidence/relevance
+    UpdateRelationship {
+        /// Relationship to update
+        relationship_id: RelationshipId,
+        /// New confidence
+        confidence: Option<f32>,
+        /// New relevance
+        relevance: Option<f32>,
+        /// Reason for update
+        reason: String,
+    },
+}
+
+impl std::fmt::Display for KgEvolutionAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KgEvolutionAction::MergeEntities { keep, merge, reason } => {
+                write!(f, "MergeEntities({}, {}, reason: {})", keep, merge, reason)
+            }
+            KgEvolutionAction::SplitEntity { original, new_entities, reason } => {
+                write!(f, "SplitEntity({}, {} new entities, reason: {})", 
+                    original, new_entities.len(), reason)
+            }
+            KgEvolutionAction::UpdateEntity { entity_id, reason, .. } => {
+                write!(f, "UpdateEntity({}, reason: {})", entity_id, reason)
+            }
+            KgEvolutionAction::AddRelationship { relationship } => {
+                write!(f, "AddRelationship({}, {} -> {})", 
+                    relationship.predicate, relationship.subject_id, relationship.object_id)
+            }
+            KgEvolutionAction::RemoveRelationship { relationship_id, reason } => {
+                write!(f, "RemoveRelationship({}, reason: {})", relationship_id, reason)
+            }
+            KgEvolutionAction::DeprecateEntity { entity_id, reason, .. } => {
+                write!(f, "DeprecateEntity({}, reason: {})", entity_id, reason)
+            }
+            KgEvolutionAction::UpdateRelationship { relationship_id, reason, .. } => {
+                write!(f, "UpdateRelationship({}, reason: {})", relationship_id, reason)
+            }
+        }
+    }
+}
+
+/// Configuration for KG decay.
+#[derive(Debug, Clone, Copy)]
+pub struct KgDecayConfig {
+    /// Minimum relevance threshold (below this, entities are candidates for removal)
+    pub min_relevance_threshold: f32,
+    /// Default half-life for entities
+    pub default_entity_half_life_days: f32,
+    /// Default half-life for relationships
+    pub default_relationship_half_life_days: f32,
+    /// Boost to relevance on access
+    pub access_boost: f32,
+    /// Decay calculation interval (how often to apply decay)
+    pub decay_interval_hours: u64,
+}
+
+impl Default for KgDecayConfig {
+    fn default() -> Self {
+        Self {
+            min_relevance_threshold: 0.1,
+            default_entity_half_life_days: 30.0,
+            default_relationship_half_life_days: 30.0,
+            access_boost: 0.1,
+            decay_interval_hours: 24,
+        }
+    }
+}
+
+/// Configuration for KG evolution.
+#[derive(Debug, Clone)]
+pub struct KgEvolutionConfig {
+    /// Similarity threshold for entity merging
+    pub merge_threshold: f32,
+    /// Threshold for detecting entity splits
+    pub split_threshold: f32,
+    /// Minimum confidence for auto-applying actions
+    pub min_auto_apply_confidence: f32,
+    /// Whether to require human approval for merges
+    pub require_approval_for_merge: bool,
+    /// Maximum entities to compare for similarity
+    pub max_comparison_batch: usize,
+}
+
+impl Default for KgEvolutionConfig {
+    fn default() -> Self {
+        Self {
+            merge_threshold: 0.85,
+            split_threshold: 0.7,
+            min_auto_apply_confidence: 0.8,
+            require_approval_for_merge: true,
+            max_comparison_batch: 100,
+        }
     }
 }
 

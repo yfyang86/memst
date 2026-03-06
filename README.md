@@ -17,6 +17,8 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Multi-agent support** with isolated worktrees
 - **MCP (Model Context Protocol)** adapter for Claude/Cursor integration
 - **Knowledge Graph** for entity and relationship tracking
+- **KG decay** - Temporal relevance decay for entities/relationships
+- **KG evolution** - Automatic entity merging and deprecation
 - **Procedural memory (Skills)** for learned workflows
 
 ## What's New in v1.0
@@ -334,7 +336,7 @@ python -m pytest memst-py/tests
 | P12 | Skills (procedural memory) | ✅ Complete |
 | P13 | Multi-Agent (worktrees, agent registry) | ✅ Complete |
 | P14 | MCP Adapter | ✅ Complete |
-| P15 | Memory Evolution, KG decay | Planned |
+| P15 | Memory Evolution, KG decay | ✅ Complete |
 
 ## License
 

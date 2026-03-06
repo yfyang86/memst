@@ -771,6 +771,10 @@ fn main() -> Result<()> {
                         session_id: *session_id,
                         source_message_id: None,
                         created_at: chrono::Utc::now(),
+                        relevance: 1.0,
+                        half_life_days: 30.0,
+                        is_stable: false,
+                        last_decay_at: chrono::Utc::now(),
                     };
                     let _added = graph.add_relationship(relationship)?;
                     println!(

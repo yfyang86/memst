@@ -510,6 +510,12 @@ impl MemoryExtractor for LlmExtractor {
                 confidence: 0.8,
                 created_at: chrono::Utc::now(),
                 access_count: 0,
+                relevance: 1.0,
+                half_life_days: 30.0,
+                is_stable: false,
+                last_decay_at: chrono::Utc::now(),
+                is_deprecated: false,
+                deprecation_reason: None,
             };
             entities.push(entity.clone());
             entity_map.insert(name, entity.id);
@@ -547,6 +553,10 @@ impl MemoryExtractor for LlmExtractor {
                     session_id,
                     source_message_id: None,
                     created_at: chrono::Utc::now(),
+                    relevance: 1.0,
+                    half_life_days: 30.0,
+                    is_stable: false,
+                    last_decay_at: chrono::Utc::now(),
                 });
             }
         }
@@ -678,6 +688,12 @@ impl MemoryExtractor for RuleBasedExtractor {
                     confidence: 0.6,
                     created_at: chrono::Utc::now(),
                     access_count: 0,
+                    relevance: 1.0,
+                    half_life_days: 30.0,
+                    is_stable: false,
+                    last_decay_at: chrono::Utc::now(),
+                    is_deprecated: false,
+                    deprecation_reason: None,
                 };
                 entities.push(entity.clone());
 
@@ -691,6 +707,10 @@ impl MemoryExtractor for RuleBasedExtractor {
                         session_id: entity.session_id,
                         source_message_id: None,
                         created_at: chrono::Utc::now(),
+                        relevance: 1.0,
+                        half_life_days: 30.0,
+                        is_stable: false,
+                        last_decay_at: chrono::Utc::now(),
                     });
                 }
                 prev_entity = Some(entity);

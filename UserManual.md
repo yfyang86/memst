@@ -24,10 +24,11 @@ Date: 2025
 12. [Skills (Phase 12)](#skills-phase-12)
 13. [Multi-Agent Support (Phase 13)](#multi-agent-support-phase-13)
 14. [MCP Adapter (Phase 14)](#mcp-adapter-phase-14)
-15. [Python Bindings](#python-bindings)
-16. [Configuration](#configuration)
-17. [CLI Reference](#cli-reference)
-18. [API Reference](#api-reference)
+15. [Memory Evolution & KG Decay (Phase 15)](#memory-evolution--kg-decay-phase-15)
+16. [Python Bindings](#python-bindings)
+17. [Configuration](#configuration)
+18. [CLI Reference](#cli-reference)
+19. [API Reference](#api-reference)
 
 ---
 
@@ -1089,6 +1090,157 @@ let response = adapter.handle_context_build(request).await?;
 
 ---
 
+## Memory Evolution & KG Decay (Phase 15)
+
+Phase 15 introduces sophisticated knowledge graph evolution and decay mechanisms, enabling the system to maintain an accurate, relevant knowledge graph that automatically adjusts importance based on access patterns and temporal relevance.
+
+### KG Decay
+
+Knowledge graph entities and relationships decay over time, simulating natural forgetting. Each entity/relationship has:
+
+- **Relevance score** (0.0-1.0) - current importance
+- **Half-life** - time for relevance to decay by 50%
+- **Stability flag** - whether decay is applied
+
+**Decay Formula**:
+```
+relevance = base_relevance * (0.5 ^ (days_elapsed / half_life_days))
+```
+
+**Half-Life Presets**:
+
+| Temporal Class | Half-Life | Example |
+|----------------|-----------|---------|
+| Permanent | 10 years | Core facts ("Rust is a programming language") |
+| Long-term | 90 days | User preferences |
+| Short-term | 30 days | Project details |
+| Temporary | 7 days | Transient info |
+
+```rust
+use memst_sleep::kg_decay::{KgDecayEngine, presets};
+use memst_core::types::{KgDecayConfig, Entity};
+
+// Create decay engine
+let config = KgDecayConfig {
+    min_relevance_threshold: 0.1,
+    access_boost: 0.1,
+    ..Default::default()
+};
+let engine = KgDecayEngine::with_config(config);
+
+// Apply decay to entire graph
+let result = engine.apply_decay(&mut knowledge_graph)?;
+println!("Processed {} entities", result.entities_processed);
+
+// Find stale entities
+let stale = engine.find_stale_entities(&knowledge_graph);
+for (entity_id, relevance) in stale {
+    println!("Entity {} has low relevance: {:.2}", entity_id, relevance);
+}
+
+// Create stable (non-decaying) entity
+let stable_entity = Entity::stable("Core Fact", "knowledge", session_id);
+```
+
+### KG Evolution
+
+The evolution engine detects and proposes changes to the knowledge graph:
+
+| Action | Description |
+|--------|-------------|
+| `MergeEntities` | Combine duplicate entities |
+| `SplitEntity` | Disambiguate homonyms |
+| `DeprecateEntity` | Mark entity as obsolete |
+| `UpdateEntity` | Modify entity attributes |
+| `AddRelationship` | Create new relationship |
+| `RemoveRelationship` | Delete stale relationship |
+
+```rust
+use memst_sleep::kg_evolve::{KgEvolutionEngine, EvolutionStats};
+use memst_core::types::KgEvolutionConfig;
+
+let config = KgEvolutionConfig {
+    merge_threshold: 0.7,
+    min_auto_apply_confidence: 0.8,
+    ..Default::default()
+};
+let engine = KgEvolutionEngine::with_config(config);
+
+// Run evolution cycle
+let actions = engine.evolve(&knowledge_graph);
+for action in &actions {
+    println!("Proposed: {}", action);
+}
+
+// Apply specific action
+engine.apply_action(&mut knowledge_graph, &actions[0])?;
+```
+
+### Entity Merge Detection
+
+The engine detects potential entity merges using:
+- Name similarity (Jaccard coefficient)
+- Type matching
+- Attribute overlap
+
+```rust
+// Detect merge candidates
+let candidates = engine.detect_merge_candidates(&graph);
+for (e1, e2, similarity) in candidates {
+    println!("Candidates: {} & {} (sim: {:.2})", e1, e2, similarity);
+    
+    // Propose merge
+    if let Some(action) = engine.propose_merge(&graph, e1, e2) {
+        println!("Action: {:?}", action);
+    }
+}
+```
+
+### Temporal Relevance
+
+Extracted entities are classified by temporal relevance:
+
+```rust
+use memst_core::types::TemporalRelevance;
+
+// Get half-life for a relevance class
+let half_life = TemporalRelevance::LongTerm.default_half_life_days(); // 90.0
+
+// Check if stable (non-decaying)
+assert!(TemporalRelevance::Permanent.is_stable());
+assert!(!TemporalRelevance::Temporary.is_stable());
+```
+
+### Integration with Sleep-Time
+
+KG decay runs automatically during sleep-time consolidation:
+
+```rust
+use memst_sleep::SleepManager;
+
+let sleep_manager = SleepManager::new(4);
+
+// Decay is applied as part of consolidation jobs
+sleep_manager.scheduler().schedule_kg_decay(graph_id)?;
+```
+
+### LLM-Based Extraction (Future)
+
+The KG extraction service uses LLM to extract structured knowledge:
+
+```rust
+use memst_sleep::kg_extract::KgExtractionService;
+
+let service = KgExtractionService::new(llm_client);
+let result = service.extract_from_text(text).await?;
+
+for entity in result.entities {
+    println!("Found: {} ({:?})", entity.name, entity.temporal_relevance);
+}
+```
+
+---
+
 ## Python Bindings
 
 MemSt provides Python bindings via PyO3 for seamless integration with Python applications.
@@ -1553,6 +1705,7 @@ consolidation_interval = 3600
 | 12 | Skills | ✅ |
 | 13 | Multi-Agent Support | ✅ |
 | 14 | MCP Adapter | ✅ |
+| 15 | Memory Evolution & KG Decay | ✅ |
 
 ---
 

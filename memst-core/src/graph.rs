@@ -378,6 +378,58 @@ impl KnowledgeGraph {
             })
             .collect()
     }
+
+    // ===== Phase 15: KG Decay Support =====
+
+    /// Get entities sorted by relevance (descending).
+    pub fn entities_by_relevance(&self) -> Vec<&Entity> {
+        let mut entities: Vec<&Entity> = self.entities.iter()
+            .filter(|e| !e.is_deprecated)
+            .collect();
+        entities.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap());
+        entities
+    }
+
+    /// Get entities below a relevance threshold.
+    pub fn stale_entities(&self, threshold: f32) -> Vec<&Entity> {
+        self.entities
+            .iter()
+            .filter(|e| !e.is_deprecated && e.relevance < threshold)
+            .collect()
+    }
+
+    /// Get deprecated entities.
+    pub fn deprecated_entities(&self) -> Vec<&Entity> {
+        self.entities
+            .iter()
+            .filter(|e| e.is_deprecated)
+            .collect()
+    }
+
+    /// Count active entities (not deprecated).
+    pub fn active_entity_count(&self) -> usize {
+        self.entities.iter().filter(|e| !e.is_deprecated).count()
+    }
+
+    /// Apply a function to all entities (for batch operations like decay).
+    pub fn update_all_entities<F>(&mut self, mut f: F) -> Result<()>
+    where
+        F: FnMut(&mut Entity),
+    {
+        for entity in &mut self.entities {
+            f(entity);
+        }
+        self.save()
+    }
+
+    /// Get average relevance of all entities.
+    pub fn average_relevance(&self) -> f32 {
+        if self.entities.is_empty() {
+            return 0.0;
+        }
+        let total: f32 = self.entities.iter().map(|e| e.relevance).sum();
+        total / self.entities.len() as f32
+    }
 }
 
 /// Graph statistics.
