@@ -6,11 +6,15 @@
 //! - Relationship updates based on memory evolution
 //! - Deprecation of stale entities
 
+use crate::error::KgError;
 use crate::evolve::MemoryRelation;
 use memst_core::graph::KnowledgeGraph;
 use memst_core::llm::providers::LlmProvider;
 use memst_core::types::{Entity, EntityId, KgEvolutionAction, KgEvolutionConfig, MemoryItem};
 use std::sync::Arc;
+
+/// Result type for evolution operations.
+pub type Result<T> = crate::error::Result<T>;
 
 /// Evolution engine for knowledge graph maintenance.
 pub struct KgEvolutionEngine {
@@ -228,7 +232,7 @@ impl KgEvolutionEngine {
         &self,
         graph: &mut KnowledgeGraph,
         action: &KgEvolutionAction,
-    ) -> Result<bool, String> {
+    ) -> Result<bool> {
         match action {
             KgEvolutionAction::MergeEntities { keep, merge, .. } => {
                 self.apply_merge(graph, *keep, *merge)
@@ -247,11 +251,16 @@ impl KgEvolutionEngine {
             } => {
                 graph
                     .delete_relationship(*relationship_id)
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| KgError::GraphError(e.to_string()))
             }
-            _ => {
-                // Other actions not yet implemented
-                Ok(false)
+            KgEvolutionAction::SplitEntity { .. } => {
+                Err(KgError::not_implemented("SplitEntity"))
+            }
+            KgEvolutionAction::AddRelationship { .. } => {
+                Err(KgError::not_implemented("AddRelationship"))
+            }
+            KgEvolutionAction::UpdateRelationship { .. } => {
+                Err(KgError::not_implemented("UpdateRelationship"))
             }
         }
     }
@@ -262,17 +271,17 @@ impl KgEvolutionEngine {
         graph: &mut KnowledgeGraph,
         keep_id: EntityId,
         merge_id: EntityId,
-    ) -> Result<bool, String> {
+    ) -> Result<bool> {
         // Get the entity to merge
         let merge_entity = graph
             .get_entity(merge_id)
-            .ok_or("Merge entity not found")?
+            .ok_or(KgError::EntityNotFound(merge_id))?
             .clone();
 
         // Get the keep entity
         let keep_entity = graph
             .get_entity_mut(keep_id)
-            .ok_or("Keep entity not found")?;
+            .ok_or(KgError::EntityNotFound(keep_id))?;
 
         // Merge attributes
         if let (Some(keep_attrs), Some(merge_attrs)) = (
@@ -322,7 +331,7 @@ impl KgEvolutionEngine {
         entity_id: EntityId,
         reason: String,
         replacement: Option<EntityId>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool> {
         if let Some(entity) = graph.get_entity_mut(entity_id) {
             entity.is_deprecated = true;
             entity.deprecation_reason = Some(reason);
@@ -330,7 +339,7 @@ impl KgEvolutionEngine {
             let _ = replacement; // Silence warning for now
             Ok(true)
         } else {
-            Err("Entity not found".to_string())
+            Err(KgError::EntityNotFound(entity_id))
         }
     }
 
@@ -367,32 +376,7 @@ impl KgEvolutionEngine {
         let mut stats = EvolutionStats::default();
 
         for action in actions {
-            let result = match action {
-                KgEvolutionAction::MergeEntities { keep, merge, .. } => {
-                    self.apply_merge(graph, *keep, *merge)
-                }
-                KgEvolutionAction::DeprecateEntity { entity_id, reason, replacement } => {
-                    self.apply_deprecation(graph, *entity_id, reason.clone(), *replacement)
-                }
-                KgEvolutionAction::UpdateEntity { entity_id, new_name, new_type, attribute_changes, .. } => {
-                    self.apply_entity_update(graph, *entity_id, new_name.clone(), new_type.clone(), attribute_changes.clone())
-                }
-                // TODO: Implement these actions
-                KgEvolutionAction::SplitEntity { .. } => {
-                    Err("SplitEntity not yet implemented".to_string())
-                }
-                KgEvolutionAction::AddRelationship { .. } => {
-                    Err("AddRelationship not yet implemented".to_string())
-                }
-                KgEvolutionAction::RemoveRelationship { .. } => {
-                    Err("RemoveRelationship not yet implemented".to_string())
-                }
-                KgEvolutionAction::UpdateRelationship { .. } => {
-                    Err("UpdateRelationship not yet implemented".to_string())
-                }
-            };
-
-            match result {
+            match self.apply_action(graph, action) {
                 Ok(true) => stats.actions_applied += 1,
                 Ok(false) => { /* No change needed */ }
                 Err(_) => stats.actions_failed += 1,
@@ -410,7 +394,7 @@ impl KgEvolutionEngine {
         new_name: Option<String>,
         new_type: Option<String>,
         attribute_changes: serde_json::Value,
-    ) -> Result<bool, String> {
+    ) -> Result<bool> {
         if let Some(entity) = graph.get_entity_mut(entity_id) {
             if let Some(name) = new_name {
                 entity.name = name;
@@ -429,7 +413,7 @@ impl KgEvolutionEngine {
             }
             Ok(true)
         } else {
-            Err("Entity not found".to_string())
+            Err(KgError::EntityNotFound(entity_id))
         }
     }
 

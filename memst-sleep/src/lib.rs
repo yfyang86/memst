@@ -7,11 +7,14 @@
 //! - KG decay and evolution (Phase 15)
 
 pub mod consolidate;
+pub mod error;
 pub mod evolve;
 pub mod jobs;
 pub mod kg_decay;
 pub mod kg_evolve;
 pub mod kg_extract;
+
+pub use error::{KgError, Result};
 
 use jobs::{ConsolidationJob, JobScheduler};
 
