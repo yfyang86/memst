@@ -38,8 +38,23 @@ pub enum KgError {
     ValidationError(String),
 
     /// I/O error from core
-    #[error(transparent)]
-    CoreError(#[from] memst_core::error::Error),
+    #[error("Core error: {0}")]
+    CoreError(String),
+}
+
+impl Clone for KgError {
+    fn clone(&self) -> Self {
+        match self {
+            Self::EntityNotFound(id) => Self::EntityNotFound(*id),
+            Self::RelationshipNotFound(id) => Self::RelationshipNotFound(*id),
+            Self::GraphError(s) => Self::GraphError(s.clone()),
+            Self::LlmError(s) => Self::LlmError(s.clone()),
+            Self::NotImplemented(s) => Self::NotImplemented(s.clone()),
+            Self::InvalidAction(s) => Self::InvalidAction(s.clone()),
+            Self::ValidationError(s) => Self::ValidationError(s.clone()),
+            Self::CoreError(s) => Self::CoreError(s.clone()),
+        }
+    }
 }
 
 impl KgError {

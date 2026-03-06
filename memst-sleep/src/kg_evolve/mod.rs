@@ -5,11 +5,13 @@
 //! - Entity splitting (disambiguating homonyms)
 //! - Relationship updates based on memory evolution
 //! - Deprecation of stale entities
+//! - LLM-based semantic similarity for entity matching
 
 use crate::error::KgError;
 use crate::evolve::MemoryRelation;
 use memst_core::graph::KnowledgeGraph;
 use memst_core::llm::providers::LlmProvider;
+use memst_core::llm::EmbeddingClient;
 use memst_core::types::{Entity, EntityId, KgEvolutionAction, KgEvolutionConfig, MemoryItem, RelationshipId};
 use std::sync::Arc;
 
@@ -20,6 +22,7 @@ pub type Result<T> = crate::error::Result<T>;
 pub struct KgEvolutionEngine {
     config: KgEvolutionConfig,
     llm_client: Option<Arc<dyn LlmProvider>>,
+    embedding_client: Option<Arc<EmbeddingClient>>,
 }
 
 impl KgEvolutionEngine {
@@ -28,6 +31,7 @@ impl KgEvolutionEngine {
         Self {
             config: KgEvolutionConfig::default(),
             llm_client: None,
+            embedding_client: None,
         }
     }
 
@@ -36,6 +40,7 @@ impl KgEvolutionEngine {
         Self {
             config,
             llm_client: None,
+            embedding_client: None,
         }
     }
 
@@ -43,6 +48,30 @@ impl KgEvolutionEngine {
     pub fn with_llm_client(mut self, client: Arc<dyn LlmProvider>) -> Self {
         self.llm_client = Some(client);
         self
+    }
+
+    /// Set embedding client for semantic similarity.
+    pub fn with_embedding_client(mut self, client: Arc<EmbeddingClient>) -> Self {
+        self.embedding_client = Some(client);
+        self
+    }
+
+    /// Calculate cosine similarity between two vectors.
+    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0;
+        }
+        
+        let cosine = dot / (norm_a * norm_b);
+        cosine.clamp(-1.0, 1.0)
     }
 
     /// Detect potential entity merges based on name similarity.
@@ -77,6 +106,61 @@ impl KgEvolutionEngine {
         }
 
         // Sort by similarity (highest first)
+        candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+        candidates
+    }
+
+    /// Detect merge candidates using parallel processing.
+    ///
+    /// This is a CPU-parallel version of `detect_merge_candidates` that uses
+    /// Rayon to process entity pairs in parallel. Useful for large graphs.
+    ///
+    /// # Arguments
+    /// * `graph` - The knowledge graph to analyze
+    ///
+    /// # Returns
+    /// A vector of (entity1_id, entity2_id, similarity_score) tuples, sorted by similarity.
+    #[cfg(feature = "parallel")]
+    pub fn detect_merge_candidates_par(&self, graph: &KnowledgeGraph) -> Vec<(EntityId, EntityId, f32)> {
+        use rayon::prelude::*;
+        
+        let entities: Vec<&Entity> = graph.all_entities();
+        let limit = self.config.max_comparison_batch.min(entities.len());
+        
+        // Generate all pairs to compare
+        let pairs: Vec<(usize, usize)> = (0..limit)
+            .flat_map(|i| ((i + 1)..limit).map(move |j| (i, j)))
+            .collect();
+        
+        // Process pairs in parallel
+        let candidates: Vec<_> = pairs
+            .par_iter()
+            .filter_map(|(i, j)| {
+                let e1 = entities[*i];
+                let e2 = entities[*j];
+                
+                // Skip if either is deprecated
+                if e1.is_deprecated || e2.is_deprecated {
+                    return None;
+                }
+                
+                // Skip if different types
+                if e1.entity_type != e2.entity_type {
+                    return None;
+                }
+                
+                let similarity = self.calculate_entity_similarity(e1, e2);
+                
+                if similarity >= self.config.merge_threshold {
+                    Some((e1.id, e2.id, similarity))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        // Sort by similarity (highest first) - single threaded
+        let mut candidates = candidates;
         candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
         candidates
     }
@@ -161,6 +245,88 @@ impl KgEvolutionEngine {
         }
 
         matches as f32 / shared_keys.len() as f32
+    }
+
+    /// Detect merge candidates using LLM-based semantic similarity.
+    ///
+    /// This is an async alternative to `detect_merge_candidates` that uses
+    /// embeddings for semantic similarity instead of text-based Jaccard similarity.
+    /// 
+    /// # Arguments
+    /// * `graph` - The knowledge graph to analyze
+    /// 
+    /// # Returns
+    /// A vector of (entity1_id, entity2_id, similarity_score) tuples, sorted by similarity.
+    /// 
+    /// # Errors
+    /// Returns an error if the embedding client is not configured or if embedding fails.
+    pub async fn detect_merge_candidates_semantic(
+        &self,
+        graph: &KnowledgeGraph,
+    ) -> crate::error::Result<Vec<(EntityId, EntityId, f32)>> {
+        let embedding_client = self.embedding_client.as_ref()
+            .ok_or_else(|| KgError::llm_error("Embedding client not configured"))?
+            .clone();
+        
+        let entities: Vec<&Entity> = graph.all_entities();
+        let limit = self.config.max_comparison_batch.min(entities.len());
+        
+        // Prepare entity descriptions for embedding
+        let descriptions: Vec<String> = entities.iter().take(limit)
+            .map(|e| format!("{} ({}): {}", 
+                e.name, 
+                e.entity_type,
+                e.attributes.as_object()
+                    .map(|a| a.iter()
+                        .map(|(k, v)| format!("{}: {}", k, v))
+                        .collect::<Vec<_>>()
+                        .join(", "))
+                    .unwrap_or_default()
+            ))
+            .collect();
+        
+        // Generate embeddings in batch
+        let embeddings = embedding_client.embed_batch(&descriptions).await
+            .map_err(|e| KgError::llm_error(format!("Embedding failed: {}", e)))?;
+        
+        if embeddings.len() != descriptions.len() {
+            return Err(KgError::llm_error("Embedding batch returned wrong number of results"));
+        }
+        
+        // Compare embeddings using cosine similarity
+        let mut candidates = Vec::new();
+        
+        for i in 0..limit {
+            for j in (i + 1)..limit {
+                let e1 = entities[i];
+                let e2 = entities[j];
+                
+                // Skip if either is deprecated
+                if e1.is_deprecated || e2.is_deprecated {
+                    continue;
+                }
+                
+                // Skip if different types
+                if e1.entity_type != e2.entity_type {
+                    continue;
+                }
+                
+                // Calculate semantic similarity
+                let semantic_sim = Self::cosine_similarity(&embeddings[i], &embeddings[j]);
+                
+                // Blend with text similarity for robustness
+                let text_sim = self.text_similarity(&e1.name, &e2.name);
+                let blended_sim = semantic_sim * 0.7 + text_sim * 0.3;
+                
+                if blended_sim >= self.config.merge_threshold {
+                    candidates.push((e1.id, e2.id, blended_sim));
+                }
+            }
+        }
+        
+        // Sort by similarity (highest first)
+        candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+        Ok(candidates)
     }
 
     /// Generate merge action for two entities.
@@ -401,6 +567,44 @@ impl KgEvolutionEngine {
         stats
     }
 
+    /// Apply evolution actions with history tracking.
+    /// 
+    /// This version records all actions to an EvolutionHistory for audit
+    /// and potential rollback purposes.
+    /// 
+    /// # Arguments
+    /// * `graph` - The knowledge graph to modify
+    /// * `actions` - The actions to apply
+    /// * `history` - The history tracker to record to
+    /// * `applied_by` - Identifier for who/what is applying the actions
+    /// 
+    /// # Returns
+    /// Statistics about the applied actions
+    pub fn apply_evolution_actions_with_history(
+        &self,
+        graph: &mut KnowledgeGraph,
+        actions: &[KgEvolutionAction],
+        history: &mut EvolutionHistory,
+        applied_by: &str,
+    ) -> EvolutionStats {
+        let mut stats = EvolutionStats::default();
+
+        for action in actions {
+            let result = self.apply_action(graph, action);
+            
+            match &result {
+                Ok(true) => stats.actions_applied += 1,
+                Ok(false) => { /* No change needed */ }
+                Err(_) => stats.actions_failed += 1,
+            }
+            
+            // Record to history
+            history.record(action.clone(), applied_by, result);
+        }
+
+        stats
+    }
+
     /// Apply updates to an entity.
     fn apply_entity_update(
         &self,
@@ -538,6 +742,132 @@ impl std::fmt::Display for EvolutionStats {
         writeln!(f, "  Actions applied: {}", self.actions_applied)?;
         writeln!(f, "  Actions failed: {}", self.actions_failed)
     }
+}
+
+/// Record of an evolution action for audit and rollback purposes.
+#[derive(Debug, Clone)]
+pub struct EvolutionRecord {
+    /// When the action was applied
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// The action that was applied
+    pub action: KgEvolutionAction,
+    /// Who/what applied the action
+    pub applied_by: String,
+    /// Result of the action
+    pub result: Result<bool>,
+    /// Optional error message if action failed
+    pub error_message: Option<String>,
+}
+
+/// History tracker for evolution actions.
+/// 
+/// Maintains an append-only log of all evolution actions for:
+/// - Audit trails
+/// - Rollback capabilities
+/// - Analytics on evolution effectiveness
+#[derive(Debug, Clone, Default)]
+pub struct EvolutionHistory {
+    records: Vec<EvolutionRecord>,
+    max_records: Option<usize>,
+}
+
+impl EvolutionHistory {
+    /// Create a new history tracker with unlimited records.
+    pub fn new() -> Self {
+        Self {
+            records: Vec::new(),
+            max_records: None,
+        }
+    }
+
+    /// Create a new history tracker with a maximum number of records.
+    /// 
+    /// When the limit is reached, oldest records are removed.
+    pub fn with_max_records(max: usize) -> Self {
+        Self {
+            records: Vec::new(),
+            max_records: Some(max),
+        }
+    }
+
+    /// Record an evolution action.
+    pub fn record(&mut self, action: KgEvolutionAction, applied_by: &str, result: Result<bool>) {
+        let record = EvolutionRecord {
+            timestamp: chrono::Utc::now(),
+            action,
+            applied_by: applied_by.to_string(),
+            result: result.clone(),
+            error_message: result.as_ref().err().map(|e| e.to_string()),
+        };
+
+        self.records.push(record);
+
+        // Prune old records if we have a limit
+        if let Some(max) = self.max_records {
+            if self.records.len() > max {
+                let excess = self.records.len() - max;
+                self.records.drain(0..excess);
+            }
+        }
+    }
+
+    /// Get all records.
+    pub fn records(&self) -> &[EvolutionRecord] {
+        &self.records
+    }
+
+    /// Get records for a specific entity.
+    pub fn records_for_entity(&self, entity_id: EntityId) -> Vec<&EvolutionRecord> {
+        self.records
+            .iter()
+            .filter(|r| self.action_involves_entity(&r.action, entity_id))
+            .collect()
+    }
+
+    /// Check if an action involves a specific entity.
+    fn action_involves_entity(&self, action: &KgEvolutionAction, entity_id: EntityId) -> bool {
+        match action {
+            KgEvolutionAction::MergeEntities { keep, merge, .. } => {
+                *keep == entity_id || *merge == entity_id
+            }
+            KgEvolutionAction::SplitEntity { original, .. } => *original == entity_id,
+            KgEvolutionAction::UpdateEntity { entity_id: id, .. } => *id == entity_id,
+            KgEvolutionAction::DeprecateEntity { entity_id: id, .. } => *id == entity_id,
+            _ => false,
+        }
+    }
+
+    /// Get statistics about the history.
+    pub fn stats(&self) -> HistoryStats {
+        let total = self.records.len();
+        let successful = self.records.iter().filter(|r| r.result.is_ok()).count();
+        let failed = total - successful;
+        
+        HistoryStats {
+            total_records: total,
+            successful_actions: successful,
+            failed_actions: failed,
+            time_range: if total > 0 {
+                Some((self.records[0].timestamp, self.records[total - 1].timestamp))
+            } else {
+                None
+            },
+        }
+    }
+
+    /// Clear all history.
+    pub fn clear(&mut self) {
+        self.records.clear();
+    }
+}
+
+/// Statistics about evolution history.
+#[derive(Debug, Clone)]
+pub struct HistoryStats {
+    pub total_records: usize,
+    pub successful_actions: usize,
+    pub failed_actions: usize,
+    pub time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
 }
 
 #[cfg(test)]
