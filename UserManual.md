@@ -36,13 +36,19 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/yfyang86/memst.git
 cd memst
 
+# uv sync
+# You may need to use Python ~ 3.13
+# check the `.python-version`, verified `3.13`
+uv sync
+source ./venv/bin/activate 
+
 # Build and install Python package
 cd memst-py
 maturin build --release
 uv pip install ../target/wheels/memst-*.whl
 
 # Verify installation
-memst --help
+python -c "import memst; print(memst.__version__)"
 ```
 
 ### Building
@@ -60,6 +66,9 @@ cargo build --release --no-default-features --features native-backend
 
 # Build with Tantivy backend only
 cargo build --release --no-default-features --features tantivy-backend
+
+# Verify
+./target/release/memst-cli --help
 ```
 
 ### Installation
@@ -79,6 +88,8 @@ cp target/release/memst ~/.local/bin/
 ### Initialize a Store
 
 ```bash
+# use a short name
+alias memst=memst-cli
 memst init ./my-store
 ```
 
