@@ -4,8 +4,45 @@
 //! from messages using LLM API.
 
 use crate::error::Result;
-use crate::llm::{EmbeddingClient, LlmClient};
 use crate::types::{Entity, MemoryItem, Relationship};
+use std::sync::Arc;
+
+/// Trait for LLM clients used in extraction
+#[async_trait::async_trait]
+pub trait LlmExtractClient: Send + Sync {
+    /// Generate completion
+    async fn complete(&self, prompt: &str) -> Result<String>;
+}
+
+/// Wrapper for new provider to implement extraction trait
+pub struct ProviderExtractClient {
+    provider: Arc<dyn crate::llm::providers::LlmProvider>,
+}
+
+#[async_trait::async_trait]
+impl LlmExtractClient for ProviderExtractClient {
+    async fn complete(&self, prompt: &str) -> Result<String> {
+        use crate::llm::providers::{LlmRequest, Message};
+        let request = LlmRequest::new(self.provider.model().to_string())
+            .with_message(Message::user(prompt));
+        
+        let response = self.provider.chat(request).await?;
+        Ok(response
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message)
+            .map(|m| m.content)
+            .unwrap_or_default())
+    }
+}
+
+impl ProviderExtractClient {
+    /// Create from provider
+    pub fn new(provider: Arc<dyn crate::llm::providers::LlmProvider>) -> Self {
+        Self { provider }
+    }
+}
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -331,34 +368,25 @@ pub trait MemoryExtractor: Send + Sync {
 }
 
 /// LLM-based memory extractor implementation
-#[derive(Debug)]
 pub struct LlmExtractor {
     /// LLM client for text generation
-    llm_client: LlmClient,
-    /// Embedding client for vector operations
-    #[allow(dead_code)]
-    embedding_client: Option<EmbeddingClient>,
+    llm_client: Box<dyn LlmExtractClient>,
     /// Extraction configuration
     config: ExtractionConfig,
 }
 
 impl LlmExtractor {
-    /// Create a new LLM extractor
-    pub fn new(
-        llm_client: LlmClient,
-        embedding_client: Option<EmbeddingClient>,
-        config: ExtractionConfig,
-    ) -> Self {
+    /// Create a new LLM extractor with any client implementing LlmExtractClient
+    pub fn new(llm_client: Box<dyn LlmExtractClient>, config: ExtractionConfig) -> Self {
         Self {
             llm_client,
-            embedding_client,
             config,
         }
     }
 
     /// Create with default configuration
-    pub fn with_defaults(llm_client: LlmClient, embedding_client: Option<EmbeddingClient>) -> Self {
-        Self::new(llm_client, embedding_client, ExtractionConfig::default())
+    pub fn with_defaults(llm_client: Box<dyn LlmExtractClient>) -> Self {
+        Self::new(llm_client, ExtractionConfig::default())
     }
 
     /// Format messages for extraction with sanitization

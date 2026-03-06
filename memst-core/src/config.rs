@@ -184,6 +184,7 @@ impl MemStConfig {
             model: llm
                 .map(|c| c.model.clone())
                 .unwrap_or_else(default_llm_model),
+            api_key: llm.and_then(|c| c.api_key.clone()),
             timeout: llm.map(|c| c.timeout).unwrap_or_else(default_llm_timeout),
             max_tokens: llm
                 .map(|c| c.max_tokens)
@@ -191,6 +192,30 @@ impl MemStConfig {
             temperature: llm
                 .map(|c| c.temperature)
                 .unwrap_or_else(default_llm_temperature),
+        }
+    }
+
+    /// Get LLM configuration as LlmProviderConfig (v2 with provider type)
+    pub fn to_llm_config_v2(&self) -> super::llm::loader::LlmProviderConfig {
+        use super::llm::loader::{LlmProviderConfig, LlmProviderType};
+        
+        if let Some(ref llm) = self.llm {
+            let provider_type = llm.r#type.parse().unwrap_or(LlmProviderType::OpenAi);
+            LlmProviderConfig {
+                provider_type,
+                base: super::llm::LlmConfig {
+                    api_url: llm.api_url.clone(),
+                    model: llm.model.clone(),
+                    api_key: llm.api_key.clone(),
+                    timeout: llm.timeout,
+                    max_tokens: llm.max_tokens,
+                    temperature: llm.temperature,
+                },
+                custom_headers: None,
+                timeout_secs: Some(llm.timeout),
+            }
+        } else {
+            LlmProviderConfig::default()
         }
     }
 
