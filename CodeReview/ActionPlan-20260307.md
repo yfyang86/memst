@@ -1,86 +1,53 @@
 # Action Plan - Critical & Medium Issues Fix
 
-## Overview
-Addressing 4 critical issues and 3 medium issues identified in code review CR-20260307.
+**Date:** March 7, 2026  
+**Review Reference:** [CR-20260307.md](CR-20260307.md)  
+**Detailed Roadmap:** [CR-20260307-Plan-R1.md](CR-20260307-Plan-R1.md)
 
 ---
 
-## ✅ COMPLETED: Issue #3 - Hardcoded Default URLs
+## Summary
 
-**Files Modified:**
-- `memst-core/src/llm/loader.rs` - Added `validate()` method, `local()` helper, improved `Default` impl
-- `memst-core/src/llm/mod.rs` - Fixed `EmbeddingConfig` and `LlmConfig` defaults, added validation
+This document tracks the completion of critical and medium issues identified in code review CR-20260307.
 
-**Changes:**
-- Removed hardcoded `localhost:8080` URLs from production code
-- Empty URL defaults with clear error messages
-- Environment variable support: `MEMST_LLM_API_URL`, `MEMST_EMBEDDING_API_URL`
+**Status:** Sprint 1 Complete ✅ | Sprint 2 In Progress ⏳
+
+For detailed sprint planning and future work, see [CR-20260307-Plan-R1.md](CR-20260307-Plan-R1.md).
+
+---
+
+## ✅ COMPLETED: Sprint 1 - Critical Fixes
+
+### Issue #1 - Mock/Fake Data in Tests ✅
+- Renamed `kg_extraction_integration_tests.rs` → `kg_extraction_mock_tests.rs`
+- Created real LLM integration tests with `#[ignore]` attribute
+
+### Issue #2 - Missing LLM Client in Tests ✅
+- Created `MockLlmProvider` in `tests/common/mod.rs`
+- Implements `LlmProvider` trait for unit testing
+
+### Issue #3 - Hardcoded Default URLs ✅
+- Removed `localhost:8080` defaults from production code
+- Added environment variable support: `MEMST_LLM_API_URL`, `MEMST_EMBEDDING_API_URL`
 - Added `LlmProviderConfig::local()` for explicit local development
-- Added `LlmProviderConfig::validate()` with helpful error messages
 
----
+### Issue #4 - Panic in Production Code ✅
+- Investigation confirmed panic is in `#[cfg(test)]` module - acceptable
 
-## ✅ COMPLETED: Issue #2 - Missing LLM Client in Tests
+### Issue #5 - Unused Test Variables ✅
+- Fixed `uat_session_chat_skills_mcp.rs`
 
-**File Created:** `memst-sleep/tests/common/mod.rs` (enhanced)
+### Issue #6 - Empty Default for Message ✅
+- Added documentation warning in `memst-core/src/types/mod.rs`
 
-**Added MockLlmProvider:**
-```rust
-pub struct MockLlmProvider {
-    responses: Arc<Mutex<Vec<String>>>,
-    calls: Arc<Mutex<Vec<LlmCall>>>,
-}
-```
+### Issue #7 - Test-Only Re-exports ✅
+- Removed from `kg_decay/mod.rs` and `kg_evolve/mod.rs`
 
----
-
-## ✅ COMPLETED: Issue #1 - Mock/Fake Data in Tests
-
-**File Renamed:** 
-- `kg_extraction_integration_tests.rs` → `kg_extraction_mock_tests.rs`
-
----
-
-## ✅ COMPLETED: Issue #4 - Panic in Production Code
-
-**Investigation:** The panic at `memst-sleep/src/kg_evolve/mod.rs:463` is inside `#[cfg(test)]` module - acceptable for test code.
-
----
-
-## ✅ COMPLETED: Issue #5 - Unused Test Variables
-
-**File Modified:** `memst-sleep/tests/uat_session_chat_skills_mcp.rs`
-
-**Changes:**
-- Fixed `test_complex_conversation_flow` - now uses `conversation` vector
-- Fixed `test_complete_session_with_all_features` - uses `skill.name` in memory
-- Prefixed unused `_conversation` variable
-- Prefixed unused `_session_id` variable
-
----
-
-## ✅ COMPLETED: Issue #6 - Empty Default for Message
-
-**File Modified:** `memst-core/src/types/mod.rs`
-
-**Changes:**
-- Added documentation warning that Default creates semantically invalid empty message
-- Documented it's for test fixtures and struct updates only
-- Production code should use `Message::new()` instead
-
----
-
-## ✅ COMPLETED: Issue #7 - Test-Only Re-exports
-
-**Files Modified:**
-- `memst-sleep/src/kg_decay/mod.rs` - Removed re-export, used direct import
-- `memst-sleep/src/kg_evolve/mod.rs` - Removed re-export, used direct import
-- `memst-sleep/tests/uat_session_chat_skills_mcp.rs` - Updated imports
-
-**Changes:**
-- Removed `pub use memst_core::types::KgDecayConfig`
-- Removed `pub use memst_core::types::KgEvolutionConfig`
-- Tests now import directly from `memst_core::types`
+### Issue #8 - Relationship Migration (Critical) ✅
+- Implemented `migrate_relationships()` in `KnowledgeGraph`
+- Integrated into `apply_merge()` in `KgEvolutionEngine`
+- All relationships preserved during entity merges
+- **Test:** `test_evolution_merge_with_relationships` passing
 
 ---
 
@@ -91,41 +58,38 @@ pub struct MockLlmProvider {
 | `uat_session_chat_skills_mcp` | 17 | ✅ PASS |
 | `uat_skill_execution` | 18 | ✅ PASS |
 | `kg_extraction_mock_tests` | 14 | ✅ PASS |
-| `uat_phase15_kg_evolution` | 17 | ✅ PASS |
-| **Total** | **66** | **✅ ALL PASS** |
+| `kg_evolution_integration_tests` | 9 | ✅ PASS |
+| `kg_extraction_real_tests` | 5 | ✅ PASS |
+| **Total** | **63** | **✅ ALL PASS** |
+
+**Real LLM Test Results:**
+```bash
+MEMST_RUN_INTEGRATION_TESTS=1 cargo test -p memst-sleep --test kg_extraction_real_tests
+# Results: 5/5 passed (59s)
+```
 
 ---
 
-## Remaining Work (Future)
+## ⏳ Sprint 2 - Error Handling & Actions
 
-### Short Term
-- [ ] Create real LLM integration tests with `#[ignore]` attribute
-- [ ] Add example config file in repository
-- [ ] Document LLM configuration options
+**Status:** Not Started  
+**Timeline:** March 8-14, 2026  
+**Details:** See [CR-20260307-Plan-R1.md#sprint-2](CR-20260307-Plan-R1.md)
 
-### Documentation
-- [ ] Add README section on configuring LLM providers
-- [ ] Add example `.env` file
-- [ ] Document MockLlmProvider usage for developers
+### Planned Work
 
----
-
-## ✅ COMPLETED: Relationship Migration (Critical from CR-20260307-Plan-R1)
-
-**Files Modified:**
-- `memst-core/src/graph.rs` - Added `migrate_relationships()` method
-- `memst-sleep/src/kg_evolve/mod.rs` - Updated `apply_merge()` to use it
-- `memst-sleep/tests/kg_evolution_integration_tests.rs` - Added test
-
-**Changes:**
-- Implemented relationship migration during entity merge
-- Handles duplicate detection (skips if equivalent relationship exists)
-- Returns count of migrated relationships
-- All 9 evolution tests passing
+| Priority | Item | Location |
+|----------|------|----------|
+| High | Create `KgError` enum with thiserror | `memst-sleep/src/error.rs` |
+| High | Migrate kg_evolve to standard errors | `kg_evolve/mod.rs` |
+| High | Implement SplitEntity action | `kg_evolve/mod.rs:381-382` |
+| High | Implement AddRelationship action | `kg_evolve/mod.rs:384-385` |
+| Medium | Implement RemoveRelationship action | `kg_evolve/mod.rs:387-388` |
+| Medium | Implement UpdateRelationship action | `kg_evolve/mod.rs:390-391` |
 
 ---
 
-## Success Criteria - ALL MET ✅
+## Success Criteria - Sprint 1 ✅
 
 - [x] All tests pass without panics
 - [x] MockLlmProvider can be used in any test
@@ -135,4 +99,31 @@ pub struct MockLlmProvider {
 - [x] Unused test variables fixed or used
 - [x] Default for Message properly documented
 - [x] Test-only re-exports removed
-- [x] **Relationship migration implemented**
+- [x] Relationship migration implemented
+
+## Success Criteria - Sprint 2 (Pending)
+
+- [ ] `KgError` enum created with thiserror
+- [ ] All kg_evolve methods use `Result<bool, KgError>`
+- [ ] SplitEntity action implemented
+- [ ] AddRelationship action implemented
+- [ ] RemoveRelationship action implemented
+- [ ] UpdateRelationship action implemented
+- [ ] All 9 evolution tests pass with new error handling
+
+---
+
+## Commits
+
+| Commit | Description |
+|--------|-------------|
+| `bc53282` | feat: Implement relationship migration during entity merge |
+| `d3c6f24` | docs: Update code review documents with relationship migration status |
+
+---
+
+## Related Documents
+
+- [CR-20260307.md](CR-20260307.md) - Original code review report
+- [CR-20260307-Plan-R1.md](CR-20260307-Plan-R1.md) - Detailed remediation plan with sprints
+- [DesignReview-20260307.md](DesignReview-20260307.md) - Design review findings
