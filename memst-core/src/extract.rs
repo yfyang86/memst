@@ -948,7 +948,17 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::llm::LlmConfig;
+    use crate::llm::{LlmConfig, LegacyLlmClient};
+
+    /// Wrapper to adapt LegacyLlmClient to LlmExtractClient
+    struct LegacyClientWrapper(LegacyLlmClient);
+
+    #[async_trait::async_trait]
+    impl LlmExtractClient for LegacyClientWrapper {
+        async fn complete(&self, prompt: &str) -> Result<String> {
+            self.0.complete(prompt).await
+        }
+    }
 
     fn integration_tests_enabled() -> bool {
         matches!(
@@ -969,7 +979,7 @@ mod integration_tests {
             "Integration LLM config: api_url='{}' model='{}' timeout={}s",
             config.api_url, config.model, config.timeout
         );
-        let client = match LlmClient::new(config) {
+        let client = match LegacyLlmClient::new(config) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Failed to create LLM client: {}", e);
@@ -1008,14 +1018,14 @@ mod integration_tests {
             "Integration LLM config: api_url='{}' model='{}' timeout={}s",
             config.api_url, config.model, config.timeout
         );
-        let client = match LlmClient::new(config) {
+        let client = match LegacyLlmClient::new(config) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Failed to create LLM client: {}", e);
                 return;
             }
         };
-        let extractor = LlmExtractor::with_defaults(client, None);
+        let extractor = LlmExtractor::with_defaults(Box::new(LegacyClientWrapper(client)));
 
         let messages = vec![
             "I really like programming in Rust".to_string(),
@@ -1064,14 +1074,14 @@ mod integration_tests {
             "Integration LLM config: api_url='{}' model='{}' timeout={}s",
             config.api_url, config.model, config.timeout
         );
-        let client = match LlmClient::new(config) {
+        let client = match LegacyLlmClient::new(config) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Failed to create LLM client: {}", e);
                 return;
             }
         };
-        let extractor = LlmExtractor::with_defaults(client, None);
+        let extractor = LlmExtractor::with_defaults(Box::new(LegacyClientWrapper(client)));
 
         let text = "Rust is a systems programming language developed by Mozilla. \
                     TypeScript extends JavaScript with type safety. \
@@ -1129,14 +1139,14 @@ mod integration_tests {
             "Integration LLM config: api_url='{}' model='{}' timeout={}s",
             config.api_url, config.model, config.timeout
         );
-        let client = match LlmClient::new(config) {
+        let client = match LegacyLlmClient::new(config) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Failed to create LLM client: {}", e);
                 return;
             }
         };
-        let extractor = LlmExtractor::with_defaults(client, None);
+        let extractor = LlmExtractor::with_defaults(Box::new(LegacyClientWrapper(client)));
 
         let fact = Fact::new(
             "I prefer dark mode for coding".to_string(),
@@ -1198,14 +1208,14 @@ mod integration_tests {
             "Integration LLM config: api_url='{}' model='{}' timeout={}s",
             config.api_url, config.model, config.timeout
         );
-        let client = match LlmClient::new(config) {
+        let client = match LegacyLlmClient::new(config) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Failed to create LLM client: {}", e);
                 return;
             }
         };
-        let extractor = LlmExtractor::with_defaults(client, None);
+        let extractor = LlmExtractor::with_defaults(Box::new(LegacyClientWrapper(client)));
 
         let conversation = vec![
             "Hi, I'm Alice and I'm a software engineer at a startup".to_string(),
@@ -1261,14 +1271,14 @@ mod integration_tests {
             "Integration LLM config: api_url='{}' model='{}' timeout={}s",
             config.api_url, config.model, config.timeout
         );
-        let client = match LlmClient::new(config) {
+        let client = match LegacyLlmClient::new(config) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Failed to create LLM client: {}", e);
                 return;
             }
         };
-        let extractor = LlmExtractor::with_defaults(client, None);
+        let extractor = LlmExtractor::with_defaults(Box::new(LegacyClientWrapper(client)));
 
         let test_text = "Google was founded by Larry Page and Sergey Brin. \
                          Microsoft develops Windows, Azure, and GitHub. \
