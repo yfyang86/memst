@@ -31,7 +31,20 @@ struct SerializableEdge {
     session_id: Uuid,
     source_message_id: Option<Uuid>,
     created_at: chrono::DateTime<chrono::Utc>,
+    // Decay-related fields
+    #[serde(default = "default_relevance")]
+    relevance: f32,
+    #[serde(default = "default_half_life_days")]
+    half_life_days: f32,
+    #[serde(default)]
+    is_stable: bool,
+    #[serde(default = "default_last_decay_at")]
+    last_decay_at: chrono::DateTime<chrono::Utc>,
 }
+
+fn default_relevance() -> f32 { 1.0 }
+fn default_half_life_days() -> f32 { 30.0 }
+fn default_last_decay_at() -> chrono::DateTime<chrono::Utc> { chrono::Utc::now() }
 
 /// Knowledge graph index for a session.
 pub struct KnowledgeGraph {
@@ -169,6 +182,10 @@ impl KnowledgeGraph {
             session_id: relationship.session_id,
             source_message_id: relationship.source_message_id,
             created_at: relationship.created_at,
+            relevance: relationship.relevance,
+            half_life_days: relationship.half_life_days,
+            is_stable: relationship.is_stable,
+            last_decay_at: relationship.last_decay_at,
         };
 
         self.edges.push(edge);
@@ -178,6 +195,8 @@ impl KnowledgeGraph {
 
     /// Get relationships for an entity.
     pub fn get_relationships(&self, entity_id: EntityId) -> Vec<(Relationship, Entity, Entity)> {
+        use chrono::Utc;
+        
         self.edges
             .iter()
             .filter(|e| e.subject_id == entity_id)
@@ -185,14 +204,21 @@ impl KnowledgeGraph {
                 let object_entity = self.get_entity(e.object_id)?.clone();
                 let subject_entity = self.get_entity(e.subject_id)?.clone();
 
-                let relationship = Relationship::new(
-                    entity_id,
-                    e.predicate.clone(),
-                    object_entity.id,
-                    e.session_id,
-                )
-                .with_confidence(e.confidence)
-                .with_source(e.source_message_id.unwrap_or_else(Uuid::nil));
+                // Preserve the original relationship ID and all edge properties
+                let relationship = Relationship {
+                    id: e.relationship_id,
+                    subject_id: e.subject_id,
+                    predicate: e.predicate.clone(),
+                    object_id: e.object_id,
+                    confidence: e.confidence,
+                    session_id: e.session_id,
+                    source_message_id: e.source_message_id,
+                    created_at: e.created_at,
+                    relevance: e.relevance,
+                    half_life_days: e.half_life_days,
+                    is_stable: e.is_stable,
+                    last_decay_at: e.last_decay_at,
+                };
 
                 Some((relationship, subject_entity, object_entity))
             })
@@ -461,6 +487,10 @@ impl KnowledgeGraph {
                 session_id: rel.session_id,
                 source_message_id: rel.source_message_id,
                 created_at: rel.created_at,
+                relevance: rel.relevance,
+                half_life_days: rel.half_life_days,
+                is_stable: rel.is_stable,
+                last_decay_at: rel.last_decay_at,
             };
             self.edges.push(edge);
         }
