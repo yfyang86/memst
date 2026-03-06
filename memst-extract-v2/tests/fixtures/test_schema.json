@@ -1,0 +1,122 @@
+[
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "人工智能",
+    "chinese_name": "科技情报-人工智能",
+    "english_name": "Tech Intelligence-AI",
+    "overview": "监测AI算法、模型、应用、伦理治理等技术发展"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "半导体芯片",
+    "chinese_name": "科技情报-半导体芯片",
+    "english_name": "Tech Intelligence-Semiconductor",
+    "overview": "追踪芯片设计、制造、封测、EDA工具全产业链"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "生物医药",
+    "chinese_name": "科技情报-生物医药",
+    "english_name": "Tech Intelligence-Biopharm",
+    "overview": "分析创新药、疫苗、基因治疗、医疗器械研发"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "产业情报",
+    "second_category": "汽车产业",
+    "chinese_name": "产业情报-汽车产业",
+    "english_name": "Industry Intelligence-Automotive",
+    "overview": "监测新能源汽车、自动驾驶、车联网发展"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "产业情报",
+    "second_category": "消费电子",
+    "chinese_name": "产业情报-消费电子",
+    "english_name": "Industry Intelligence-Consumer Electronics",
+    "overview": "追踪智能终端、可穿戴设备、元宇宙硬件"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "地缘安全",
+    "second_category": "经济制裁",
+    "chinese_name": "地缘安全-经济制裁",
+    "english_name": "Geosecurity-Economic Sanctions",
+    "overview": "分析制裁清单、出口管制、技术封锁"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "地缘安全",
+    "second_category": "大国关系",
+    "chinese_name": "地缘安全-大国关系",
+    "english_name": "Geosecurity-Major Powers",
+    "overview": "分析中美欧俄等大国战略博弈和合作"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "组织情报",
+    "second_category": "龙头企业",
+    "chinese_name": "组织情报-龙头企业",
+    "english_name": "Organization Intelligence-Leading Firms",
+    "overview": "追踪行业领军企业战略、创新、财务表现"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "人物追踪",
+    "second_category": "企业家",
+    "chinese_name": "人物追踪-企业家",
+    "english_name": "People Tracking-Entrepreneurs",
+    "overview": "监测知名企业家、创业者动态和观点"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "事件监测",
+    "second_category": "并购交易",
+    "chinese_name": "事件监测-并购交易",
+    "english_name": "Event Monitoring-M&A Deals",
+    "overview": "监测重大并购、IPO、资产重组交易"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "供应链情报",
+    "second_category": "供应网络",
+    "chinese_name": "供应链情报-供应网络",
+    "english_name": "Supply Chain Intelligence-Networks",
+    "overview": "绘制关键产品供应链图谱和依赖关系"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "风险情报",
+    "second_category": "技术风险",
+    "chinese_name": "风险情报-技术风险",
+    "english_name": "Risk Intelligence-Technology",
+    "overview": "分析技术依赖、技术断供、标准竞争风险"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "投资情报",
+    "second_category": "一级市场",
+    "chinese_name": "投资情报-一级市场",
+    "english_name": "Investment Intelligence-Primary Market",
+    "overview": "监测VC/PE投资、融资轮次、估值变化"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "竞争情报",
+    "second_category": "市场份额",
+    "chinese_name": "竞争情报-市场份额",
+    "english_name": "Competitive Intelligence-Market Share",
+    "overview": "追踪行业集中度、市场占有率变化"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "航空航天",
+    "chinese_name": "科技情报-航空航天",
+    "english_name": "Tech Intelligence-Aerospace",
+    "overview": "分析商业航天、卫星应用、深空探测动向"
+  }
+]

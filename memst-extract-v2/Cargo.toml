@@ -9,9 +9,9 @@ description = "Advanced Knowledge Graph extraction with DuckDB backend"
 memst-core = { path = "../memst-core" }
 
 # DuckDB for distributed storage
-# Note: Requires DuckDB to be installed separately
-# Install: brew install duckdb (macOS) or download from duckdb.org
-duckdb = { version = "0.10" }
+# Note: Using bundled feature for CI/CD compatibility
+# For production, install DuckDB separately and use system lib
+duckdb = { version = "0.10", features = ["bundled"] }}
 
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
