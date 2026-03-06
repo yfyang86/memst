@@ -1,0 +1,754 @@
+[
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "人工智能",
+    "chinese_name": "科技情报-人工智能",
+    "english_name": "Tech Intelligence-AI",
+    "overview": "监测AI算法、模型、应用、伦理治理等技术发展"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "半导体芯片",
+    "chinese_name": "科技情报-半导体芯片",
+    "english_name": "Tech Intelligence-Semiconductor",
+    "overview": "追踪芯片设计、制造、封测、EDA工具全产业链"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "生物医药",
+    "chinese_name": "科技情报-生物医药",
+    "english_name": "Tech Intelligence-Biopharm",
+    "overview": "分析创新药、疫苗、基因治疗、医疗器械研发"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "新能源技术",
+    "chinese_name": "科技情报-新能源技术",
+    "english_name": "Tech Intelligence-Clean Energy",
+    "overview": "监测光伏、风电、储能、氢能技术突破"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "量子信息",
+    "chinese_name": "科技情报-量子信息",
+    "english_name": "Tech Intelligence-Quantum Info",
+    "overview": "追踪量子计算、量子通信、量子传感进展"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "航空航天",
+    "chinese_name": "科技情报-航空航天",
+    "english_name": "Tech Intelligence-Aerospace",
+    "overview": "分析商业航天、卫星应用、深空探测动向"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "新材料",
+    "chinese_name": "科技情报-新材料",
+    "english_name": "Tech Intelligence-Advanced Materials",
+    "overview": "监测纳米材料、复合材料、超导材料应用"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "科技情报",
+    "second_category": "先进制造",
+    "chinese_name": "科技情报-先进制造",
+    "english_name": "Tech Intelligence-Advanced Manufacturing",
+    "overview": "追踪3D打印、机器人、智能制造技术"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "产业情报",
+    "second_category": "数字经济",
+    "chinese_name": "产业情报-数字经济",
+    "english_name": "Industry Intelligence-Digital Economy",
+    "overview": "分析数字产业化、产业数字化转型趋势"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "产业情报",
+    "second_category": "汽车产业",
+    "chinese_name": "产业情报-汽车产业",
+    "english_name": "Industry Intelligence-Automotive",
+    "overview": "监测新能源汽车、自动驾驶、车联网发展"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "产业情报",
+    "second_category": "消费电子",
+    "chinese_name": "产业情报-消费电子",
+    "english_name": "Industry Intelligence-Consumer Electronics",
+    "overview": "追踪智能终端、可穿戴设备、元宇宙硬件"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "产业情报",
+    "second_category": "金融科技",
+    "chinese_name": "产业情报-金融科技",
+    "english_name": "Industry Intelligence-FinTech",
+    "overview": "分析数字货币、区块链、智能投顾应用"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "产业情报",
+    "second_category": "医疗健康",
+    "chinese_name": "产业情报-医疗健康",
+    "english_name": "Industry Intelligence-Healthcare",
+    "overview": "监测数字医疗、精准医疗、健康管理趋势"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "产业情报",
+    "second_category": "农业食品",
+    "chinese_name": "产业情报-农业食品",
+    "english_name": "Industry Intelligence-AgriFood",
+    "overview": "追踪智慧农业、食品科技、农业生物技术"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "金融市场",
+    "second_category": "资本市场",
+    "chinese_name": "金融市场-资本市场",
+    "english_name": "Financial Market-Capital Markets",
+    "overview": "监测股票、债券、衍生品市场动态和风险"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "金融市场",
+    "second_category": "货币政策",
+    "chinese_name": "金融市场-货币政策",
+    "english_name": "Financial Market-Monetary Policy",
+    "overview": "分析央行政策、利率走势、流动性变化"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "金融市场",
+    "second_category": "大宗商品",
+    "chinese_name": "金融市场-大宗商品",
+    "english_name": "Financial Market-Commodities",
+    "overview": "追踪能源、金属、农产品价格及供需"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "金融市场",
+    "second_category": "外汇市场",
+    "chinese_name": "金融市场-外汇市场",
+    "english_name": "Financial Market-FX",
+    "overview": "监测汇率波动、跨境资本流动、货币政策"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "金融市场",
+    "second_category": "金融风险",
+    "chinese_name": "金融市场-金融风险",
+    "english_name": "Financial Market-Risk",
+    "overview": "识别系统性风险、信用风险、流动性风险"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "能源资源",
+    "second_category": "油气能源",
+    "chinese_name": "能源资源-油气能源",
+    "english_name": "Energy Resource-Oil & Gas",
+    "overview": "监测油气勘探、产能、价格、运输动态"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "能源资源",
+    "second_category": "电力系统",
+    "chinese_name": "能源资源-电力系统",
+    "english_name": "Energy Resource-Power Grid",
+    "overview": "分析电力供需、新型电力系统、储能部署"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "能源资源",
+    "second_category": "关键矿产",
+    "chinese_name": "能源资源-关键矿产",
+    "english_name": "Energy Resource-Critical Minerals",
+    "overview": "追踪锂、钴、稀土等战略矿产供应链"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "能源资源",
+    "second_category": "水资源",
+    "chinese_name": "能源资源-水资源",
+    "english_name": "Energy Resource-Water",
+    "overview": "监测水资源分布、水利工程、水安全风险"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "能源资源",
+    "second_category": "碳中和",
+    "chinese_name": "能源资源-碳中和",
+    "english_name": "Energy Resource-Carbon Neutral",
+    "overview": "分析碳市场、CCUS技术、绿色金融"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "地缘安全",
+    "second_category": "大国关系",
+    "chinese_name": "地缘安全-大国关系",
+    "english_name": "Geosecurity-Major Powers",
+    "overview": "分析中美欧俄等大国战略博弈和合作"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "地缘安全",
+    "second_category": "区域热点",
+    "chinese_name": "地缘安全-区域热点",
+    "english_name": "Geosecurity-Regional Hotspots",
+    "overview": "监测台海、南海、中东等地缘冲突风险"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "地缘安全",
+    "second_category": "军事动态",
+    "chinese_name": "地缘安全-军事动态",
+    "english_name": "Geosecurity-Military",
+    "overview": "追踪军事演习、武器装备、国防预算"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "地缘安全",
+    "second_category": "经济制裁",
+    "chinese_name": "地缘安全-经济制裁",
+    "english_name": "Geosecurity-Economic Sanctions",
+    "overview": "分析制裁清单、出口管制、技术封锁"
+  },
+  {
+    "top_category": "领域情报类",
+    "first_category": "地缘安全",
+    "second_category": "国际组织",
+    "chinese_name": "地缘安全-国际组织",
+    "english_name": "Geosecurity-International Orgs",
+    "overview": "监测UN、G20、BRICS等多边机制动向"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "一级分类",
+    "second_category": "二级分类",
+    "chinese_name": "中文名称",
+    "english_name": "英文名称",
+    "overview": "概述"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "---------",
+    "second_category": "---------",
+    "chinese_name": "---------",
+    "english_name": "----------",
+    "overview": "------"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "组织情报",
+    "second_category": "龙头企业",
+    "chinese_name": "组织情报-龙头企业",
+    "english_name": "Organization Intelligence-Leading Firms",
+    "overview": "追踪行业领军企业战略、创新、财务表现"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "组织情报",
+    "second_category": "初创企业",
+    "chinese_name": "组织情报-初创企业",
+    "english_name": "Organization Intelligence-Startups",
+    "overview": "监测独角兽、潜力初创企业及融资动态"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "组织情报",
+    "second_category": "研究机构",
+    "chinese_name": "组织情报-研究机构",
+    "english_name": "Organization Intelligence-Research Institutes",
+    "overview": "分析高校、科研院所、智库研究成果"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "组织情报",
+    "second_category": "政府部门",
+    "chinese_name": "组织情报-政府部门",
+    "english_name": "Organization Intelligence-Government",
+    "overview": "追踪监管机构、政府部门政策动向"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "组织情报",
+    "second_category": "国际机构",
+    "chinese_name": "组织情报-国际机构",
+    "english_name": "Organization Intelligence-International",
+    "overview": "监测跨国公司、NGO、行业协会活动"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "人物追踪",
+    "second_category": "政要领袖",
+    "chinese_name": "人物追踪-政要领袖",
+    "english_name": "People Tracking-Political Leaders",
+    "overview": "追踪国家领导人、高官言论和决策"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "人物追踪",
+    "second_category": "企业家",
+    "chinese_name": "人物追踪-企业家",
+    "english_name": "People Tracking-Entrepreneurs",
+    "overview": "监测知名企业家、创业者动态和观点"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "人物追踪",
+    "second_category": "科学家",
+    "chinese_name": "人物追踪-科学家",
+    "english_name": "People Tracking-Scientists",
+    "overview": "分析顶尖科学家、技术专家研究方向"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "人物追踪",
+    "second_category": "投资人",
+    "chinese_name": "人物追踪-投资人",
+    "english_name": "People Tracking-Investors",
+    "overview": "追踪知名投资人、基金经理投资理念"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "人物追踪",
+    "second_category": "意见领袖",
+    "chinese_name": "人物追踪-意见领袖",
+    "english_name": "People Tracking-Opinion Leaders",
+    "overview": "监测行业KOL、媒体人物影响力"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "事件监测",
+    "second_category": "政策法规",
+    "chinese_name": "事件监测-政策法规",
+    "english_name": "Event Monitoring-Policy & Law",
+    "overview": "追踪立法进程、政策发布、监管变化"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "事件监测",
+    "second_category": "并购交易",
+    "chinese_name": "事件监测-并购交易",
+    "english_name": "Event Monitoring-M&A Deals",
+    "overview": "监测重大并购、IPO、资产重组交易"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "事件监测",
+    "second_category": "技术突破",
+    "chinese_name": "事件监测-技术突破",
+    "english_name": "Event Monitoring-Tech Breakthroughs",
+    "overview": "分析重大科研成果、技术里程碑事件"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "事件监测",
+    "second_category": "危机事故",
+    "chinese_name": "事件监测-危机事故",
+    "english_name": "Event Monitoring-Crisis & Accidents",
+    "overview": "追踪安全事故、产品召回、数据泄露"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "事件监测",
+    "second_category": "会议展览",
+    "chinese_name": "事件监测-会议展览",
+    "english_name": "Event Monitoring-Conferences & Expos",
+    "overview": "监测重要峰会、行业展会关键信息"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "事件监测",
+    "second_category": "诉讼纠纷",
+    "chinese_name": "事件监测-诉讼纠纷",
+    "english_name": "Event Monitoring-Litigation",
+    "overview": "追踪商业诉讼、知识产权纠纷进展"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "区域动态",
+    "second_category": "国家战略",
+    "chinese_name": "区域动态-国家战略",
+    "english_name": "Regional Dynamics-National Strategy",
+    "overview": "分析各国发展规划、产业政策、改革举措"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "区域动态",
+    "second_category": "城市发展",
+    "chinese_name": "区域动态-城市发展",
+    "english_name": "Regional Dynamics-Urban Development",
+    "overview": "监测重点城市、都市圈、城市群建设"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "区域动态",
+    "second_category": "园区集群",
+    "chinese_name": "区域动态-园区集群",
+    "english_name": "Regional Dynamics-Industrial Clusters",
+    "overview": "追踪高新区、自贸区、产业园区动态"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "区域动态",
+    "second_category": "跨境合作",
+    "chinese_name": "区域动态-跨境合作",
+    "english_name": "Regional Dynamics-Cross-border",
+    "overview": "分析跨境贸易、投资、基础设施项目"
+  },
+  {
+    "top_category": "要素情报类",
+    "first_category": "区域动态",
+    "second_category": "区域协定",
+    "chinese_name": "区域动态-区域协定",
+    "english_name": "Regional Dynamics-Regional Agreements",
+    "overview": "监测RCEP、CPTPP、USMCA等协定影响"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "一级分类",
+    "second_category": "二级分类",
+    "chinese_name": "中文名称",
+    "english_name": "英文名称",
+    "overview": "概述"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "---------",
+    "second_category": "---------",
+    "chinese_name": "---------",
+    "english_name": "----------",
+    "overview": "------"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "供应链情报",
+    "second_category": "供应网络",
+    "chinese_name": "供应链情报-供应网络",
+    "english_name": "Supply Chain Intelligence-Networks",
+    "overview": "绘制关键产品供应链图谱和依赖关系"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "供应链情报",
+    "second_category": "产能分布",
+    "chinese_name": "供应链情报-产能分布",
+    "english_name": "Supply Chain Intelligence-Capacity",
+    "overview": "监测全球产能布局、产能利用率变化"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "供应链情报",
+    "second_category": "物流运输",
+    "chinese_name": "供应链情报-物流运输",
+    "english_name": "Supply Chain Intelligence-Logistics",
+    "overview": "追踪航运、港口、陆运、空运动态"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "供应链情报",
+    "second_category": "库存周期",
+    "chinese_name": "供应链情报-库存周期",
+    "english_name": "Supply Chain Intelligence-Inventory",
+    "overview": "分析库存水平、补库存周期、需求预测"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "供应链情报",
+    "second_category": "供应风险",
+    "chinese_name": "供应链情报-供应风险",
+    "english_name": "Supply Chain Intelligence-Risk",
+    "overview": "识别断供风险、替代方案、韧性评估"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "网络安全",
+    "second_category": "威胁态势",
+    "chinese_name": "网络安全-威胁态势",
+    "english_name": "Cybersecurity-Threat Landscape",
+    "overview": "监测APT组织、恶意软件、攻击趋势"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "网络安全",
+    "second_category": "漏洞情报",
+    "chinese_name": "网络安全-漏洞情报",
+    "english_name": "Cybersecurity-Vulnerability",
+    "overview": "追踪0day漏洞、补丁更新、POC公布"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "网络安全",
+    "second_category": "数据安全",
+    "chinese_name": "网络安全-数据安全",
+    "english_name": "Cybersecurity-Data Security",
+    "overview": "分析数据泄露、隐私保护、合规要求"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "网络安全",
+    "second_category": "基础设施",
+    "chinese_name": "网络安全-基础设施",
+    "english_name": "Cybersecurity-Infrastructure",
+    "overview": "监测关键信息基础设施安全态势"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "合规情报",
+    "second_category": "监管政策",
+    "chinese_name": "合规情报-监管政策",
+    "english_name": "Compliance Intelligence-Regulation",
+    "overview": "追踪行业监管、合规要求、处罚案例"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "合规情报",
+    "second_category": "标准规范",
+    "chinese_name": "合规情报-标准规范",
+    "english_name": "Compliance Intelligence-Standards",
+    "overview": "监测国际标准、行业规范、认证要求"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "合规情报",
+    "second_category": "知识产权",
+    "chinese_name": "合规情报-知识产权",
+    "english_name": "Compliance Intelligence-IP",
+    "overview": "分析专利布局、商标纠纷、技术许可"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "合规情报",
+    "second_category": "ESG要求",
+    "chinese_name": "合规情报-ESG要求",
+    "english_name": "Compliance Intelligence-ESG",
+    "overview": "追踪环境、社会、治理相关披露要求"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "舆情分析",
+    "second_category": "社会热点",
+    "chinese_name": "舆情分析-社会热点",
+    "english_name": "Opinion Analysis-Social Topics",
+    "overview": "监测民生议题、社会事件舆论走向"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "舆情分析",
+    "second_category": "行业声誉",
+    "chinese_name": "舆情分析-行业声誉",
+    "english_name": "Opinion Analysis-Industry Reputation",
+    "overview": "分析行业形象、企业品牌声誉变化"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "舆情分析",
+    "second_category": "危机传播",
+    "chinese_name": "舆情分析-危机传播",
+    "english_name": "Opinion Analysis-Crisis Communication",
+    "overview": "追踪负面事件传播路径和舆论演化"
+  },
+  {
+    "top_category": "功能情报类",
+    "first_category": "舆情分析",
+    "second_category": "政策反响",
+    "chinese_name": "舆情分析-政策反响",
+    "english_name": "Opinion Analysis-Policy Response",
+    "overview": "评估重大政策社会接受度和反馈"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "一级分类",
+    "second_category": "二级分类",
+    "chinese_name": "中文名称",
+    "english_name": "英文名称",
+    "overview": "概述"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "---------",
+    "second_category": "---------",
+    "chinese_name": "---------",
+    "english_name": "----------",
+    "overview": "------"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "创新情报",
+    "second_category": "基础研究",
+    "chinese_name": "创新情报-基础研究",
+    "english_name": "Innovation Intelligence-Basic Research",
+    "overview": "追踪前沿科学发现、理论突破、范式转变"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "创新情报",
+    "second_category": "应用研究",
+    "chinese_name": "创新情报-应用研究",
+    "english_name": "Innovation Intelligence-Applied Research",
+    "overview": "监测技术转化、工程化进展、产业化路径"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "创新情报",
+    "second_category": "研发投入",
+    "chinese_name": "创新情报-研发投入",
+    "english_name": "Innovation Intelligence-R&D Investment",
+    "overview": "分析研发经费、人员投入、项目布局"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "创新情报",
+    "second_category": "专利技术",
+    "chinese_name": "创新情报-专利技术",
+    "english_name": "Innovation Intelligence-Patents",
+    "overview": "追踪专利申请、授权、转让、诉讼动态"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "创新情报",
+    "second_category": "创新生态",
+    "chinese_name": "创新情报-创新生态",
+    "english_name": "Innovation Intelligence-Ecosystem",
+    "overview": "监测孵化器、加速器、创新联盟活动"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "风险情报",
+    "second_category": "政治风险",
+    "chinese_name": "风险情报-政治风险",
+    "english_name": "Risk Intelligence-Political",
+    "overview": "评估政权更迭、政策突变、社会动荡风险"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "风险情报",
+    "second_category": "经济风险",
+    "chinese_name": "风险情报-经济风险",
+    "english_name": "Risk Intelligence-Economic",
+    "overview": "监测经济衰退、通胀、债务危机征兆"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "风险情报",
+    "second_category": "技术风险",
+    "chinese_name": "风险情报-技术风险",
+    "english_name": "Risk Intelligence-Technology",
+    "overview": "分析技术依赖、技术断供、标准竞争风险"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "风险情报",
+    "second_category": "自然灾害",
+    "chinese_name": "风险情报-自然灾害",
+    "english_name": "Risk Intelligence-Natural Disasters",
+    "overview": "追踪地震、洪水、干旱、极端天气影响"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "风险情报",
+    "second_category": "公共卫生",
+    "chinese_name": "风险情报-公共卫生",
+    "english_name": "Risk Intelligence-Public Health",
+    "overview": "监测传染病、疫情、医疗挤兑风险"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "风险情报",
+    "second_category": "社会风险",
+    "chinese_name": "风险情报-社会风险",
+    "english_name": "Risk Intelligence-Social",
+    "overview": "分析失业、贫富差距、群体事件风险"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "竞争情报",
+    "second_category": "市场份额",
+    "chinese_name": "竞争情报-市场份额",
+    "english_name": "Competitive Intelligence-Market Share",
+    "overview": "追踪行业集中度、市场占有率变化"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "竞争情报",
+    "second_category": "产品策略",
+    "chinese_name": "竞争情报-产品策略",
+    "english_name": "Competitive Intelligence-Product Strategy",
+    "overview": "分析竞品发布、功能迭代、定价策略"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "竞争情报",
+    "second_category": "营销策略",
+    "chinese_name": "竞争情报-营销策略",
+    "english_name": "Competitive Intelligence-Marketing",
+    "overview": "监测广告投放、渠道布局、品牌活动"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "竞争情报",
+    "second_category": "人才竞争",
+    "chinese_name": "竞争情报-人才竞争",
+    "english_name": "Competitive Intelligence-Talent War",
+    "overview": "追踪关键人才挖角、团队组建动态"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "竞争情报",
+    "second_category": "联盟生态",
+    "chinese_name": "竞争情报-联盟生态",
+    "english_name": "Competitive Intelligence-Alliances",
+    "overview": "分析战略合作、联盟关系、生态构建"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "投资情报",
+    "second_category": "一级市场",
+    "chinese_name": "投资情报-一级市场",
+    "english_name": "Investment Intelligence-Primary Market",
+    "overview": "监测VC/PE投资、融资轮次、估值变化"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "投资情报",
+    "second_category": "二级市场",
+    "chinese_name": "投资情报-二级市场",
+    "english_name": "Investment Intelligence-Secondary Market",
+    "overview": "追踪机构持仓、大宗交易、增减持"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "投资情报",
+    "second_category": "产业基金",
+    "chinese_name": "投资情报-产业基金",
+    "english_name": "Investment Intelligence-Industry Funds",
+    "overview": "分析政府引导基金、产业基金投向"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "投资情报",
+    "second_category": "海外投资",
+    "chinese_name": "投资情报-海外投资",
+    "english_name": "Investment Intelligence-Overseas",
+    "overview": "监测跨境并购、绿地投资、撤资动态"
+  },
+  {
+    "top_category": "专项情报类",
+    "first_category": "投资情报",
+    "second_category": "退出路径",
+    "chinese_name": "投资情报-退出路径",
+    "english_name": "Investment Intelligence-Exit",
+    "overview": "追踪IPO、并购退出、回购等退出案例"
+  }
+]

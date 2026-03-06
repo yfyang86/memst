@@ -136,6 +136,25 @@ impl Message {
     }
 }
 
+/// Default implementation for Message.
+/// 
+/// # Warning
+/// This creates an empty User message which may not be semantically valid.
+/// It's primarily intended for test fixtures and struct updates (`..Default::default()`).
+/// For production code, use `Message::new()` or specific constructors instead.
+impl Default for Message {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            role: Role::User,
+            content: Content::Text(String::new()),
+            timestamp: Utc::now(),
+            metadata: HashMap::new(),
+            token_count: None,
+        }
+    }
+}
+
 /// Session metadata stored in metadata.json
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SessionMetadata {

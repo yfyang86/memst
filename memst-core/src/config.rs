@@ -25,7 +25,7 @@ pub struct LlmConfigSection {
     pub r#type: String,
 
     /// API endpoint URL
-    #[serde(default = "default_llm_api_url")]
+    #[serde(default = "default_llm_api_url", alias = "base_url")]
     pub api_url: String,
 
     /// Model name or path
@@ -57,7 +57,7 @@ pub struct EmbeddingConfigSection {
     pub r#type: String,
 
     /// API endpoint URL
-    #[serde(default = "default_embedding_api_url")]
+    #[serde(default = "default_embedding_api_url", alias = "base_url")]
     pub api_url: String,
 
     /// Model name

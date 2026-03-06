@@ -107,6 +107,31 @@ impl LlmProviderConfig {
         }
     }
 
+    /// Create a local development config (e.g., for local LLM server)
+    /// 
+    /// # Example
+    /// ```
+    /// let config = LlmProviderConfig::local("http://localhost:8080/v1", "gpt-4");
+    /// ```
+    pub fn local(api_url: impl Into<String>, model: impl Into<String>) -> Self {
+        Self::openai(api_url, model)
+    }
+
+    /// Validate that the configuration is usable
+    pub fn validate(&self) -> Result<()> {
+        if self.base.api_url.is_empty() {
+            return Err(crate::error::Error::InvalidOperation(
+                "LLM API URL is not configured. \
+                Please either:\n\
+                1. Create a config file at ~/.memst/config.toml\n\
+                2. Use LlmProviderConfig::openai() or LlmProviderConfig::local() to configure explicitly\n\
+                3. Set the MEMST_CONFIG environment variable to your config file path"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Set API key
     pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
         self.base.api_key = Some(key.into());
@@ -163,8 +188,21 @@ impl Default for LlmProviderConfig {
             }
         }
 
-        // Default to OpenAI-compatible
-        Self::openai("http://localhost:8080/v1", "gpt-4")
+        // No configuration found - use a placeholder that will fail with a clear error
+        // Users must explicitly configure the LLM provider
+        Self {
+            provider_type: LlmProviderType::OpenAi,
+            base: LlmConfig {
+                api_url: String::new(), // Empty URL will cause error on use
+                model: "gpt-4".to_string(),
+                api_key: None,
+                timeout: 60,
+                max_tokens: 4096,
+                temperature: 0.7,
+            },
+            custom_headers: None,
+            timeout_secs: Some(60),
+        }
     }
 }
 
@@ -173,7 +211,13 @@ pub struct LlmLoader;
 
 impl LlmLoader {
     /// Load a provider from configuration
+    /// 
+    /// # Errors
+    /// Returns an error if the configuration is invalid (e.g., missing API URL)
     pub fn load(config: LlmProviderConfig) -> Result<Arc<dyn LlmProvider>> {
+        // Validate configuration before attempting to load
+        config.validate()?;
+        
         match config.provider_type {
             LlmProviderType::OpenAi => Self::load_openai(config),
             LlmProviderType::Claude => Self::load_claude(config),

@@ -40,9 +40,11 @@ impl Default for EmbeddingConfig {
             return cfg.to_embedding_config();
         }
 
+        // If no config file, use environment variables or empty strings
+        // Empty api_url will cause a clear error when trying to use the client
         Self {
             api_url: std::env::var("MEMST_EMBEDDING_API_URL")
-                .unwrap_or_else(|_| "http://localhost:8081/v1/embeddings".to_string()),
+                .unwrap_or_default(), // Empty if not set - will error on use
             model: std::env::var("MEMST_EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "text-embedding-ada-002".to_string()),
             timeout: 30,
@@ -60,7 +62,21 @@ pub struct EmbeddingClient {
 
 impl EmbeddingClient {
     /// Create a new embedding client
+    /// 
+    /// # Errors
+    /// Returns an error if the API URL is not configured
     pub fn new(config: EmbeddingConfig) -> Result<Self> {
+        if config.api_url.is_empty() {
+            return Err(crate::error::Error::InvalidOperation(
+                "Embedding API URL is not configured. \
+                Please either:\n\
+                1. Set MEMST_EMBEDDING_API_URL environment variable\n\
+                2. Create a config file at ~/.memst/config.toml\n\
+                3. Use EmbeddingConfig with explicit api_url"
+                    .to_string(),
+            ));
+        }
+        
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout))
             .build()
@@ -150,19 +166,6 @@ impl EmbeddingClient {
     }
 }
 
-/// Trait for LLM operations
-#[async_trait]
-pub trait LlmClient: Send + Sync {
-    /// Generate a completion for the given prompt
-    async fn complete(&self, prompt: &str) -> Result<String>;
-
-    /// Generate a chat completion from messages
-    async fn chat(&self, messages: &[Message]) -> Result<String>;
-
-    /// Get the provider name
-    fn provider_name(&self) -> &str;
-}
-
 /// Configuration for LLM clients
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
@@ -186,9 +189,11 @@ impl Default for LlmConfig {
             return cfg.to_llm_config();
         }
 
+        // If no config file, use environment variables or empty strings
+        // Empty api_url will cause a clear error when trying to use the client
         Self {
             api_url: std::env::var("MEMST_LLM_API_URL")
-                .unwrap_or_else(|_| "http://localhost:8080/v1".to_string()),
+                .unwrap_or_default(), // Empty if not set - will error on use
             model: std::env::var("MEMST_LLM_MODEL").unwrap_or_else(|_| "gpt-4".to_string()),
             api_key: std::env::var("MEMST_LLM_API_KEY").ok(),
             timeout: 60,
@@ -198,7 +203,10 @@ impl Default for LlmConfig {
     }
 }
 
-/// Legacy LlmClient struct - renamed to avoid conflicts
+/// Simple LLM client implementation using OpenAI-compatible API
+/// 
+/// For more flexibility with different providers, use the `LlmProvider` trait
+/// from `crate::llm::providers` instead, which supports OpenAI, Claude, and custom providers.
 #[derive(Debug)]
 pub struct LegacyLlmClient {
     config: LlmConfig,

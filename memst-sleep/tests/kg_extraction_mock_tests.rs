@@ -264,19 +264,22 @@ fn test_matrix_scenario_entities() {
     let result = mock_matrix_extraction();
 
     // Should have extracted main characters
-    let neo = result.entities.iter().find(|e| e.name == "Neo");
-    assert!(neo.is_some(), "Should extract Neo");
-    assert_eq!(neo.unwrap().entity_type, "person");
-    assert!(neo.unwrap().confidence > 0.9);
+    let neo = result.entities.iter()
+        .find(|e| e.name == "Neo")
+        .expect("Should extract Neo");
+    assert_eq!(neo.entity_type, "person");
+    assert!(neo.confidence > 0.9);
 
-    let oracle = result.entities.iter().find(|e| e.name == "The Oracle");
-    assert!(oracle.is_some(), "Should extract The Oracle");
+    let _oracle = result.entities.iter()
+        .find(|e| e.name == "The Oracle")
+        .expect("Should extract The Oracle");
 
     // The One should be a concept, not a person
-    let the_one = result.entities.iter().find(|e| e.name == "The One");
-    assert!(the_one.is_some(), "Should extract The One concept");
-    assert_eq!(the_one.unwrap().entity_type, "concept");
-    assert!(the_one.unwrap().temporal_relevance == TemporalRelevance::Permanent);
+    let the_one = result.entities.iter()
+        .find(|e| e.name == "The One")
+        .expect("Should extract The One concept");
+    assert_eq!(the_one.entity_type, "concept");
+    assert!(the_one.temporal_relevance == TemporalRelevance::Permanent);
 
     println!("✓ Matrix scenario: Entities extracted correctly");
 }
@@ -328,24 +331,28 @@ fn test_tech_meeting_scenario() {
     let result = mock_tech_meeting_extraction();
 
     // Check people
-    let sarah = result.entities.iter().find(|e| e.name == "Sarah Chen");
-    assert!(sarah.is_some());
-    assert_eq!(sarah.unwrap().entity_type, "person");
+    let sarah = result.entities.iter()
+        .find(|e| e.name == "Sarah Chen")
+        .expect("Should find Sarah Chen");
+    assert_eq!(sarah.entity_type, "person");
 
     // Check project
-    let project = result.entities.iter().find(|e| e.name == "Project Phoenix");
-    assert!(project.is_some());
-    assert_eq!(project.unwrap().entity_type, "project");
+    let project = result.entities.iter()
+        .find(|e| e.name == "Project Phoenix")
+        .expect("Should find Project Phoenix");
+    assert_eq!(project.entity_type, "project");
 
     // Check technology
-    let k8s = result.entities.iter().find(|e| e.name == "Kubernetes");
-    assert!(k8s.is_some());
-    assert_eq!(k8s.unwrap().entity_type, "technology");
+    let k8s = result.entities.iter()
+        .find(|e| e.name == "Kubernetes")
+        .expect("Should find Kubernetes");
+    assert_eq!(k8s.entity_type, "technology");
 
     // Check organization
-    let stripe = result.entities.iter().find(|e| e.name == "Stripe");
-    assert!(stripe.is_some());
-    assert_eq!(stripe.unwrap().entity_type, "organization");
+    let stripe = result.entities.iter()
+        .find(|e| e.name == "Stripe")
+        .expect("Should find Stripe");
+    assert_eq!(stripe.entity_type, "organization");
 
     println!("✓ Tech meeting scenario: All entity types present");
 }
@@ -378,26 +385,31 @@ fn test_medical_scenario_entities() {
     let result = mock_medical_extraction();
 
     // Doctor
-    let doctor = result.entities.iter().find(|e| e.name == "Dr. Emily Patterson");
-    assert!(doctor.is_some());
-    assert_eq!(doctor.unwrap().entity_type, "person");
-    let attrs = doctor.unwrap().attributes.as_object().unwrap();
-    assert_eq!(attrs.get("role").unwrap(), "Cardiologist");
+    let doctor = result.entities.iter()
+        .find(|e| e.name == "Dr. Emily Patterson")
+        .expect("Should find Dr. Emily Patterson");
+    assert_eq!(doctor.entity_type, "person");
+    let attrs = doctor.attributes.as_object()
+        .expect("Doctor should have attributes");
+    assert_eq!(attrs.get("role").expect("Should have role attribute"), "Cardiologist");
 
     // Patient
-    let patient = result.entities.iter().find(|e| e.name == "James Wilson");
-    assert!(patient.is_some());
-    assert_eq!(patient.unwrap().entity_type, "person");
+    let patient = result.entities.iter()
+        .find(|e| e.name == "James Wilson")
+        .expect("Should find James Wilson");
+    assert_eq!(patient.entity_type, "person");
 
     // Condition
-    let condition = result.entities.iter().find(|e| e.name == "Essential Hypertension");
-    assert!(condition.is_some());
-    assert_eq!(condition.unwrap().entity_type, "condition");
+    let condition = result.entities.iter()
+        .find(|e| e.name == "Essential Hypertension")
+        .expect("Should find Essential Hypertension");
+    assert_eq!(condition.entity_type, "condition");
 
     // Medication
-    let med = result.entities.iter().find(|e| e.name == "Atorvastatin");
-    assert!(med.is_some());
-    assert_eq!(med.unwrap().entity_type, "medication");
+    let med = result.entities.iter()
+        .find(|e| e.name == "Atorvastatin")
+        .expect("Should find Atorvastatin");
+    assert_eq!(med.entity_type, "medication");
 
     println!("✓ Medical scenario: Medical entity types correct");
 }
@@ -435,16 +447,22 @@ fn test_temporal_relevance_classification() {
 
     // Characters should be long-term
     let matrix = mock_matrix_extraction();
-    let neo = matrix.entities.iter().find(|e| e.name == "Neo").unwrap();
+    let neo = matrix.entities.iter()
+        .find(|e| e.name == "Neo")
+        .expect("Should find Neo");
     assert_eq!(neo.temporal_relevance, TemporalRelevance::LongTerm);
 
     // Core concepts should be permanent
-    let the_one = matrix.entities.iter().find(|e| e.name == "The One").unwrap();
+    let the_one = matrix.entities.iter()
+        .find(|e| e.name == "The One")
+        .expect("Should find The One");
     assert_eq!(the_one.temporal_relevance, TemporalRelevance::Permanent);
 
     // Projects should be short-term
     let tech = mock_tech_meeting_extraction();
-    let project = tech.entities.iter().find(|e| e.name == "Project Phoenix").unwrap();
+    let project = tech.entities.iter()
+        .find(|e| e.name == "Project Phoenix")
+        .expect("Should find Project Phoenix");
     assert_eq!(project.temporal_relevance, TemporalRelevance::ShortTerm);
 
     println!("✓ Temporal relevance classification works");
@@ -531,18 +549,20 @@ fn test_entity_attributes() {
     // Medical entities should have detailed attributes
     let atorvastatin = medical.entities.iter()
         .find(|e| e.name == "Atorvastatin")
-        .unwrap();
+        .expect("Should find Atorvastatin");
     
-    let attrs = atorvastatin.attributes.as_object().unwrap();
+    let attrs = atorvastatin.attributes.as_object()
+        .expect("Atorvastatin should have attributes");
     assert!(attrs.contains_key("dosage"), "Medication should have dosage");
     assert!(attrs.contains_key("class"), "Medication should have class");
 
     // Patient should have age
     let patient = medical.entities.iter()
         .find(|e| e.name == "James Wilson")
-        .unwrap();
+        .expect("Should find James Wilson");
     
-    let patient_attrs = patient.attributes.as_object().unwrap();
+    let patient_attrs = patient.attributes.as_object()
+        .expect("Patient should have attributes");
     assert!(patient_attrs.contains_key("age"), "Patient should have age");
 
     println!("✓ Entity attributes extracted");

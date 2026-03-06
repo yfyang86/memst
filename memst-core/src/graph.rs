@@ -328,6 +328,101 @@ impl KnowledgeGraph {
         Ok(false)
     }
 
+    /// Migrate relationships from one entity to another.
+    ///
+    /// This is used during entity merging to transfer all relationships
+    /// from the deprecated entity to the kept entity.
+    ///
+    /// Returns the number of relationships migrated.
+    pub fn migrate_relationships(
+        &mut self,
+        from_entity: EntityId,
+        to_entity: EntityId,
+    ) -> Result<usize> {
+        use crate::error::Error;
+        
+        // Verify both entities exist
+        if self.get_entity(to_entity).is_none() {
+            return Err(Error::SessionNotFound(to_entity));
+        }
+        
+        let mut migrated_count = 0;
+        let mut relationships_to_add = Vec::new();
+        let mut relationship_ids_to_remove = Vec::new();
+        
+        // Find all relationships involving from_entity
+        for edge in &self.edges {
+            let mut needs_migration = false;
+            let mut new_subject = edge.subject_id;
+            let mut new_object = edge.object_id;
+            
+            if edge.subject_id == from_entity {
+                new_subject = to_entity;
+                needs_migration = true;
+            }
+            if edge.object_id == from_entity {
+                new_object = to_entity;
+                needs_migration = true;
+            }
+            
+            if needs_migration {
+                // Check if an equivalent relationship already exists
+                let exists = self.edges.iter().any(|e| {
+                    e.subject_id == new_subject
+                        && e.object_id == new_object
+                        && e.predicate == edge.predicate
+                        && e.relationship_id != edge.relationship_id
+                });
+                
+                if !exists {
+                    // Create new relationship with updated entity references
+                    let mut new_rel = Relationship::new(
+                        new_subject,
+                        &edge.predicate,
+                        new_object,
+                        edge.session_id,
+                    )
+                    .with_confidence(edge.confidence);
+                    
+                    if let Some(source_id) = edge.source_message_id {
+                        new_rel = new_rel.with_source(source_id);
+                    }
+                    
+                    relationships_to_add.push(new_rel);
+                    migrated_count += 1;
+                }
+                
+                // Mark old relationship for removal
+                relationship_ids_to_remove.push(edge.relationship_id);
+            }
+        }
+        
+        // Remove old relationships
+        self.edges.retain(|e| !relationship_ids_to_remove.contains(&e.relationship_id));
+        
+        // Add new relationships
+        for rel in relationships_to_add {
+            // Convert to SerializableEdge
+            let edge = SerializableEdge {
+                subject_id: rel.subject_id,
+                predicate: rel.predicate.clone(),
+                object_id: rel.object_id,
+                relationship_id: rel.id,
+                confidence: rel.confidence,
+                session_id: rel.session_id,
+                source_message_id: rel.source_message_id,
+                created_at: rel.created_at,
+            };
+            self.edges.push(edge);
+        }
+        
+        if migrated_count > 0 {
+            self.save()?;
+        }
+        
+        Ok(migrated_count)
+    }
+
     /// Get graph statistics.
     pub fn stats(&self) -> GraphStats {
         let entity_types: std::collections::HashMap<String, usize> = self

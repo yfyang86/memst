@@ -6,7 +6,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 use memst_core::graph::KnowledgeGraph;
-use memst_core::types::{Entity, EntityId, KgDecayConfig, Relationship, RelationshipId};
+use memst_core::types::{Entity, EntityId, KgDecayConfig, Relationship};
 
 /// Decay engine for knowledge graph maintenance.
 pub struct KgDecayEngine {

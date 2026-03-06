@@ -1,11 +1,80 @@
 //! Prompt Management System
 //!
-//! Provides template-based prompts for common LLM tasks:
-//! - Knowledge Graph extraction
-//! - Text summarization
-//! - Information compression
-//! - Question answering
-//! - Entity resolution
+//! Provides template-based prompts for common LLM tasks with structured output formats.
+//!
+//! ## Supported Tasks
+//!
+//! - **KnowledgeGraphExtraction**: Extract entities, relationships, and events from text
+//! - **Summarization**: Condense text while preserving key information
+//! - **Compression**: Aggressively compress information for storage
+//! - **QuestionAnswering**: Answer questions based on context
+//! - **EntityResolution**: Resolve ambiguous entity references
+//! - **FactExtraction**: Extract atomic facts from text
+//! - **ContextGeneration**: Generate context for embeddings
+//! - **ContradictionDetection**: Identify contradictions in information
+//!
+//! ## Usage Example
+//!
+//! ```rust
+//! use memst_core::llm::prompts::{PromptManager, TaskType};
+//!
+//! let prompts = PromptManager::new();
+//!
+//! // Get KG extraction prompt
+//! let kg_prompt = prompts.kg_extraction("Alice works at Google as a software engineer.");
+//!
+//! // Get summarization prompt
+//! let summary_prompt = prompts.summarize("Long text here...", 50, "concise");
+//! ```
+//!
+//! ## Output Formats
+//!
+//! ### Knowledge Graph Extraction
+//! Expected JSON structure:
+//! ```json
+//! {
+//!   "entities": [
+//!     {
+//!       "name": "Alice",
+//!       "type": "person",
+//!       "attributes": {"role": "software engineer"},
+//!       "confidence": 0.95,
+//!       "temporal_relevance": "long_term"
+//!     }
+//!   ],
+//!   "relationships": [
+//!     {
+//!       "subject": "Alice",
+//!       "predicate": "works_at",
+//!       "object": "Google",
+//!       "confidence": 0.90,
+//!       "temporal_type": "long_term"
+//!     }
+//!   ],
+//!   "events": [],
+//!   "overall_confidence": 0.92
+//! }
+//! ```
+//!
+//! ### Temporal Relevance Values
+//! - `permanent`: Core facts, definitions, universal truths (e.g., "Rust is a programming language")
+//! - `long_term`: Characters, stable preferences, ongoing projects (e.g., "User works at Google")
+//! - `short_term`: Current tasks, temporary situations (e.g., "Working on a bug fix")
+//! - `temporary`: Transient events, momentary states (e.g., "Attending today's meeting")
+//!
+//! ## Configuration
+//!
+//! Prompts can be customized by modifying templates or creating new ones:
+//!
+//! ```rust
+//! use memst_core::llm::prompts::PromptTemplate;
+//! use std::collections::HashMap;
+//!
+//! let template = PromptTemplate::new(
+//!     "custom_task",
+//!     "Process this: {input}"
+//! ).with_description("My custom task");
+//! ```
 
 use std::collections::HashMap;
 

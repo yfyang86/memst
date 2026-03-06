@@ -18,7 +18,7 @@ def get_default_settings_from_config() -> Dict[str, Any]:
         return {
             "llm": {
                 "type": config.llm.type,
-                "api_url": config.llm.api_url,
+                "api_url": config.llm.get_api_url(),
                 "model": config.llm.model,
                 "timeout": config.llm.timeout,
                 "max_tokens": config.llm.max_tokens,
@@ -27,7 +27,7 @@ def get_default_settings_from_config() -> Dict[str, Any]:
             },
             "embedding": {
                 "type": config.embedding.type,
-                "api_url": config.embedding.api_url,
+                "api_url": config.embedding.get_api_url(),
                 "model": config.embedding.model,
                 "timeout": config.embedding.timeout,
                 "expected_dimension": config.embedding.expected_dimension,

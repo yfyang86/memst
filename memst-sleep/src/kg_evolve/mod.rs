@@ -8,17 +8,14 @@
 
 use crate::evolve::MemoryRelation;
 use memst_core::graph::KnowledgeGraph;
-use memst_core::llm::{EmbeddingClient, LlmClient};
-use memst_core::types::{
-    Entity, EntityId, KgEvolutionAction, KgEvolutionConfig, MemoryItem,
-    Relationship, TemporalRelevance,
-};
+use memst_core::llm::providers::LlmProvider;
+use memst_core::types::{Entity, EntityId, KgEvolutionAction, KgEvolutionConfig, MemoryItem};
+use std::sync::Arc;
 
 /// Evolution engine for knowledge graph maintenance.
 pub struct KgEvolutionEngine {
     config: KgEvolutionConfig,
-    llm_client: Option<LlmClient>,
-    embedding_client: Option<EmbeddingClient>,
+    llm_client: Option<Arc<dyn LlmProvider>>,
 }
 
 impl KgEvolutionEngine {
@@ -27,7 +24,6 @@ impl KgEvolutionEngine {
         Self {
             config: KgEvolutionConfig::default(),
             llm_client: None,
-            embedding_client: None,
         }
     }
 
@@ -36,19 +32,12 @@ impl KgEvolutionEngine {
         Self {
             config,
             llm_client: None,
-            embedding_client: None,
         }
     }
 
     /// Set LLM client for intelligent entity resolution.
-    pub fn with_llm_client(mut self, client: LlmClient) -> Self {
+    pub fn with_llm_client(mut self, client: Arc<dyn LlmProvider>) -> Self {
         self.llm_client = Some(client);
-        self
-    }
-
-    /// Set embedding client for similarity calculations.
-    pub fn with_embedding_client(mut self, client: EmbeddingClient) -> Self {
-        self.embedding_client = Some(client);
         self
     }
 
@@ -249,6 +238,9 @@ impl KgEvolutionEngine {
                 reason,
                 replacement,
             } => self.apply_deprecation(graph, *entity_id, reason.clone(), *replacement),
+            KgEvolutionAction::UpdateEntity { entity_id, new_name, new_type, attribute_changes, .. } => {
+                self.apply_entity_update(graph, *entity_id, new_name.clone(), new_type.clone(), attribute_changes.clone())
+            }
             KgEvolutionAction::RemoveRelationship {
                 relationship_id,
                 reason: _,
@@ -301,15 +293,24 @@ impl KgEvolutionEngine {
         keep_entity.access_count += merge_entity.access_count;
 
         // Mark merged entity as deprecated
-        drop(keep_entity);
+        // (keep_entity borrow ends here implicitly)
         if let Some(merge_ent) = graph.get_entity_mut(merge_id) {
             merge_ent.deprecate(format!("Merged into {}", keep_id));
             // Note: The deprecation_reason already indicates the replacement
         }
 
         // Transfer relationships from merge to keep
-        // Note: This requires relationship migration which would need to be implemented
-        // in the KnowledgeGraph struct
+        match graph.migrate_relationships(merge_id, keep_id) {
+            Ok(count) => {
+                if count > 0 {
+                    eprintln!("Migrated {} relationships from {:?} to {:?}", count, merge_id, keep_id);
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to migrate relationships: {}", e);
+                // Continue with merge even if relationship migration fails
+            }
+        }
 
         Ok(true)
     }
@@ -353,6 +354,83 @@ impl KgEvolutionEngine {
         actions.extend(stale_actions);
 
         actions
+    }
+
+    /// Apply evolution actions to the knowledge graph.
+    /// 
+    /// Returns statistics about the applied actions.
+    pub fn apply_evolution_actions(
+        &self,
+        graph: &mut KnowledgeGraph,
+        actions: &[KgEvolutionAction],
+    ) -> EvolutionStats {
+        let mut stats = EvolutionStats::default();
+
+        for action in actions {
+            let result = match action {
+                KgEvolutionAction::MergeEntities { keep, merge, .. } => {
+                    self.apply_merge(graph, *keep, *merge)
+                }
+                KgEvolutionAction::DeprecateEntity { entity_id, reason, replacement } => {
+                    self.apply_deprecation(graph, *entity_id, reason.clone(), *replacement)
+                }
+                KgEvolutionAction::UpdateEntity { entity_id, new_name, new_type, attribute_changes, .. } => {
+                    self.apply_entity_update(graph, *entity_id, new_name.clone(), new_type.clone(), attribute_changes.clone())
+                }
+                // TODO: Implement these actions
+                KgEvolutionAction::SplitEntity { .. } => {
+                    Err("SplitEntity not yet implemented".to_string())
+                }
+                KgEvolutionAction::AddRelationship { .. } => {
+                    Err("AddRelationship not yet implemented".to_string())
+                }
+                KgEvolutionAction::RemoveRelationship { .. } => {
+                    Err("RemoveRelationship not yet implemented".to_string())
+                }
+                KgEvolutionAction::UpdateRelationship { .. } => {
+                    Err("UpdateRelationship not yet implemented".to_string())
+                }
+            };
+
+            match result {
+                Ok(true) => stats.actions_applied += 1,
+                Ok(false) => { /* No change needed */ }
+                Err(_) => stats.actions_failed += 1,
+            }
+        }
+
+        stats
+    }
+
+    /// Apply updates to an entity.
+    fn apply_entity_update(
+        &self,
+        graph: &mut KnowledgeGraph,
+        entity_id: EntityId,
+        new_name: Option<String>,
+        new_type: Option<String>,
+        attribute_changes: serde_json::Value,
+    ) -> Result<bool, String> {
+        if let Some(entity) = graph.get_entity_mut(entity_id) {
+            if let Some(name) = new_name {
+                entity.name = name;
+            }
+            if let Some(entity_type) = new_type {
+                entity.entity_type = entity_type;
+            }
+            // Merge attribute changes
+            if let (Some(existing), Some(changes)) = (
+                entity.attributes.as_object_mut(),
+                attribute_changes.as_object(),
+            ) {
+                for (key, value) in changes {
+                    existing.insert(key.clone(), value.clone());
+                }
+            }
+            Ok(true)
+        } else {
+            Err("Entity not found".to_string())
+        }
     }
 
     /// Get current configuration.
