@@ -17,6 +17,8 @@ NANOBOT_AVAILABLE = False
 AgentLoop = None
 LiteLLMProvider = None
 MessageBus = None
+SkillsLoader = None
+NanoConfig = None
 
 
 # Global config path override
