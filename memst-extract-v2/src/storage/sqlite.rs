@@ -352,6 +352,37 @@ impl SqliteStorage {
         })
     }
     
+    /// Store a document
+    pub fn store_document(&self, doc_id: &str, content: &str, title: Option<&str>) -> Result<()> {
+        self.write(|conn| {
+            let now = chrono::Utc::now().to_rfc3339();
+            // Use first 32 chars of content as a simple hash, or UUID if content is short
+            let content_hash = if content.len() > 32 {
+                format!("{:x}", content.as_bytes().iter().fold(0u64, |a, b| a.wrapping_add(*b as u64)))
+            } else {
+                uuid::Uuid::new_v4().to_string()
+            };
+            
+            conn.execute(
+                "INSERT OR REPLACE INTO documents 
+                 (id, content_hash, title, content, source_type, source_uri, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                params![
+                    doc_id,
+                    content_hash,
+                    title.unwrap_or(doc_id),
+                    content,
+                    "text",
+                    None::<&str>,
+                    now
+                ],
+            )
+            .map_err(|e| ExtractError::Database(format!("Failed to store document: {}", e)))?;
+            
+            Ok(())
+        })
+    }
+    
     /// Store an extraction job
     pub fn store_extraction_job(&self, job: &ExtractionJob) -> Result<()> {
         self.write(|conn| {

@@ -99,6 +99,9 @@ impl ExtractionService {
             ExtractionStage::EntityDetection,
         )?;
         
+        // Store the document first (required for foreign key constraints)
+        self.storage.store_document(doc_id, text, None)?;
+        
         // TODO: Call actual LLM here
         // For now, simulate extraction with mock entities based on text analysis
         let entities = self.simulate_entity_extraction(doc_id, text, ontology_id).await?;
