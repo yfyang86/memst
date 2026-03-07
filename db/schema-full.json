@@ -750,5 +750,37 @@
     "chinese_name": "投资情报-退出路径",
     "english_name": "Investment Intelligence-Exit",
     "overview": "追踪IPO、并购退出、回购等退出案例"
+  },
+  {
+    "top_category": "个人生活类",
+    "first_category": "生活事件",
+    "second_category": "个人经历",
+    "chinese_name": "个人-生活事件",
+    "english_name": "Personal-Life Events",
+    "overview": "个人日常生活、工作经历、学习经历、家庭事件、兴趣爱好、社交关系等"
+  },
+  {
+    "top_category": "个人生活类",
+    "first_category": "社交关系",
+    "second_category": "人际关系",
+    "chinese_name": "个人-社交关系",
+    "english_name": "Personal-Social Relations",
+    "overview": "朋友、家人、同事、邻居等社交关系网络"
+  },
+  {
+    "top_category": "个人生活类",
+    "first_category": "生活事件",
+    "second_category": "工作职业",
+    "chinese_name": "个人-工作职业",
+    "english_name": "Personal-Work Career",
+    "overview": "工作经历、职业发展、公司信息、职位变动等"
+  },
+  {
+    "top_category": "个人生活类",
+    "first_category": "生活事件",
+    "second_category": "教育学习",
+    "chinese_name": "个人-教育学习",
+    "english_name": "Personal-Education",
+    "overview": "教育背景、学习经历、技能掌握、培训经历等"
   }
 ]

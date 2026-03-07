@@ -107,17 +107,36 @@ class MemStStrategy(BenchmarkStrategy):
         # Combine all text
         full_text = "\n".join([t['text'] for t in turns])
         
-        # Load default ontology
-        self._api_call("POST", "/kg/ontologies/load", {
-            "schema_json": json.dumps([{
-                "top_category": "General",
-                "first_category": "Personal",
-                "second_category": "Life Events",
-                "chinese_name": "个人-生活事件",
-                "english_name": "Personal-Life Events",
-                "overview": "Personal life events and preferences"
-            }])
-        })
+        # Load personal ontologies for conversation analysis
+        try:
+            with open('db/schema-full.json', 'r') as f:
+                all_schemas = json.load(f)
+            
+            # Filter personal ontologies
+            personal_ontologies = [
+                s for s in all_schemas 
+                if s.get('top_category') == '个人生活类' or 
+                   '个人-' in s.get('chinese_name', '')
+            ]
+            
+            if personal_ontologies:
+                self._api_call("POST", "/kg/ontologies/load", {
+                    "schema_json": json.dumps(personal_ontologies)
+                })
+            else:
+                # Fallback to basic ontology
+                self._api_call("POST", "/kg/ontologies/load", {
+                    "schema_json": json.dumps([{
+                        "top_category": "个人生活类",
+                        "first_category": "生活事件",
+                        "second_category": "个人经历",
+                        "chinese_name": "个人-生活事件",
+                        "english_name": "Personal-Life Events",
+                        "overview": "个人日常生活、工作经历、学习经历、家庭事件、兴趣爱好、社交关系等"
+                    }])
+                })
+        except Exception as e:
+            print(f"Warning: Could not load ontologies: {e}")
         
         # Extract entities
         self._api_call("POST", "/kg/extract", {
