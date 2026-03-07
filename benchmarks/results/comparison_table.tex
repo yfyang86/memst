@@ -1,0 +1,16 @@
+% Auto-generated comparison table
+\begin{table}[h]
+\centering
+\caption{Strategy comparison on LOCOMO benchmark.}
+\label{tab:comparison}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Strategy} & \textbf{F1} & \textbf{BLEU-1} & \textbf{Tokens} & \textbf{Latency (p95)} \\
+\midrule
+Full-Context & 80.7 & 62.9 & 19730 & 1ms \\
+RAG & 34.8 & 27.2 & 1024 & 250ms \\
+MemSt & 42.5 & 33.2 & 1034 & 80ms \\
+MemSt+KG & 43.7 & 34.1 & 2034 & 380ms \\
+\bottomrule
+\end{tabular}
+\end{table}

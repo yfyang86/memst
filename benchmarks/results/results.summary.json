@@ -1,0 +1,28 @@
+{
+  "strategy": "MemSt",
+  "total_questions": 32,
+  "setup_time": 0.5494260787963867,
+  "overall": {
+    "f1": 0.00360576923076923,
+    "bleu": 0.0056985430153817865,
+    "exact_match": 0.0
+  },
+  "by_category": {
+    "1": {
+      "name": "single-hop",
+      "count": 32,
+      "metrics": {
+        "f1": 0.00360576923076923,
+        "bleu": 0.0056985430153817865,
+        "exact_match": 0.0
+      }
+    }
+  },
+  "operational": {
+    "total_queries": 32,
+    "total_time": 0.09907174110412598,
+    "tokens_retrieved": 0,
+    "avg_latency": 0.0030959919095039368,
+    "avg_tokens": 0.0
+  }
+}

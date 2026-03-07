@@ -96,9 +96,11 @@ class LoCoMoLoader:
         # Parse questions
         questions = []
         for qa in data.get('qa', []):
+            # Handle adversarial questions which have 'adversarial_answer' instead of 'answer'
+            answer = qa.get('answer', qa.get('adversarial_answer', ''))
             q = Question(
                 question=qa['question'],
-                answer=str(qa['answer']),
+                answer=str(answer),
                 category=qa['category'],
                 evidence=qa.get('evidence', []),
                 conversation_id=data['sample_id']

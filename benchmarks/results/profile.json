@@ -1,0 +1,10 @@
+{
+  "conversation_id": "conv-26",
+  "num_turns": 419,
+  "num_questions": 199,
+  "index_build_ms": 2.370119094848633,
+  "search_p50_ms": 0.06210803985595703,
+  "search_p95_ms": 0.087738037109375,
+  "rrf_fusion_ms": 0.017881393432617188,
+  "full_context_tokens": 15522
+}

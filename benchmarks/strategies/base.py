@@ -120,8 +120,6 @@ class MockLLM:
 
 if __name__ == "__main__":
     # Test base strategy
-    import sys
-    sys.path.append('..')
     from locomo_loader import load_locomo
     
     loader = load_locomo()

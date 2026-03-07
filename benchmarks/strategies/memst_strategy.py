@@ -2,14 +2,11 @@
 MemSt strategy for LOCOMO benchmark.
 Uses MemSt REST API for memory operations.
 """
-import sys
-sys.path.append('..')
-
 import requests
 import json
 import time
 from typing import Dict, Any, List, Optional
-from base import BenchmarkStrategy
+from strategies.base import BenchmarkStrategy
 
 
 class MemStStrategy(BenchmarkStrategy):
@@ -308,8 +305,6 @@ class RAGStrategy(BenchmarkStrategy):
 
 if __name__ == "__main__":
     # Test strategy
-    import sys
-    sys.path.append('..')
     from locomo_loader import load_locomo
     
     loader = load_locomo()

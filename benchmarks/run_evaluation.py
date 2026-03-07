@@ -9,7 +9,7 @@ from typing import List, Dict
 import sys
 
 # Add parent directory to path
-sys.path.append(str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from locomo_loader import load_locomo, Question
 from metrics import evaluate_question, aggregate_metrics, LLMJudge
