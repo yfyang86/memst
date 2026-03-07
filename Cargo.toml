@@ -15,7 +15,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.1"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.93"
 authors = ["Yifan Yang <yfyang.86@hotmail.com>"]

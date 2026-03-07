@@ -1,5 +1,108 @@
 # MemSt Release Notes
 
+## v1.0.0 - Formal Release
+
+*Release Date: 2026-03-06*
+
+---
+
+## Overview
+
+MemSt v1.0.0 is the first formal release of the hybrid, searchable session memory system for LLM applications. This release marks the completion of the full semantic memory architecture with KG Extraction v2, Web UI, and comprehensive Python bindings.
+
+---
+
+## What's New in v1.0.0
+
+### KG Extraction v2 (Phase 16)
+- **Multi-backend storage**: SQLite (default) or DuckDB for production analytics
+- **Ontology management**: 80+ intelligence domains with schema-based loading
+- **LLM-powered extraction**: Chain-of-thought entity and relationship extraction
+- **Entity linking**: Automatic disambiguation and canonicalization
+- **Python bindings**: Full PyO3 integration for `KgStorage`, `ExtractionService`, `OntologyManager`
+- **REST API**: Complete API endpoints for KG operations (`/kg/status`, `/kg/ontologies/load`, `/kg/extract`, `/kg/search`)
+- **Web UI**: React-based KG Extraction panel with ontology management and entity search
+
+### Server & Web UI
+- **FastAPI backend**: Full REST API with CORS support for frontend
+- **React/TypeScript frontend**: Modern UI with session management, chat, and KG visualization
+- **Nanobot integration**: AI agent framework integration via git submodule
+- **Server management script**: `./server.sh` for easy start/stop/status operations
+- **Configuration**: TOML-based config with environment variable fallbacks
+
+### Python Bindings Enhancement
+- **KG Extraction v2 support**: `memst.KgStorage`, `memst.ExtractionService`
+- **Ontology operations**: `load_ontologies()`, `extract_entities()`, `search_entities()`
+- **Compatibility**: Python 3.13 support (PyO3)
+
+### Documentation
+- **API documentation**: Complete REST API docs in `memst-server-api.md`
+- **User manual**: Comprehensive guide covering all features
+- **Setup instructions**: Detailed server and frontend setup with `uv`
+
+---
+
+## Component Versions
+
+| Component | Version | Description |
+|-----------|---------|-------------|
+| memst-core | 1.0.0 | Core Rust library |
+| memst-cli | 1.0.0 | Command-line interface |
+| memst-py | 1.0.0 | Python bindings (PyO3) |
+| memst-lib | 1.0.0 | FFI/shared library |
+| memst-server | 1.0.0 | FastAPI backend |
+| memst-ui | 1.0.0 | React + TypeScript frontend |
+
+### Key Dependencies
+- **serde**: 1.0+ (serialization)
+- **bincode**: 1.3 (binary encoding)
+- **zstd**: 0.13 (compression)
+- **tantivy**: 0.25 (optional, full-text search)
+- **pyo3**: 0.23 (Python bindings)
+- **reqwest**: 0.12 (HTTP client)
+- **fastapi**: 0.115+ (REST API)
+- **duckdb**: 1.4.4+ (analytics backend)
+
+---
+
+## Migration from v0.1.0 RC1
+
+### Configuration Updates
+1. Add KG Extraction v2 configuration to `config.toml`:
+```toml
+[kg_extraction]
+enabled = true
+# db_path = "./memst-store/kg.db"  # Optional: persistent storage
+default_ontology = "lingyuqingbao-lei-kejiqingbao-rengongzhineng"
+```
+
+2. Update CORS origins for frontend access:
+```toml
+[server]
+cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+```
+
+### Setup Changes
+1. **Python version**: Now requires Python 3.13 (PyO3 limitation)
+2. **Dependencies**: Additional `python-multipart` for FastAPI file uploads
+3. **Nanobot**: Must initialize submodule with `git submodule update --init --recursive`
+
+---
+
+## Known Limitations
+
+### Not Implemented
+- **Git-backed version control**: Library primitives available, CLI commands deferred
+- **Cross-session search analytics**: Basic search works, advanced analytics deferred
+- **CRDT synchronization**: Multi-device sync planned for future release
+- **Packfiles & GC**: Storage optimization deferred
+
+### Known Issues
+- Python 3.14 not supported (PyO3 limitation); use Python 3.13
+- Large stores may benefit from DuckDB backend for analytics workloads
+
+---
+
 ## v0.1.0 - Initial Release Candidate (RC1)
 
 *Release Date: 2026-03-02*
@@ -97,7 +200,7 @@ store/
 ### Supported Configurations
 - **LLM Providers**: OpenAI, Claude, LM Studio, Ollama (OpenAI-compatible APIs)
 - **Embedding Models**: Any OpenAI-compatible embedding endpoint (e.g., bge-m3)
-- **Python Version**: 3.8+ (3.12 recommended)
+- **Python Version**: 3.9+ (3.13 required for Python bindings)
 - **Rust Version**: 1.93+ (1.88+ for Tantivy backend)
 
 ---
@@ -106,19 +209,19 @@ store/
 
 | Component | Version | Description |
 |-----------|---------|-------------|
-| memst-core | 0.1.0 | Core Rust library |
-| memst-cli | 0.1.0 | Command-line interface |
-| memst-py | 0.1.0 | Python bindings (PyO3) |
-| memst-lib | 0.1.0 | FFI/shared library |
-| memst-server | - | FastAPI backend |
-| memst-ui | - | React + TypeScript frontend |
+| memst-core | 1.0.0 | Core Rust library |
+| memst-cli | 1.0.0 | Command-line interface |
+| memst-py | 1.0.0 | Python bindings (PyO3) |
+| memst-lib | 1.0.0 | FFI/shared library |
+| memst-server | 1.0.0 | FastAPI backend |
+| memst-ui | 1.0.0 | React + TypeScript frontend |
 
 ### Key Dependencies
 - **serde**: 1.0+ (serialization)
 - **bincode**: 1.3 (binary encoding)
 - **zstd**: 0.13 (compression)
 - **tantivy**: 0.25 (optional, full-text search)
-- **pyo3**: 0.22 (Python bindings)
+- **pyo3**: 0.23 (Python bindings)
 - **reqwest**: 0.11 (HTTP client)
 
 ---
@@ -133,7 +236,7 @@ store/
 - **Packfiles & GC**: Storage optimization features deferred
 
 ### Known Issues
-- Python 3.13 has compatibility issues; use Python 3.12 for Python bindings
+- Python 3.14 not supported; use Python 3.13 for Python bindings
 - Large stores may experience slower search performance without Tantivy backend
 - Semantic search requires external embedding API configuration
 
@@ -171,12 +274,15 @@ memst init ./my-store
 ### Python Setup
 ```bash
 cd memst-server
-uv venv --python 3.12
-uv pip install fastapi uvicorn duckdb python-dotenv pydantic pydantic-settings httpx toml
+uv venv --python 3.13
+uv pip install fastapi uvicorn duckdb python-dotenv pydantic pydantic-settings httpx toml python-multipart
 uv pip install -e ../third/nanobot
 
 cd ../memst-py
-VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop
+unset CONDA_PREFIX
+uv run maturin build --release
+cd ../memst-server
+uv pip install ../target/wheels/memst_py-1.0.0-cp313-cp313-*.whl
 ```
 
 ### Web UI Setup
