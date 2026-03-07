@@ -992,6 +992,13 @@ fn _init_module_all(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
             "HybridSearchResult",
             "QueryRouter",
             "SearchStrategy",
+            // Phase 16: KG Extraction v2
+            "KgStorage",
+            "Entity",
+            "ExtractionJob",
+            "ExtractionService",
+            "Ontology",
+            "OntologyManager",
             "__version__",
         ],
     );
