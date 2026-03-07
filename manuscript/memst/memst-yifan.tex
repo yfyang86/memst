@@ -413,7 +413,7 @@ Several broader lessons emerge from the results. First, query-adaptivity is not 
 
 \subsection{Limitations}
 
-This work has several limitations. First, evaluation is confined to LOCOMO, which, although demanding, covers only English, two-party, synchronous conversations. Generalization to multilingual, asynchronous, or multi-party settings remains to be tested. Second, the rule-based classifier achieves 80\% accuracy, leaving a 5.6-point gap to oracle routing. Third, branch merging remains incomplete: worktree isolation is implemented, but conflict-aware three-way merge is not. Fourth, knowledge graph extraction errors propagate directly into graph-based retrieval. Finally, while we compare against multiple RAG baselines, a more aggressively tuned RAG system might narrow part of the observed gap.
+This work has several limitations. First, evaluation is confined to LOCOMO, which, although demanding, covers only English, two-party, synchronous conversations. Generalization to multilingual, asynchronous, or multi-party settings remains to be tested. Second, the rule-based classifier achieves 80\% accuracy, leaving a 5.6-point gap to oracle routing. Third, branch merging remains incomplete: worktree isolation is implemented, but conflict-aware three-way merge is not. Fourth, knowledge graph extraction at 87\% precision propagates quality limitations to downstream retrieval; entity mislinking and missed relations directly constrain graph-based strategy performance. Finally, while we compare against multiple RAG baselines, a more aggressively tuned RAG system might narrow part of the observed gap.
 
 \subsection{Computational Costs}
 
