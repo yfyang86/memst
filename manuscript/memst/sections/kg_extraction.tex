@@ -1,0 +1,187 @@
+\section{Knowledge Graph Extraction v2}
+\label{sec:kg_extraction}
+
+Beyond flat memory storage, MemSt incorporates \textbf{Knowledge Graph Extraction v2} (KGv2), a structured knowledge representation system that extracts entities and relationships from conversations using LLM-powered extraction.
+
+\subsection{Design Motivation}
+
+While tiered memory excels at storing and retrieving factual statements, it lacks explicit relational structure. Consider the following conversation:
+
+\begin{quote}
+\textit{``Alice moved to San Francisco last year. She works at OpenAI as a research scientist. Her manager is Bob, who previously worked at Google.''}
+\end{quote}
+
+A flat memory system might store three separate facts:
+\begin{itemize}
+    \item Alice moved to San Francisco in 2022
+    \item Alice works at OpenAI
+    \item Bob is Alice's manager
+\end{itemize}
+
+But the \textit{relationships} between these facts---that Bob works at OpenAI, that Alice's move and job change are related, that Bob's Google experience influences his management---are implicit at best.
+
+KGv2 makes these relationships explicit, enabling:
+\begin{enumerate}
+    \item \textbf{Multi-hop reasoning}: Answering ``Where did Alice's manager work before?'' requires traversing Alice $\rightarrow$ manager $\rightarrow$ Bob $\rightarrow$ previously worked at $\rightarrow$ Google.
+    \item \textbf{Temporal reasoning}: Tracking when relationships were established and how they evolved.
+    \item \textbf{Conflict detection}: Identifying when new information contradicts existing relationships.
+\end{enumerate}
+
+\subsection{Architecture Overview}
+
+KGv2 follows a modular pipeline architecture:
+
+\begin{enumerate}
+    \item \textbf{Extraction}: LLM extracts entities and relationship triplets from text
+    \item \textbf{Linking}: Mentions of the same entity are resolved to canonical nodes
+    \item \textbf{Storage}: Entities and relationships are persisted to the backend
+    \item \textbf{Retrieval}: Query-time subgraph extraction for context assembly
+\end{enumerate}
+
+\subsection{Multi-Backend Storage}
+
+A key innovation of KGv2 is pluggable storage backends:
+
+\subsubsection{SQLite Backend}
+
+The default backend uses SQLite with the schema:
+
+\begin{verbatim}
+entities(id, name, entity_type, embedding, created_at)
+relationships(id, source_id, target_id, relation_type, 
+              confidence, created_at, valid_until)
+ontologies(id, top_category, first_category, 
+           second_category, description)
+\end{verbatim}
+
+SQLite is lightweight, requires no external services, and is suitable for development and edge deployment.
+
+\subsubsection{DuckDB Backend}
+
+For production analytics workloads, KGv2 supports DuckDB:
+
+\begin{itemize}
+    \item Vectorized query execution for analytical workloads
+    \item Efficient aggregations and graph analytics (PageRank, community detection)
+    \item Parquet export for integration with data lakes
+\end{itemize}
+
+The backend is selected at compile time via Cargo features:
+
+\begin{verbatim}
+# SQLite (default)
+memst-extract-v2 = { path = "../memst-extract-v2" }
+
+# DuckDB (production)
+memst-extract-v2 = { path = "../memst-extract-v2", 
+                     default-features = false, 
+                     features = ["duckdb"] }
+\end{verbatim}
+
+\subsection{Ontology System}
+
+KGv2 includes a comprehensive ontology system supporting 80+ intelligence domains:
+
+\begin{table}[h]
+\centering
+\caption{Sample Ontology Categories}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Top Category} & \textbf{First Category} & \textbf{Second Category} \\
+\midrule
+Domain Intelligence & Tech Intelligence & Artificial Intelligence \\
+Domain Intelligence & Tech Intelligence & Semiconductor \\
+Domain Intelligence & Business Intelligence & Market Analysis \\
+Domain Intelligence & Business Intelligence & Competitive Intelligence \\
+Social Intelligence & Social Media & Trend Analysis \\
+Social Intelligence & Public Opinion & Sentiment Monitoring \\
+Geopolitical & Regional & Asia-Pacific \\
+Geopolitical & Regional & European Union \\
+\bottomrule
+\end{tabular}
+\label{tab:ontologies}
+\end{table}
+
+Each ontology defines:
+\begin{itemize}
+    \item Expected entity types (Person, Organization, Location, Event, Technology)
+    \item Relationship vocabulary (works\_at, located\_in, acquired, partnered\_with)
+    \item Extraction prompts tuned for the domain
+\end{itemize}
+
+Users can load custom ontologies via JSON schema:
+
+\begin{verbatim}
+{
+  "top_category": "Custom Domain",
+  "first_category": "Research",
+  "second_category": "Machine Learning",
+  "chinese_name": "研究-机器学习",
+  "english_name": "Research-ML",
+  "overview": "ML research tracking"
+}
+\end{verbatim}
+
+\subsection{Entity Extraction Pipeline}
+
+The extraction pipeline uses a two-stage LLM approach:
+
+\textbf{Stage 1: Entity Detection}
+\begin{enumerate}
+    \item Input: Conversation text + ontology context
+    \item LLM identifies entity mentions with types and confidence scores
+    \item Output: List of $(\text{mention}, \text{type}, \text{confidence})$ tuples
+\end{enumerate}
+
+\textbf{Stage 2: Relationship Extraction}
+\begin{enumerate}
+    \item Input: Detected entities + full text
+    \item LLM identifies relationships as $(\text{source}, \text{relation}, \text{target})$ triplets
+    \item Confidence scoring based on explicit vs. implicit mentions
+\end{enumerate}
+
+The extraction is performed incrementally: new messages are processed and merged into the existing knowledge graph rather than regenerating from scratch.
+
+\subsection{Entity Linking and Canonicalization}
+
+A critical challenge is resolving when two mentions refer to the same entity:
+
+\begin{quote}
+\textit{``OpenAI released GPT-4. The San Francisco-based company also announced...''}
+\end{quote}
+
+Here ``OpenAI'' and ``The San Francisco-based company'' refer to the same organization. KGv2 implements:
+
+\begin{itemize}
+    \item \textbf{Exact matching}: Name string normalization and comparison
+    \item \textbf{Embedding similarity}: Cosine similarity of entity embeddings
+    \item \textbf{Context clustering}: Entities appearing in similar contexts are candidates for merging
+    \item \textbf{LLM verification}: For high-stakes merges, an LLM confirms the equivalence
+\end{itemize}
+
+Linked entities are stored with a canonical ID, while surface forms are preserved for provenance.
+
+\subsection{Conflict Detection and Resolution}
+
+When new information contradicts existing relationships, KGv2 applies temporal logic:
+
+\begin{itemize}
+    \item New relationships with later timestamps supersede older ones
+    \item Contradicted relationships are marked $\text{valid\_until} = t_{\text{new}}$ rather than deleted
+    \item This enables temporal queries: ``Where did Alice work in 2021?''
+\end{itemize}
+
+For complex conflicts (e.g., contradictory information from different sources), the system can escalate to an LLM for resolution or flag for human review.
+
+\subsection{Integration with Tiered Memory}
+
+KGv2 operates in concert with the four-tier memory system:
+
+\begin{itemize}
+    \item Working memory contains the ``hot'' subgraph most relevant to current context
+    \item Short-term memory maintains recent entity observations
+    \item Long-term memory stores the canonical entity catalog
+    \item Archival memory preserves historical relationship states
+\end{itemize}
+
+During context assembly, MemSt can include both flat memories and structured subgraphs, with the LLM determining how to combine them for answering the query.

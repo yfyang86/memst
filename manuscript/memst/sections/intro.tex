@@ -1,0 +1,60 @@
+\section{Introduction}
+\label{sec:intro}
+
+Human memory is a \emph{foundation of intelligence}---it shapes our identity, guides decision-making, and enables us to learn, adapt, and form meaningful relationships \citep{craik1992human}. Among its many roles, memory is essential for communication: we recall past interactions, infer preferences, and construct evolving mental models of those we engage with \citep{assmann2011communicative}. This ability to retain and retrieve information over extended periods enables coherent, contextually rich exchanges that span days, weeks, or even months.
+
+AI agents, powered by large language models (LLMs), have made remarkable progress in generating fluent, contextually appropriate responses \citep{yu2024finmem, zhang2024survey}. However, these systems are fundamentally limited by their reliance on fixed context windows, which severely restrict their ability to maintain coherence over extended interactions \citep{bulatov2022recurrent, liu2023think}. This limitation stems from LLMs' lack of persistent memory mechanisms that can extend beyond their finite context windows.
+
+The absence of persistent memory creates a fundamental disconnect in human-AI interaction. Without memory, AI agents forget user preferences, repeat questions, and contradict previously established facts. Consider a scenario where a user mentions being vegetarian and avoiding dairy products in an initial conversation. In a subsequent session, when the user asks about dinner recommendations, a system without persistent memory might suggest chicken, completely contradicting the established dietary preferences.
+
+Beyond conversational settings, memory mechanisms have been shown to dramatically enhance agent performance in interactive environments \citep{majumderclin, shinn2023reflexion}. Agents equipped with memory of past experiences can better anticipate user needs, learn from previous mistakes, and generalize knowledge across tasks \citep{chhikara2023knowledge}. Research demonstrates that memory-augmented agents improve decision-making by leveraging causal relationships between actions and outcomes.
+
+\subsection{Current Limitations of Memory Systems}
+
+Existing memory solutions for LLM agents fall into several categories, each with significant limitations:
+
+\textbf{Vector databases} (Chroma, Milvus, Pinecone) store embeddings of conversation history but lack structured organization, versioning, and lifecycle management. They treat memory as an undifferentiated ``bag of vectors,'' making it difficult to maintain coherent narrative structures or track memory evolution over time.
+
+\textbf{Cloud memory services} (Mem0, Letta) provide managed memory but require external dependencies, introducing latency, cost, and data sovereignty concerns. They typically offer limited or no versioning capabilities, making it impossible to audit memory changes or revert to previous states.
+
+\textbf{In-context memory} approaches simply prepend conversation history to the prompt. While simple, they suffer from quadratic attention costs and inevitable context overflow as conversations extend.
+
+\textbf{Graph memory systems} (Zep, A-MEM) capture entity relationships but often lack efficient retrieval mechanisms, multi-tier organization, or local deployment options. They may also suffer from high token overhead and slow construction times.
+
+\subsection{Key Challenges}
+
+We identify four critical challenges that existing memory systems fail to address:
+
+\begin{enumerate}
+    \item \textbf{No Versioning}: Memory is mutable state without history. Agents cannot revert to previous memory states, branch experiments, or audit when specific facts were learned.
+    
+    \item \textbf{No Lifecycle Management}: Memories lack automatic promotion, expiration, or consolidation. Working memories are never summarized; stale memories are never archived.
+    
+    \item \textbf{No Token-Budget Awareness}: Retrieval does not respect LLM context limits. Systems fetch memories without considering whether they fit within available token budgets.
+    
+    \item \textbf{No Multi-Agent Isolation}: Concurrent agents share memory space, risking corruption and cross-contamination of knowledge.
+\end{enumerate}
+
+\subsection{Our Contribution: MemSt}
+
+We introduce \textbf{MemSt} (pronounced ``mem-st''), a semantic memory architecture inspired by Git's content-addressable storage model. MemSt treats memory as a versioned, structured repository rather than an ephemeral cache.
+
+Our key contributions include:
+
+\begin{itemize}
+    \item \textbf{Git-Like Memory Repository}: Content-addressable storage with Blake3 hashing, branch and merge operations, and full provenance tracking via a write-ahead log (WAL).
+    
+    \item \textbf{Four-Tier Memory Hierarchy}: Working (hot), Short-term (recent), Long-term (important), and Archival (historical) tiers with automatic transitions based on access patterns, importance scores, and temporal decay.
+    
+    \item \textbf{Hybrid Search Architecture}: Native BM25 full-text search, HNSW vector similarity search, and Reciprocal Rank Fusion (RRF) combining both signals with configurable weights.
+    
+    \item \textbf{Knowledge Graph Extraction v2}: Multi-backend entity and relationship extraction supporting 80+ domain ontologies, with storage options for SQLite (development) and DuckDB (production analytics).
+    
+    \item \textbf{Sleep-Time Consolidation}: Asynchronous background pipeline for memory compaction, entity merging, and knowledge graph evolution during idle periods.
+    
+    \item \textbf{Multi-Agent Worktrees}: Git-inspired worktree isolation allowing concurrent agents to operate on independent memory branches without interference.
+    
+    \item \textbf{Complete Multi-Interface Support}: Native Rust library, PyO3 Python bindings, FastAPI REST server, React Web UI, and MCP (Model Context Protocol) adapter for Claude/Cursor integration.
+\end{itemize}
+
+MemSt is designed for production deployment: pure Rust core for performance, optional Python server for flexibility, local-first architecture for data sovereignty, and comprehensive APIs for integration with existing agent frameworks.

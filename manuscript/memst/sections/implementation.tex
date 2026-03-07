@@ -1,0 +1,206 @@
+\section{Implementation}
+\label{sec:implementation}
+
+MemSt is implemented as a Rust workspace with multiple crates and comprehensive language bindings. This section describes the implementation details.
+
+\subsection{Rust Workspace Structure}
+
+The project is organized as a Cargo workspace with the following crates:
+
+\begin{table}[h]
+\centering
+\caption{MemSt Workspace Crates}
+\begin{tabular}{@{}lp{8cm}@{}}
+\toprule
+\textbf{Crate} & \textbf{Purpose} \\
+\midrule
+memst-core & Core storage, search, vector index, context assembly \\
+memst-repo & Git-like MemRepo implementation with WAL \\
+memst-sleep & Async sleep-time consolidation pipeline \\
+memst-extract-v2 & KG extraction with SQLite/DuckDB backends \\
+memst-mcp & MCP (Model Context Protocol) adapter \\
+memst-cli & Command-line interface \\
+memst-py & Python extension module (PyO3) \\
+memst-lib & Shared library and FFI glue \\
+\bottomrule
+\end{tabular}
+\label{tab:crates}
+\end{table}
+
+\subsection{Core Storage Implementation}
+
+\subsubsection{Bincode + zstd Compression}
+
+Messages and memories are serialized using bincode (zero-copy binary serialization) and compressed with zstd:
+
+\begin{itemize}
+    \item Bincode provides compact, fast serialization without schema evolution overhead
+    \item zstd compression at level 3 achieves 3-5x size reduction on text
+    \item Decompression is streaming, enabling partial reads
+\end{itemize}
+
+\subsubsection{Index Files}
+
+For debugging and external tooling, MemSt maintains human-readable index files:
+
+\begin{verbatim}
+# messages.idx format
+msg_id offset compressed_size timestamp role
+msg-001 0 256 2026-01-31T10:00:00Z user
+msg-002 256 312 2026-01-31T10:01:00Z assistant
+\end{verbatim}
+
+These indices enable:
+\begin{itemize}
+    \item Direct byte-offset seeks into compressed files
+    \item \texttt{grep} compatibility for debugging
+    \item External tool integration without parsing binary formats
+\end{itemize}
+
+\subsubsection{HNSW Vector Index}
+
+The HNSW implementation follows the original paper \citep{malkov2018efficient}:
+
+\begin{itemize}
+    \item $M = 16$ (maximum neighbors per layer)
+    \item $ef\_construction = 200$ (expansion factor during build)
+    \item $ef\_search = 50$ (expansion factor during search)
+    \item Multi-layer graph with exponential decay of layer membership
+\end{itemize}
+
+Embeddings are stored as half-precision (f16) floats to reduce memory footprint by 50\% with minimal accuracy loss.
+
+\subsection{Sleep-Time Consolidation Pipeline}
+
+The consolidation system operates asynchronously using Tokio for task scheduling:
+
+\begin{verbatim}
+pub struct SleepManager {
+    scheduler: TaskScheduler,
+    workers: WorkerPool,
+    config: ConsolidationConfig,
+}
+
+impl SleepManager {
+    pub async fn run(&self) {
+        while let Some(job) = self.scheduler.next().await {
+            self.workers.spawn(async move {
+                match job.typ {
+                    Compaction => compact_memories(job).await,
+                    KgDecay => apply_temporal_decay(job).await,
+                    EntityMerge => detect_and_merge(job).await,
+                }
+            });
+        }
+    }
+}
+\end{verbatim}
+
+Jobs are scheduled based on:
+\begin{itemize}
+    \item Time triggers (e.g., nightly compaction)
+    \item Threshold triggers (e.g., when Working memory exceeds 80\% capacity)
+    \item Explicit API calls
+\end{itemize}
+
+\subsection{Python Bindings (PyO3)}
+
+MemSt exposes a comprehensive Python API via PyO3:
+
+\begin{verbatim}
+import memst
+
+# Initialize store
+store = memst.SessionStore("./data")
+
+# Create session
+session = store.create_session("Research Project", "gpt-4")
+
+# Add messages
+store.add_message(session.id, memst.Role.User, 
+                  "What is transformer architecture?")
+
+# Search
+results = store.search("transformer architecture", 
+                       limit=10, mode=memst.SearchMode.Hybrid)
+
+# KG Extraction
+storage = memst.KgStorage.new_in_memory()
+service = memst.ExtractionService(storage)
+job = service.extract_entities("doc-1", text, "tech-ai")
+\end{verbatim}
+
+The PyO3 layer handles:
+\begin{itemize}
+    \item GIL management for thread-safe Rust $\leftrightarrow$ Python calls
+    \item Type conversion between Rust structs and Python dataclasses
+    \item Async runtime integration (Tokio $\leftrightarrow$ asyncio)
+\end{itemize}
+
+\subsection{REST API Server}
+
+The FastAPI server provides HTTP access to all MemSt functionality:
+
+\textbf{Session Management}
+\begin{itemize}
+    \item \texttt{POST /sessions} - Create session
+    \item \texttt{GET /sessions/\{id\}} - Get session
+    \item \texttt{POST /sessions/\{id\}/messages} - Add message
+    \item \texttt{GET /sessions/\{id\}/messages} - List messages
+\end{itemize}
+
+\textbf{Search}
+\begin{itemize}
+    \item \texttt{POST /search} - Hybrid search
+    \item \texttt{POST /search/text} - BM25 only
+    \item \texttt{POST /search/semantic} - Vector only
+\end{itemize}
+
+\textbf{KG Extraction}
+\begin{itemize}
+    \item \texttt{GET /kg/status} - Service status
+    \item \texttt{POST /kg/ontologies/load} - Load ontology
+    \item \texttt{POST /kg/extract} - Extract from text
+    \item \texttt{POST /kg/search} - Entity search
+\end{itemize}
+
+\textbf{Agent Integration}
+\begin{itemize}
+    \item \texttt{POST /sessions/\{id\}/chat} - Streaming chat
+    \item \texttt{POST /sessions/\{id\}/agent/step} - Agent step
+\end{itemize}
+
+The server supports:
+\begin{itemize}
+    \item Server-Sent Events (SSE) for streaming responses
+    \item CORS for frontend integration
+    \item Configurable authentication (API key, JWT)
+\end{itemize}
+
+\subsection{Web UI}
+
+The React-based Web UI provides:
+
+\begin{itemize}
+    \item \textbf{Session Management}: Create, browse, and manage chat sessions
+    \item \textbf{Chat Interface}: Real-time messaging with streaming responses
+    \item \textbf{Search Center}: Multi-mode search with result visualization
+    \item \textbf{KG Extraction Panel}: Ontology management, entity extraction, entity browsing
+    \item \textbf{Settings}: Configuration of LLM, embedding, and memory parameters
+\end{itemize}
+
+The UI communicates with the backend via a TypeScript client generated from the OpenAPI specification.
+
+\subsection{MCP Adapter}
+
+The Model Context Protocol (MCP) adapter exposes MemSt as a set of tools for Claude, Cursor, and other MCP-compatible clients:
+
+\begin{itemize}
+    \item \texttt{memory\_read} - Retrieve memories matching a query
+    \item \texttt{memory\_write} - Store new memories
+    \item \texttt{memory\_search} - Search with filters
+    \item \texttt{skill\_lookup} - Find procedural memories
+    \item \texttt{context\_build} - Assemble context within token budget
+\end{itemize}
+
+This enables seamless integration: Claude Code can use MemSt for cross-session project memory without explicit API calls.

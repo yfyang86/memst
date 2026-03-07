@@ -1,0 +1,53 @@
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+We have presented MemSt, a Git-inspired semantic memory architecture for AI agents that addresses fundamental limitations of existing memory systems. By treating memory as a versioned, content-addressable repository rather than an ephemeral cache, MemSt enables:
+
+\begin{enumerate}
+    \item \textbf{Complete Memory Provenance}: Every memory state is preserved with full audit history via Blake3 hashing and write-ahead logging.
+    
+    \item \textbf{Intelligent Lifecycle Management}: Four-tier memory hierarchy (Working, Short-term, Long-term, Archival) with automatic transitions based on access patterns and importance.
+    
+    \item \textbf{Token-Budget Awareness}: Context assembly solves a constrained optimization problem to maximize information value within LLM context limits.
+    
+    \item \textbf{Structured Knowledge Extraction}: KGv2 with 80+ domain ontologies, multi-backend storage (SQLite/DuckDB), and incremental entity linking.
+    
+    \item \textbf{Safe Multi-Agent Deployment}: Git-like worktrees provide isolation without replication overhead.
+    
+    \item \textbf{Production-Ready Interfaces}: Rust core, Python bindings, REST API, Web UI, and MCP adapter for comprehensive integration.
+\end{enumerate}
+
+Our evaluation on the LOCOMO benchmark demonstrates that MemSt achieves competitive accuracy with significantly lower latency (47\% faster search) and memory overhead (19\% fewer tokens) compared to existing systems. The knowledge graph extension (MemSt+KG) further improves temporal reasoning by 4.5\%.
+
+\subsection{Future Directions}
+
+Several research directions remain:
+
+\textbf{CRDT-Based Synchronization}: Current multi-device synchronization requires manual merging. Conflict-free replicated data types (CRDTs) could enable seamless multi-device memory sharing.
+
+\textbf{Learned Memory Policies}: While MemSt uses heuristic policies for tier transitions, reinforcement learning (following \cite{wang2024mir}) could learn optimal promotion/eviction strategies for specific domains.
+
+\textbf{Multimodal Memory}: Extending beyond text to incorporate image, audio, and video memories with unified retrieval.
+
+\textbf{Federated Memory}: Privacy-preserving aggregation of memories across users without centralizing sensitive data.
+
+\textbf{Hardware Acceleration}: FPGA/ASIC implementations of HNSW search and BM25 ranking for edge deployment.
+
+\subsection{Availability}
+
+MemSt is open-source under the Apache 2.0 license:
+\begin{center}
+\url{https://github.com/yfyang86/memst}
+\end{center}
+
+The repository includes:
+\begin{itemize}
+    \item Complete Rust workspace with all crates
+    \item Python bindings and FastAPI server
+    \item React Web UI
+    \item Comprehensive documentation and examples
+    \item Docker deployment configurations
+\end{itemize}
+
+\vspace{1em}
+\noindent\textbf{Acknowledgments}. We thank the open-source community for contributions to dependencies including PyO3, FastAPI, and HNSW. The Knowledge Graph ontology definitions were adapted from public intelligence domain taxonomies.
