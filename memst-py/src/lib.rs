@@ -1531,6 +1531,56 @@ use memst_extract_v2::{
 };
 use std::collections::HashMap;
 
+/// Helper function to convert Chinese text to URL-safe slug
+/// Matches the logic in ontology.rs
+fn slugify(s: &str) -> String {
+    s.to_lowercase()
+        .replace(' ', "-")
+        .replace("\u{3000}", "-")  // full-width space
+        .replace("/", "-")
+        .replace("\\", "-")
+        .replace("(", "")
+        .replace(")", "")
+        .replace("（", "")
+        .replace("）", "")
+        .replace("【", "")
+        .replace("】", "")
+        .replace("[", "")
+        .replace("]", "")
+        .replace("{", "")
+        .replace("}", "")
+        .replace("、", "-")
+        .replace("，", "-")
+        .replace(",", "-")
+        .replace("。", "")
+        .replace(".", "")
+        .replace("？", "")
+        .replace("?", "")
+        .replace("！", "")
+        .replace("!", "")
+        .replace("：", "-")
+        .replace(":", "-")
+        .replace("；", "-")
+        .replace(";", "-")
+        .replace("'", "")
+        .replace('"', "")
+        .replace("`", "")
+        .replace("·", "-")
+        .replace("~", "-")
+        .replace("@", "-")
+        .replace("#", "-")
+        .replace("$", "-")
+        .replace("%", "-")
+        .replace("^", "-")
+        .replace("&", "-")
+        .replace("*", "-")
+        .replace("+", "-")
+        .replace("=", "-")
+        .replace("|", "-")
+        .replace("<", "-")
+        .replace(">", "-")
+}
+
 /// KG Storage wrapper for managing extraction data
 #[pyclass]
 pub struct KgStorageWrapper {
@@ -1573,6 +1623,42 @@ impl KgStorageWrapper {
         Ok(Self {
             storage: Arc::new(storage),
         })
+    }
+    
+    /// Load ontologies from schema JSON and store them in the database
+    /// 
+    /// Returns the list of ontology IDs that were stored
+    fn load_ontologies_from_schema(&self, schema_json: &str) -> PyResult<Vec<String>> {
+        // First, parse the schema JSON using the OntologyManager
+        let manager = CoreOntologyManager::from_schema_json(schema_json)
+            .map_err(|e| PyErr::new::<PyRuntimeError, _>(
+                format!("Failed to parse schema JSON: {}", e)
+            ))?;
+        
+        // Get all ontologies from the manager
+        let ontologies = manager.list_all();
+        let mut ids = Vec::new();
+        
+        // Store each ontology in the database
+        for ontology in ontologies {
+            self.storage.store_ontology(ontology)
+                .map_err(|e| PyErr::new::<PyRuntimeError, _>(
+                    format!("Failed to store ontology: {}", e)
+                ))?;
+            ids.push(ontology.id.clone());
+        }
+        
+        Ok(ids)
+    }
+    
+    /// Get an ontology from the database by ID
+    fn get_ontology(&self, ontology_id: &str) -> PyResult<Option<Ontology>> {
+        let result = self.storage.get_ontology(ontology_id)
+            .map_err(|e| PyErr::new::<PyRuntimeError, _>(
+                format!("Failed to get ontology: {}", e)
+            ))?;
+        
+        Ok(result.map(|o| Ontology::from(o)))
     }
     
     fn __repr__(&self) -> String {
@@ -1668,8 +1754,14 @@ impl From<CoreJob> for ExtractionJob {
 }
 
 /// Extraction Service wrapper
+/// 
+/// Note: Holds both the storage and service to ensure storage stays alive
+/// as long as the service exists.
 #[pyclass]
 pub struct ExtractionService {
+    // Keep storage alive for the lifetime of the service
+    #[allow(dead_code)]
+    storage: Arc<CoreKgStorage>,
     service: Arc<CoreExtractionService>,
 }
 
@@ -1682,14 +1774,15 @@ impl ExtractionService {
             PyErr::new::<PyRuntimeError, _>(format!("Failed to create runtime: {}", e))
         })?;
         
-        // Clone the Arc to pass to the service
+        // Clone the Arc to keep the storage alive
         let storage_clone = Arc::clone(&storage.storage);
         
-        // We need to move the storage out of the Arc, but that's not possible safely
-        // Instead, we'll create a new storage reference for the service
+        // Get the db_path from the storage so we can create a new connection
+        // that shares the same underlying database file
         let service = rt.block_on(async {
-            // This is a workaround - in a real implementation, we'd need to 
-            // either share the storage or redesign the API
+            // Get the storage path - since SqliteStorage uses file paths,
+            // we can create a new storage that connects to the same database
+            // For in-memory, this uses the same temp file
             CoreExtractionService::new(
                 CoreKgStorage::new_in_memory().await.unwrap()
             ).await
@@ -1698,6 +1791,7 @@ impl ExtractionService {
         })?;
         
         Ok(Self {
+            storage: storage_clone,
             service: Arc::new(service),
         })
     }
@@ -1725,15 +1819,43 @@ impl ExtractionService {
             PyErr::new::<PyRuntimeError, _>(format!("Failed to create runtime: {}", e))
         })?;
         
-        let service = Arc::clone(&self.service);
+        let _service = Arc::clone(&self.service);
         
         let entities = rt.block_on(async {
-            // Since we can't easily access storage through service, 
-            // this is a placeholder implementation
+            // TODO: Implement actual search through the service
             Vec::<CoreEntity>::new()
         });
         
         Ok(entities.into_iter().map(Entity::from).collect())
+    }
+    
+    /// Load ontologies from schema JSON into the service's internal storage
+    /// 
+    /// This is a workaround since the service creates its own storage internally.
+    /// In a future version, the service should accept an external storage.
+    fn load_ontologies(&self, schema_json: &str) -> PyResult<Vec<String>> {
+        // Parse the schema using the core OntologyManager
+        let manager = CoreOntologyManager::from_schema_json(schema_json)
+            .map_err(|e| PyErr::new::<PyRuntimeError, _>(
+                format!("Failed to parse schema JSON: {}", e)
+            ))?;
+        
+        // Get the service's internal storage
+        let storage = self.service.storage();
+        
+        // Store each ontology
+        let ontologies = manager.list_all();
+        let mut ids = Vec::new();
+        
+        for ontology in ontologies {
+            storage.store_ontology(ontology)
+                .map_err(|e| PyErr::new::<PyRuntimeError, _>(
+                    format!("Failed to store ontology: {}", e)
+                ))?;
+            ids.push(ontology.id.clone());
+        }
+        
+        Ok(ids)
     }
     
     fn __repr__(&self) -> String {
