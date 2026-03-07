@@ -223,7 +223,12 @@ uv pip install -e ../third/nanobot
 
 # Build and install memst-py using maturin
 cd ../memst-py
-VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop
+
+# Option 1: Using uv run (recommended - handles virtual env automatically)
+uv run maturin develop --release
+
+# Option 2: Using maturin directly with explicit VIRTUAL_ENV
+VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop --release
 
 # Verify
 cd ../memst-server
@@ -324,8 +329,11 @@ cargo test --test end_to_end_simulation
 # Enable network integration tests (LLM/embedding)
 MEMST_RUN_INTEGRATION_TESTS=1 cargo test --workspace
 
-# Python binding tests
-python -m pytest memst-py/tests
+# Python binding tests (using uv)
+uv run pytest memst-py/tests -v
+
+# Or with maturin develop
+maturin develop --release && python -m pytest memst-py/tests -v
 ```
 
 ## Documentation
@@ -350,6 +358,8 @@ python -m pytest memst-py/tests
 
 ## KG Extraction v2 Quick Start
 
+### Rust
+
 ```rust
 use memst_extract_v2::{ExtractionService, KgStorage};
 
@@ -371,6 +381,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Extracted {} entities", job.entity_count);
     Ok(())
 }
+```
+
+### Python
+
+```python
+import memst
+
+# Create storage (in-memory for testing, or use file-based)
+storage = memst.KgStorage.new_in_memory()
+
+# Create extraction service
+service = memst.ExtractionService(storage)
+
+# Load ontologies from schema JSON
+schema_json = '''[
+    {
+        "top_category": "领域情报类",
+        "first_category": "科技情报", 
+        "second_category": "人工智能",
+        "chinese_name": "科技情报-人工智能",
+        "english_name": "Tech Intelligence-AI",
+        "overview": "监测AI技术发展"
+    }
+]'''
+
+ontology_ids = service.load_ontologies(schema_json)
+
+# Extract entities
+job = service.extract_entities(
+    doc_id="doc-001",
+    text="OpenAI released GPT-4 Turbo in 2023. Sam Altman is the CEO.",
+    ontology_id=ontology_ids[0]
+)
+
+print(f"Status: {job.status}")
+print(f"Entities: {job.entity_count}")
+print(f"Tokens: {job.tokens_used}")
 ```
 
 ### Feature Flags

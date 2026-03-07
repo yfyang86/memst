@@ -8,9 +8,27 @@ This package exposes the MemSt session store, tiered memory helpers, and selecte
 
 ```bash
 cd memst-py
+
+# Using uv (recommended)
+uv run maturin develop --release
+
+# Or using maturin directly
 maturin develop --release
 
 python -c "import memst; print(memst.__version__)"
+```
+
+## Testing
+
+```bash
+# Run all tests
+uv run pytest tests/ -v
+
+# Run specific test file
+uv run pytest tests/test_kg_extraction_v2.py -v
+
+# Run with coverage
+uv run pytest tests/ --cov=memst --cov-report=html
 ```
 
 ## Quick start
@@ -83,6 +101,8 @@ print(explain)
 
 ## KG Extraction v2
 
+### Quick Start
+
 ```python
 import memst
 
@@ -92,13 +112,30 @@ storage = memst.KgStorage.new_in_memory()
 # Create extraction service
 service = memst.ExtractionService(storage)
 
+# Load ontologies from schema JSON
+schema_json = '''[
+    {
+        "top_category": "领域情报类",
+        "first_category": "科技情报",
+        "second_category": "人工智能",
+        "chinese_name": "科技情报-人工智能",
+        "english_name": "Tech Intelligence-AI",
+        "overview": "监测AI技术发展"
+    }
+]'''
+
+# Load ontologies into the service
+ontology_ids = service.load_ontologies(schema_json)
+print(f"Loaded ontologies: {ontology_ids}")
+
 # Extract entities from text
 job = service.extract_entities(
     doc_id="doc-001",
     text="OpenAI released GPT-4 Turbo in 2023. Sam Altman is the CEO.",
-    ontology_id="tech-ai"
+    ontology_id=ontology_ids[0]  # Use the loaded ontology ID
 )
 
+print(f"Status: {job.status}")
 print(f"Extracted {job.entity_count} entities")
 print(f"Tokens used: {job.tokens_used}")
 
@@ -122,9 +159,52 @@ for ontology in manager.list_all():
     print(f"{ontology.id}: {ontology.english_name}")
 
 # Get specific ontology
-ontology = manager.get("tech-ai")
+ontology = manager.get("lingyuqingbao-lei-kejiqingbao-rengongzhineng")
 if ontology:
     print(f"Found: {ontology.chinese_name}")
+```
+
+### Storage-Based Ontologies
+
+```python
+import memst
+
+# Create storage
+storage = memst.KgStorage.new_in_memory()
+
+# Load ontologies into storage
+schema_json = '''[
+    {
+        "top_category": "Test",
+        "first_category": "Category",
+        "second_category": "Example",
+        "chinese_name": "测试",
+        "english_name": "Test Example",
+        "overview": "For testing"
+    }
+]'''
+
+# Store ontologies in database
+ontology_ids = storage.load_ontologies_from_schema(schema_json)
+
+# Retrieve an ontology
+ontology = storage.get_ontology(ontology_ids[0])
+if ontology:
+    print(f"Retrieved: {ontology.english_name}")
+```
+
+### File-Based Storage
+
+```python
+import memst
+
+# Create file-based storage
+storage = memst.KgStorage.new("./kg-data.db")
+
+# Create service with persistent storage
+service = memst.ExtractionService(storage)
+
+# Load ontologies and extract as before...
 ```
 
 ## License
