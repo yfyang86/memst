@@ -25,10 +25,17 @@ export interface ServerConfig {
   store_path: string;
 }
 
+export interface KGExtractionConfig {
+  enabled: boolean;
+  db_path: string | null;
+  default_ontology: string | null;
+}
+
 interface SettingsState {
   llm: LLMConfig;
   embedding: EmbeddingConfig;
   server: ServerConfig;
+  kg_extraction: KGExtractionConfig;
 }
 
 interface SettingsContextType {
@@ -36,6 +43,7 @@ interface SettingsContextType {
   updateLLM: (config: Partial<LLMConfig>) => void;
   updateEmbedding: (config: Partial<EmbeddingConfig>) => void;
   updateServer: (config: Partial<ServerConfig>) => void;
+  updateKGExtraction: (config: Partial<KGExtractionConfig>) => void;
   resetSettings: () => Promise<void>;
   saveSettings: () => Promise<void>;
   isLoading: boolean;
@@ -67,10 +75,17 @@ const defaultServer: ServerConfig = {
   store_path: './memst-store',
 };
 
+const defaultKGExtraction: KGExtractionConfig = {
+  enabled: true,
+  db_path: null,
+  default_ontology: null,
+};
+
 const defaultSettings: SettingsState = {
   llm: defaultLLM,
   embedding: defaultEmbedding,
   server: defaultServer,
+  kg_extraction: defaultKGExtraction,
 };
 
 const SettingsContext = createContext<SettingsContextType | null>(null);
@@ -127,6 +142,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             port: apiSettings.server.port,
             store_path: apiSettings.server.store_path,
           },
+          kg_extraction: apiSettings.kg_extraction || defaultKGExtraction,
         };
 
         setSettings(newSettings);
@@ -173,6 +189,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const updateKGExtraction = (config: Partial<KGExtractionConfig>) => {
+    setSettings((prev) => ({
+      ...prev,
+      kg_extraction: { ...prev.kg_extraction, ...config },
+    }));
+  };
+
   const resetSettings = async () => {
     try {
       const result = await memstApi.resetSettings() as {
@@ -201,6 +224,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         llm: settings.llm,
         embedding: settings.embedding,
         server: settings.server,
+        kg_extraction: settings.kg_extraction,
       });
     } catch (err) {
       setError('Failed to save settings to server');
@@ -215,6 +239,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         updateLLM,
         updateEmbedding,
         updateServer,
+        updateKGExtraction,
         resetSettings,
         saveSettings,
         isLoading,

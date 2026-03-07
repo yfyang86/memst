@@ -6,13 +6,14 @@ interface SettingsPanelProps {
   onClose: () => void;
 }
 
-type Tab = 'llm' | 'embedding' | 'server';
+type Tab = 'llm' | 'embedding' | 'server' | 'kg-extraction';
 
 export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const {
     settings,
     updateLLM,
     updateEmbedding,
+    updateKGExtraction,
     updateServer,
     resetSettings,
     saveSettings,
@@ -28,6 +29,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     { id: 'llm', label: 'LLM', icon: 'fa-brain' },
     { id: 'embedding', label: 'Embedding', icon: 'fa-vector-square' },
     { id: 'server', label: 'Server', icon: 'fa-server' },
+    { id: 'kg-extraction', label: 'KG Extraction', icon: 'fa-project-diagram' },
   ];
 
   const handleSave = async () => {
@@ -270,6 +272,50 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                   readOnly
                   style={{ background: 'var(--bg-main)' }}
                 />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'kg-extraction' && (
+            <div>
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="checkbox"
+                    checked={settings.kg_extraction.enabled}
+                    onChange={(e) => updateKGExtraction({ enabled: e.target.checked })}
+                  />
+                  Enable KG Extraction v2
+                </label>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  Enable entity extraction using the KG Extraction v2 engine
+                </p>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Database Path (optional)</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={settings.kg_extraction.db_path || ''}
+                  onChange={(e) => updateKGExtraction({ db_path: e.target.value || null })}
+                  placeholder="Leave empty for in-memory storage"
+                />
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  Path to SQLite database file. Leave empty to use in-memory storage.
+                </p>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Default Ontology ID (optional)</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={settings.kg_extraction.default_ontology || ''}
+                  onChange={(e) => updateKGExtraction({ default_ontology: e.target.value || null })}
+                  placeholder="e.g., lingyuqingbao-lei-kejiqingbao-rengongzhineng"
+                />
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  Default ontology to use for extraction when none specified
+                </p>
               </div>
             </div>
           )}
