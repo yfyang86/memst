@@ -85,6 +85,10 @@ trunc/*
 third/nanobot
 third/nanobot/*
 
+# Third Party Locomo
+third/locomo
+third/locomo/*
+
 # database/static data
 memst-server/data/
 memst-server/data/*
