@@ -161,7 +161,8 @@ def load_config(config_path: Optional[Path] = None) -> Config:
         config_path = find_config_file()
 
     if config_path and config_path.exists():
-        data = toml.load(config_path)
+        with open(config_path, "rb") as f:
+            data = toml.load(f)
         return Config(
             llm=_load_llm_config(data.get("llm", {})),
             embedding=_load_embedding_config(data.get("embedding", {})),
