@@ -310,7 +310,88 @@ export const memstApi = {
     fetchApi(`/sessions/${sessionId}/stats`),
 
   // Health
-  healthCheck: () => fetchApi("/health"),
+  healthCheck: () => fetchApi<{
+    status: string;
+    memst_available: boolean;
+    kg_extraction_available: boolean;
+    version: string;
+  }>("/health"),
+
+  // KG Extraction v2
+  getKGStatus: () =>
+    fetchApi<{ available: boolean; ontologies_loaded: number; version: string }>(
+      "/kg/status",
+    ),
+
+  loadOntologies: (schemaJson: string) =>
+    fetchApi<{ success: boolean; loaded: number; ontology_ids: string[] }>(
+      "/kg/ontologies/load",
+      {
+        method: "POST",
+        body: JSON.stringify({ schema_json: schemaJson }),
+      },
+    ),
+
+  listOntologies: () =>
+    fetchApi<
+      Array<{
+        id: string;
+        top_category: string;
+        first_category: string;
+        second_category: string;
+        chinese_name: string;
+        english_name: string;
+        overview?: string;
+      }>
+    >("/kg/ontologies"),
+
+  getOntology: (ontologyId: string) =>
+    fetchApi<{
+      id: string;
+      top_category: string;
+      first_category: string;
+      second_category: string;
+      chinese_name: string;
+      english_name: string;
+      overview?: string;
+    }>(`/kg/ontologies/${ontologyId}`),
+
+  extractEntities: (docId: string, text: string, ontologyId: string) =>
+    fetchApi<{
+      id: string;
+      doc_id: string;
+      ontology_id: string;
+      status: string;
+      entity_count: number;
+      relationship_count: number;
+      tokens_used: number;
+    }>("/kg/extract", {
+      method: "POST",
+      body: JSON.stringify({ doc_id: docId, text, ontology_id: ontologyId }),
+    }),
+
+  searchEntities: (query: string, limit?: number) =>
+    fetchApi<
+      Array<{
+        id: string;
+        name: string;
+        entity_type: string;
+        confidence: number;
+      }>
+    >(`/kg/search?query=${encodeURIComponent(query)}&limit=${limit || 10}`, {
+      method: "POST",
+    }),
+
+  extractFromSession: (sessionId: string, ontologyId: string) =>
+    fetchApi<{
+      session_id: string;
+      messages_processed: number;
+      total_tokens_used: number;
+      status: string;
+    }>(`/sessions/${sessionId}/kg/extract`, {
+      method: "POST",
+      body: JSON.stringify({ ontology_id: ontologyId }),
+    }),
 
   // Agent (nanobot)
   getAgentStatus: () =>

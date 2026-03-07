@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
-import { User, Session, Message, Memory, KnowledgeGraph, File, Trace } from '../types';
+import { User, Session, Message, Memory, KnowledgeGraph, File, Trace, Ontology, ExtractedEntity, ExtractionJob, KGExtractionStatus } from '../types';
 import { memstApi } from '../api/client';
 
 interface AppState {
@@ -18,6 +18,11 @@ interface AppState {
   activeSidebarTab: string;
   activeCanvasTab: string;
   searchQuery: string;
+  // KG Extraction v2 state
+  kgStatus: KGExtractionStatus | null;
+  ontologies: Ontology[];
+  extractionJobs: ExtractionJob[];
+  extractedEntities: ExtractedEntity[];
 }
 
 type Action =
@@ -38,7 +43,14 @@ type Action =
   | { type: 'SET_ACTIVE_NAV'; payload: string }
   | { type: 'SET_ACTIVE_SIDEBAR_TAB'; payload: string }
   | { type: 'SET_ACTIVE_CANVAS_TAB'; payload: string }
-  | { type: 'SET_SEARCH_QUERY'; payload: string };
+  | { type: 'SET_SEARCH_QUERY'; payload: string }
+  // KG Extraction v2 actions
+  | { type: 'SET_KG_STATUS'; payload: KGExtractionStatus }
+  | { type: 'SET_ONTOLOGIES'; payload: Ontology[] }
+  | { type: 'ADD_ONTOLOGY'; payload: Ontology }
+  | { type: 'SET_EXTRACTION_JOBS'; payload: ExtractionJob[] }
+  | { type: 'ADD_EXTRACTION_JOB'; payload: ExtractionJob }
+  | { type: 'SET_EXTRACTED_ENTITIES'; payload: ExtractedEntity[] };
 
 const initialState: AppState = {
   user: null,
@@ -56,6 +68,11 @@ const initialState: AppState = {
   activeSidebarTab: 'sessions',
   activeCanvasTab: 'memory',
   searchQuery: '',
+  // KG Extraction v2 state
+  kgStatus: null,
+  ontologies: [],
+  extractionJobs: [],
+  extractedEntities: [],
 };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -103,6 +120,19 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, activeCanvasTab: action.payload };
     case 'SET_SEARCH_QUERY':
       return { ...state, searchQuery: action.payload };
+    // KG Extraction v2 reducers
+    case 'SET_KG_STATUS':
+      return { ...state, kgStatus: action.payload };
+    case 'SET_ONTOLOGIES':
+      return { ...state, ontologies: action.payload };
+    case 'ADD_ONTOLOGY':
+      return { ...state, ontologies: [...state.ontologies, action.payload] };
+    case 'SET_EXTRACTION_JOBS':
+      return { ...state, extractionJobs: action.payload };
+    case 'ADD_EXTRACTION_JOB':
+      return { ...state, extractionJobs: [...state.extractionJobs, action.payload] };
+    case 'SET_EXTRACTED_ENTITIES':
+      return { ...state, extractedEntities: action.payload };
     default:
       return state;
   }
@@ -120,6 +150,13 @@ interface AppContextType {
   refreshMemories: (sessionId: string) => Promise<void>;
   parseKnowledgeGraph: (sessionId: string) => Promise<void>;
   search: (query: string) => Promise<void>;
+  // KG Extraction v2 functions
+  loadKGStatus: () => Promise<void>;
+  loadOntologies: () => Promise<void>;
+  loadOntologyFromSchema: (schemaJson: string) => Promise<string[]>;
+  extractEntities: (docId: string, text: string, ontologyId: string) => Promise<ExtractionJob | null>;
+  extractFromSession: (sessionId: string, ontologyId: string) => Promise<{ session_id: string; messages_processed: number; total_tokens_used: number; status: string } | null>;
+  searchEntities: (query: string, limit?: number) => Promise<ExtractedEntity[]>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -281,6 +318,80 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // KG Extraction v2 functions
+  const loadKGStatus = async () => {
+    try {
+      const status = await memstApi.getKGStatus();
+      dispatch({ type: 'SET_KG_STATUS', payload: status });
+    } catch (err) {
+      console.error('Failed to load KG status:', err);
+    }
+  };
+
+  const loadOntologies = async () => {
+    try {
+      const ontologies = await memstApi.listOntologies();
+      dispatch({ type: 'SET_ONTOLOGIES', payload: ontologies as Ontology[] });
+    } catch (err) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to load ontologies' });
+    }
+  };
+
+  const loadOntologyFromSchema = async (schemaJson: string): Promise<string[]> => {
+    try {
+      const result = await memstApi.loadOntologies(schemaJson);
+      // Reload ontologies list
+      await loadOntologies();
+      // Reload status
+      await loadKGStatus();
+      return result.ontology_ids;
+    } catch (err) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to load ontologies from schema' });
+      return [];
+    }
+  };
+
+  const extractEntities = async (docId: string, text: string, ontologyId: string): Promise<ExtractionJob | null> => {
+    try {
+      const job = await memstApi.extractEntities(docId, text, ontologyId);
+      dispatch({ type: 'ADD_EXTRACTION_JOB', payload: job as ExtractionJob });
+      return job as ExtractionJob;
+    } catch (err) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to extract entities' });
+      return null;
+    }
+  };
+
+  const extractFromSession = async (sessionId: string, ontologyId: string) => {
+    try {
+      const result = await memstApi.extractFromSession(sessionId, ontologyId);
+      // Reload extracted entities
+      const entities = await memstApi.searchEntities('', 100);
+      dispatch({ type: 'SET_EXTRACTED_ENTITIES', payload: entities as ExtractedEntity[] });
+      return result;
+    } catch (err) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to extract from session' });
+      return null;
+    }
+  };
+
+  const searchEntities = async (query: string, limit?: number): Promise<ExtractedEntity[]> => {
+    try {
+      const entities = await memstApi.searchEntities(query, limit);
+      dispatch({ type: 'SET_EXTRACTED_ENTITIES', payload: entities as ExtractedEntity[] });
+      return entities as ExtractedEntity[];
+    } catch (err) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to search entities' });
+      return [];
+    }
+  };
+
+  // Load KG status on mount
+  useEffect(() => {
+    loadKGStatus();
+    loadOntologies();
+  }, []);
+
   return (
     <AppContext.Provider
       value={{
@@ -295,6 +406,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         refreshMemories,
         parseKnowledgeGraph,
         search,
+        // KG Extraction v2
+        loadKGStatus,
+        loadOntologies,
+        loadOntologyFromSchema,
+        extractEntities,
+        extractFromSession,
+        searchEntities,
       }}
     >
       {children}

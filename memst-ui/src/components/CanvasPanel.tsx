@@ -1,6 +1,7 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { Memory, Trace, File as FileType, KnowledgeGraph } from '../types';
+import { KGExtractionPanel } from './KGExtractionPanel';
 import * as d3 from 'd3';
 
 interface MemoryTierProps {
@@ -705,6 +706,7 @@ export function CanvasPanel() {
     { key: 'trace', label: 'Trace' },
     { key: 'files', label: 'Files' },
     { key: 'graph', label: 'Graph' },
+    { key: 'kg-extraction', label: 'KG Extraction' },
   ];
 
   return (
@@ -752,6 +754,7 @@ export function CanvasPanel() {
         )}
         {state.activeCanvasTab === 'files' && <FileList files={state.files} />}
         {state.activeCanvasTab === 'graph' && <KnowledgeGraphView graph={state.knowledgeGraph} />}
+        {state.activeCanvasTab === 'kg-extraction' && <KGExtractionPanel />}
       </div>
     </div>
   );

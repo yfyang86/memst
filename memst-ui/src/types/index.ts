@@ -88,6 +88,43 @@ export interface KnowledgeGraphContext {
   entities: Entity[];
 }
 
+// KG Extraction v2 Types
+
+export interface Ontology {
+  id: string;
+  top_category: string;
+  first_category: string;
+  second_category: string;
+  chinese_name: string;
+  english_name: string;
+  overview?: string;
+}
+
+export interface ExtractionJob {
+  id: string;
+  doc_id: string;
+  ontology_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  entity_count: number;
+  relationship_count: number;
+  tokens_used: number;
+}
+
+export interface ExtractedEntity {
+  id: string;
+  name: string;
+  entity_type: string;
+  confidence: number;
+  doc_id?: string;
+  ontology_id?: string;
+}
+
+export interface KGExtractionStatus {
+  available: boolean;
+  ontologies_loaded: number;
+  version: string;
+}
+
 export interface Entity {
   name: string;
   type: string;
@@ -138,6 +175,6 @@ export interface Stats {
   avg_response_time_ms: number;
 }
 
-export type CanvasTab = 'memory' | 'trace' | 'files' | 'graph';
+export type CanvasTab = 'memory' | 'trace' | 'files' | 'graph' | 'kg-extraction';
 
 export type SidebarTab = 'sessions' | 'resources' | 'history';
