@@ -384,4 +384,104 @@ class MergeResultWrapper:
     @property
     def conflicts(self) -> List[str]: ...
 
+# ============================================
+# Phase 16: KG Extraction v2
+# ============================================
+
+class KgStorageWrapper:
+    """KG Storage for managing extraction data."""
+    
+    @staticmethod
+    def new(path: str) -> "KgStorageWrapper": ...
+    
+    @staticmethod
+    def new_in_memory() -> "KgStorageWrapper": ...
+
+class Entity:
+    """Extracted entity."""
+    
+    @property
+    def id(self) -> str: ...
+    
+    @property
+    def doc_id(self) -> str: ...
+    
+    @property
+    def ontology_id(self) -> str: ...
+    
+    @property
+    def entity_type(self) -> str: ...
+    
+    @property
+    def name(self) -> str: ...
+    
+    @property
+    def confidence(self) -> float: ...
+
+class ExtractionJob:
+    """Extraction job result."""
+    
+    @property
+    def id(self) -> str: ...
+    
+    @property
+    def doc_id(self) -> str: ...
+    
+    @property
+    def ontology_id(self) -> str: ...
+    
+    @property
+    def status(self) -> str: ...
+    
+    @property
+    def entity_count(self) -> int: ...
+    
+    @property
+    def relationship_count(self) -> int: ...
+    
+    @property
+    def tokens_used(self) -> int: ...
+
+class ExtractionService:
+    """KG Extraction Service."""
+    
+    def __init__(self, storage: KgStorageWrapper) -> None: ...
+    
+    def extract_entities(self, doc_id: str, text: str, ontology_id: str) -> ExtractionJob: ...
+    
+    def search_entities(self, query: str, limit: int = 10) -> List[Entity]: ...
+
+class Ontology:
+    """Ontology definition."""
+    
+    @property
+    def id(self) -> str: ...
+    
+    @property
+    def top_category(self) -> str: ...
+    
+    @property
+    def first_category(self) -> str: ...
+    
+    @property
+    def second_category(self) -> str: ...
+    
+    @property
+    def chinese_name(self) -> str: ...
+    
+    @property
+    def english_name(self) -> str: ...
+
+class OntologyManager:
+    """Ontology Manager."""
+    
+    def __init__(self) -> None: ...
+    
+    @staticmethod
+    def from_schema_json(json_content: str) -> "OntologyManager": ...
+    
+    def list_all(self) -> List[Ontology]: ...
+    
+    def get(self, id: str) -> Optional[Ontology]: ...
+
 __version__: str

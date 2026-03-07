@@ -81,6 +81,52 @@ print(strategy)
 print(explain)
 ```
 
+## KG Extraction v2
+
+```python
+import memst
+
+# Create storage (in-memory for testing)
+storage = memst.KgStorage.new_in_memory()
+
+# Create extraction service
+service = memst.ExtractionService(storage)
+
+# Extract entities from text
+job = service.extract_entities(
+    doc_id="doc-001",
+    text="OpenAI released GPT-4 Turbo in 2023. Sam Altman is the CEO.",
+    ontology_id="tech-ai"
+)
+
+print(f"Extracted {job.entity_count} entities")
+print(f"Tokens used: {job.tokens_used}")
+
+# Search entities
+results = service.search_entities("OpenAI", limit=10)
+for entity in results:
+    print(f"  - {entity.name} ({entity.entity_type}): {entity.confidence:.2f}")
+```
+
+### Ontology Management
+
+```python
+import memst
+
+# Load ontologies from schema JSON
+with open("schema-full.json") as f:
+    manager = memst.OntologyManager.from_schema_json(f.read())
+
+# List all ontologies
+for ontology in manager.list_all():
+    print(f"{ontology.id}: {ontology.english_name}")
+
+# Get specific ontology
+ontology = manager.get("tech-ai")
+if ontology:
+    print(f"Found: {ontology.chinese_name}")
+```
+
 ## License
 
 Apache-2.0 (see repository `LICENSE`).

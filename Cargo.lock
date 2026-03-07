@@ -1956,9 +1956,11 @@ dependencies = [
  "anyhow",
  "chrono",
  "memst-core",
+ "memst-extract-v2",
  "pyo3",
  "serde",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 
