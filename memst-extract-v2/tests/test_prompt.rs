@@ -1,6 +1,7 @@
 //! Unit tests for prompt engineering framework
 
-use memst_extract_v2::prompt::{PromptEngine, ExtractionStage, Ontology};
+use memst_extract_v2::prompt::{PromptEngine, ExtractionStage};
+use memst_extract_v2::ontology::Ontology;
 use memst_extract_v2::ontology::OntologyManager;
 
 fn create_test_ontology() -> Ontology {
@@ -245,7 +246,7 @@ fn test_prompt_contains_chinese() {
     
     // Should contain Chinese text for Chinese domains
     assert!(
-        prompt.chars().any(|c| c as u32 > 0x4E00 && c as u32 < 0x9FFF),
+        prompt.chars().any(|c| c as u32 > 0x4E00 && (c as u32) < 0x9FFF),
         "Prompt should contain Chinese characters"
     );
 }

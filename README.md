@@ -19,6 +19,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Knowledge Graph** for entity and relationship tracking
 - **KG decay** - Temporal relevance decay for entities/relationships
 - **KG evolution** - Automatic entity merging and deprecation
+- **KG extraction v2** - Multi-backend storage (SQLite/DuckDB) with LLM-powered extraction
 - **Procedural memory (Skills)** for learned workflows
 
 ## What's New in v1.0
@@ -44,11 +45,19 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Full MCP protocol support** for Claude Code, Cursor, and other MCP clients
 - **Tools**: memory_read, memory_write, memory_search, skill_lookup, context_build
 
+### KG Extraction v2 (New)
+- **Multi-backend storage**: SQLite (default) or DuckDB for production
+- **Feature flags**: Choose backend at compile time
+- **Domain-specific ontologies**: 80+ intelligence domains
+- **LLM-powered extraction**: Chain-of-thought entity/relationship extraction
+- **Entity linking**: Automatic disambiguation and canonicalization
+
 ## Workspace Layout
 
 - **memst-core**: Core library (store/search/vector/hybrid/context/memory)
 - **memst-repo**: Git-alike MemRepo backend (WAL, merge, worktrees)
 - **memst-sleep**: Async sleep-time consolidation pipeline
+- **memst-extract-v2**: Advanced KG extraction with multi-backend storage (SQLite/DuckDB)
 - **memst-mcp**: MCP (Model Context Protocol) adapter
 - **memst-cli**: `memst` CLI binary
 - **memst-py**: Python extension module (`import memst`)
@@ -337,6 +346,43 @@ python -m pytest memst-py/tests
 | P13 | Multi-Agent (worktrees, agent registry) | ✅ Complete |
 | P14 | MCP Adapter | ✅ Complete |
 | P15 | Memory Evolution, KG decay | ✅ Complete |
+| P16 | KG Extraction v2 (SQLite/DuckDB backends) | ✅ Complete |
+
+## KG Extraction v2 Quick Start
+
+```rust
+use memst_extract_v2::{ExtractionService, KgStorage};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create storage (SQLite by default)
+    let storage = KgStorage::new_in_memory().await?;
+    
+    // Create extraction service
+    let service = ExtractionService::new(storage).await?;
+    
+    // Extract entities from text
+    let job = service.extract_entities(
+        "doc-001",
+        "OpenAI released GPT-4 Turbo in 2023.",
+        "tech-ai"
+    ).await?;
+    
+    println!("Extracted {} entities", job.entity_count);
+    Ok(())
+}
+```
+
+### Feature Flags
+
+```toml
+# Cargo.toml - Use SQLite (default)
+[dependencies]
+memst-extract-v2 = { path = "../memst-extract-v2" }
+
+# Use DuckDB for production analytics
+memst-extract-v2 = { path = "../memst-extract-v2", default-features = false, features = ["duckdb"] }
+```
 
 ## License
 

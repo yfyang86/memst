@@ -5,13 +5,21 @@ edition = "2021"
 rust-version = "1.75"
 description = "Advanced Knowledge Graph extraction with DuckDB backend"
 
+[features]
+default = ["sqlite"]  # Use SQLite by default for easier development
+duckdb = ["dep:duckdb", "dep:libduckdb-sys"]
+sqlite = ["dep:rusqlite"]
+
 [dependencies]
 memst-core = { path = "../memst-core" }
 
-# DuckDB for distributed storage
-# Note: Using bundled feature for CI/CD compatibility
-# For production, install DuckDB separately and use system lib
-duckdb = { version = "0.10", features = ["bundled"] }}
+# Storage backends (choose one)
+# DuckDB - High-performance OLAP database (requires C++ build tools)
+duckdb = { version = "0.10", features = ["bundled"], optional = true }
+libduckdb-sys = { version = "0.10", optional = true }
+
+# SQLite - Lightweight alternative for development
+rusqlite = { version = "0.30", features = ["bundled", "chrono", "uuid", "serde_json"], optional = true }
 
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
@@ -37,8 +45,8 @@ reqwest = { version = "0.11", features = ["json"] }
 # LLM integration
 async-openai = "0.18"
 
-# Time - pinned for compatibility with arrow
-chrono = { version = "=0.4.31", features = ["serde"] }
+# Time - pinned for compatibility
+chrono = { version = "0.4.31", features = ["serde"] }
 
 # UUID
 uuid = { version = "1.6", features = ["v4", "serde"] }
@@ -52,3 +60,8 @@ strsim = "0.10"
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.9"
+
+[[example]]
+name = "basic_extraction"
+path = "examples/basic_extraction.rs"
+required-features = ["sqlite"]

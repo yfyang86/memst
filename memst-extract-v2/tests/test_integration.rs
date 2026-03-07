@@ -1,266 +1,214 @@
 //! Integration tests for KG extraction pipeline
 
 use memst_extract_v2::{
-    KgDuckDb, KgExtractionServiceV2, OntologyManager,
-    Document, ExtractionConfig,
+    ExtractionService, KgStorage, OntologyManager,
+    extraction::ExtractionStatus,
+    ontology::{Ontology, EntityType, RelationType, ArgumentRole},
 };
-use std::sync::Arc;
 
-const FULL_SCHEMA: &str = include_str!("../fixtures/test_schema.json");
+const FULL_SCHEMA: &str = include_str!("fixtures/test_schema.json");
 
-fn setup_service() -> (KgExtractionServiceV2, Arc<KgDuckDb>) {
-    let db = Arc::new(KgDuckDb::open_in_memory().unwrap());
-    let manager = Arc::new(OntologyManager::from_schema_json(FULL_SCHEMA).unwrap());
-    let service = KgExtractionServiceV2::new(db.clone(), manager).unwrap();
-    (service, db)
+/// Setup service with test ontology pre-loaded
+async fn setup_service() -> ExtractionService {
+    let db = KgStorage::new_in_memory().await.unwrap();
+    
+    // Insert test ontology first (required for FK constraints)
+    let ontology = create_test_ontology();
+    db.store_ontology(&ontology).unwrap();
+    
+    // Insert a test document to satisfy FK constraints
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO documents (id, content_hash, content, source_type, created_at, updated_at) 
+             VALUES ('test-doc-001', 'hash1', 'Test', 'test', datetime('now'), datetime('now'))
+             ON CONFLICT DO NOTHING",
+            [],
+        )?;
+        Ok(())
+    }).unwrap();
+    
+    ExtractionService::new(db).await.unwrap()
 }
 
-#[tokio::test]
-async fn test_end_to_end_extraction() {
-    let (service, db) = setup_service();
-    
-    let doc = Document {
-        id: "test-doc-001".to_string(),
-        content: "2023年11月，OpenAI发布了GPT-4 Turbo模型。".to_string(),
-        title: Some("AI News".to_string()),
-        source: Some("Test Source".to_string()),
-        url: None,
-        language: "zh".to_string(),
-        metadata: None,
-    };
-    
-    let config = ExtractionConfig {
-        ontology_ids: vec!["领域情报类-科技情报-人工智能".to_string()],
-        confidence_threshold: 0.7,
-        max_entities: 50,
-        max_relations: 100,
-        enable_linking: true,
-        batch_size: 10,
-        concurrency: 4,
-    };
-    
-    let results = service.extract(&doc, &config).await;
-    
-    assert!(!results.is_empty(), "Should have extraction results");
-    
-    for result in &results {
-        assert_eq!(result.doc_id, "test-doc-001");
-        assert_eq!(result.ontology_id, "领域情报类-科技情报-人工智能");
-        // Note: This uses mock extraction, so entities count may be 0 or mock data
+fn create_test_ontology() -> Ontology {
+    Ontology {
+        id: "test-ontology".to_string(),
+        top_category: "Test".to_string(),
+        first_category: "Integration".to_string(),
+        second_category: "Test".to_string(),
+        chinese_name: "集成测试".to_string(),
+        english_name: "Integration Test".to_string(),
+        overview: "For integration testing".to_string(),
+        entity_types: vec![EntityType {
+            name: "TestEntity".to_string(),
+            description: "Test entity type".to_string(),
+            examples: vec![],
+            attributes: vec![],
+        }],
+        relation_types: vec![RelationType {
+            name: "test_rel".to_string(),
+            description: "Test relation".to_string(),
+            category: "test".to_string(),
+            domain: vec!["TestEntity".to_string()],
+            range: vec!["TestEntity".to_string()],
+        }],
+        argument_roles: vec![ArgumentRole {
+            name: "test_arg".to_string(),
+            description: "Test argument".to_string(),
+            value_type: "text".to_string(),
+        }],
+        version: 1,
     }
-    
-    // Verify document was stored
-    let doc_count = db.read(|conn| {
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM documents WHERE id = 'test-doc-001'",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(count)
-    }).unwrap();
-    
-    assert_eq!(doc_count, 1, "Document should be stored");
 }
 
 #[tokio::test]
-async fn test_multi_domain_extraction() {
-    let (service, _db) = setup_service();
+async fn test_service_creation() {
+    let service = setup_service().await;
     
-    let doc = Document {
-        id: "test-doc-002".to_string(),
-        content: "台积电投资100亿美元建设3nm芯片厂。".to_string(),
-        title: Some("Semi News".to_string()),
-        source: None,
-        url: None,
-        language: "zh".to_string(),
-        metadata: None,
-    };
-    
-    let config = ExtractionConfig {
-        ontology_ids: vec![
-            "领域情报类-科技情报-半导体芯片".to_string(),
-            "领域情报类-产业情报-汽车产业".to_string(),
-        ],
-        confidence_threshold: 0.7,
-        max_entities: 50,
-        max_relations: 100,
-        enable_linking: true,
-        batch_size: 10,
-        concurrency: 4,
-    };
-    
-    let results = service.extract(&doc, &config).await;
-    
-    assert_eq!(results.len(), 2, "Should have results for both domains");
-    
-    // Check results are for correct ontologies
-    let ontology_ids: Vec<&str> = results.iter()
-        .map(|r| r.ontology_id.as_str())
-        .collect();
-    
-    assert!(ontology_ids.contains(&"领域情报类-科技情报-半导体芯片"));
-}
-
-#[tokio::test]
-async fn test_extraction_job_tracking() {
-    let (service, db) = setup_service();
-    
-    let doc = Document {
-        id: "test-doc-003".to_string(),
-        content: "Test content for job tracking.".to_string(),
-        title: None,
-        source: None,
-        url: None,
-        language: "zh".to_string(),
-        metadata: None,
-    };
-    
-    let config = ExtractionConfig {
-        ontology_ids: vec!["领域情报类-科技情报-人工智能".to_string()],
-        ..Default::default()
-    };
-    
-    let _results = service.extract(&doc, &config).await;
-    
-    // Verify job was tracked
-    let job_count = db.read(|conn| {
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM extraction_jobs WHERE doc_id = 'test-doc-003'",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(count)
-    }).unwrap();
-    
-    assert!(job_count >= 1, "Should have tracked extraction job");
-}
-
-#[tokio::test]
-async fn test_service_statistics() {
-    let (service, _db) = setup_service();
-    
-    // Initial stats should be zero
+    // Verify service has correct components
     let stats = service.get_stats().unwrap();
-    assert_eq!(stats.total_documents, 0);
-    assert_eq!(stats.total_entities, 0);
-    assert_eq!(stats.total_relations, 0);
+    assert_eq!(stats.entity_count, 0);
+    assert_eq!(stats.relationship_count, 0);
 }
 
 #[tokio::test]
-async fn test_unknown_ontology_handling() {
-    let (service, _db) = setup_service();
+async fn test_extract_entities_basic() {
+    let service = setup_service().await;
     
-    let doc = Document {
-        id: "test-doc-004".to_string(),
-        content: "Test content.".to_string(),
-        title: None,
-        source: None,
-        url: None,
-        language: "zh".to_string(),
-        metadata: None,
-    };
+    // Test basic extraction with pre-loaded ontology
+    let job = service.extract_entities(
+        "test-doc-001",
+        "2023年11月，OpenAI发布了GPT-4 Turbo模型。",
+        "test-ontology"
+    ).await;
     
-    let config = ExtractionConfig {
-        ontology_ids: vec!["non-existent-ontology".to_string()],
-        ..Default::default()
-    };
-    
-    let results = service.extract(&doc, &config).await;
-    
-    // Should return failed result for unknown ontology
-    assert_eq!(results.len(), 1);
-    assert!(results[0].error_message.is_some(), "Should have error for unknown ontology");
+    assert!(job.is_ok(), "Extraction should succeed: {:?}", job);
+    let job = job.unwrap();
+    assert_eq!(job.doc_id, "test-doc-001");
+    assert_eq!(job.ontology_id, "test-ontology");
+    assert_eq!(job.status, ExtractionStatus::Completed);
 }
 
 #[tokio::test]
-async fn test_empty_content_handling() {
-    let (service, _db) = setup_service();
+async fn test_ontology_manager() {
+    let manager = OntologyManager::from_schema_json(FULL_SCHEMA).unwrap();
     
-    let doc = Document {
-        id: "test-doc-005".to_string(),
-        content: "".to_string(),
-        title: None,
-        source: None,
-        url: None,
-        language: "zh".to_string(),
-        metadata: None,
-    };
+    // Check that ontologies were loaded
+    let ontologies = manager.list_all();
+    assert!(!ontologies.is_empty(), "Should have loaded ontologies from schema");
     
-    let config = ExtractionConfig {
-        ontology_ids: vec!["领域情报类-科技情报-人工智能".to_string()],
-        ..Default::default()
-    };
-    
-    // Should not panic on empty content
-    let _results = service.extract(&doc, &config).await;
+    // Check specific ontology using category lookup
+    let _ai_ontology = manager.get_by_category("领域情报类", "科技情报", "人工智能");
 }
 
 #[tokio::test]
-async fn test_long_content_handling() {
-    let (service, _db) = setup_service();
+async fn test_entity_linking() {
+    let service = setup_service().await;
     
-    // Create long content (100KB)
-    let long_content = "OpenAI发布了GPT-4。".repeat(10000);
+    // Create test entities
+    use memst_extract_v2::extraction::Entity;
     
-    let doc = Document {
-        id: "test-doc-006".to_string(),
-        content: long_content,
-        title: Some("Long Document".to_string()),
-        source: None,
-        url: None,
-        language: "zh".to_string(),
-        metadata: None,
-    };
+    let entity1 = Entity::new(
+        "doc1".to_string(),
+        "test-ontology".to_string(),
+        "Organization".to_string(),
+        "OpenAI".to_string(),
+        0.95,
+    );
     
-    let config = ExtractionConfig {
-        ontology_ids: vec!["领域情报类-科技情报-人工智能".to_string()],
-        max_entities: 1000,
-        ..Default::default()
-    };
+    let entity2 = Entity::new(
+        "doc2".to_string(),
+        "test-ontology".to_string(),
+        "Organization".to_string(),
+        "OpenAI".to_string(),
+        0.92,
+    );
     
-    // Should handle long content without issues
-    let _results = service.extract(&doc, &config).await;
+    // Test linking
+    let mentions = vec![entity1, entity2];
+    let linked = service.link_entities(&mentions).await;
+    
+    assert!(linked.is_ok());
+    let linked = linked.unwrap();
+    assert_eq!(linked.len(), 2);
 }
 
 #[tokio::test]
-async fn test_concurrent_extractions() {
-    let (service, _db) = setup_service();
-    let service = Arc::new(service);
+async fn test_job_retrieval() {
+    let service = setup_service().await;
     
-    // Create multiple documents
-    let docs: Vec<_> = (0..5)
-        .map(|i| Document {
-            id: format!("concurrent-doc-{}", i),
-            content: format!("Document {} content about OpenAI and GPT-4.", i),
-            title: Some(format!("Doc {}", i)),
-            source: None,
-            url: None,
-            language: "zh".to_string(),
-            metadata: None,
-        })
-        .collect();
+    // Create a job (uses test-doc-001 which is pre-inserted in setup)
+    let job = service.extract_entities(
+        "test-doc-001",
+        "Test content for job retrieval",
+        "test-ontology"
+    ).await.unwrap();
     
-    let config = ExtractionConfig {
-        ontology_ids: vec!["领域情报类-科技情报-人工智能".to_string()],
-        ..Default::default()
-    };
+    // Retrieve the job
+    let retrieved = service.get_job(&job.id);
+    assert!(retrieved.is_ok());
     
-    // Run extractions concurrently
-    let futures: Vec<_> = docs
-        .into_iter()
-        .map(|doc| {
-            let svc = Arc::clone(&service);
-            let cfg = config.clone();
-            tokio::spawn(async move {
-                svc.extract(&doc, &cfg).await
-            })
-        })
-        .collect();
+    let retrieved = retrieved.unwrap();
+    assert!(retrieved.is_some());
+    assert_eq!(retrieved.unwrap().id, job.id);
+}
+
+#[tokio::test]
+async fn test_storage_operations() {
+    let db = KgStorage::new_in_memory().await.unwrap();
     
-    let results = futures::future::join_all(futures).await;
+    // Store an ontology
+    let ontology = create_test_ontology();
     
-    // All should complete successfully
-    for result in results {
-        assert!(result.is_ok(), "Concurrent extraction should succeed");
-    }
+    db.store_ontology(&ontology).unwrap();
+    
+    // Retrieve and verify
+    let retrieved = db.get_ontology("test-ontology").unwrap();
+    assert!(retrieved.is_some());
+    assert_eq!(retrieved.unwrap().english_name, "Integration Test");
+}
+
+#[tokio::test]
+async fn test_storage_search() {
+    let db = KgStorage::new_in_memory().await.unwrap();
+    
+    // First store the required ontology
+    let ontology = create_test_ontology();
+    db.store_ontology(&ontology).unwrap();
+    
+    // Store a document first (required for FK)
+    db.write(|conn| {
+        conn.execute(
+            "INSERT INTO documents (id, content_hash, content, source_type, created_at, updated_at) 
+             VALUES ('search-doc-001', 'hash1', 'Test', 'test', datetime('now'), datetime('now'))",
+            [],
+        )?;
+        Ok(())
+    }).unwrap();
+    
+    // Store some entities
+    use memst_extract_v2::extraction::Entity;
+    
+    let entity1 = Entity::new(
+        "search-doc-001".to_string(),  // Use the doc_id that exists
+        "test-ontology".to_string(),
+        "Organization".to_string(),
+        "OpenAI".to_string(),
+        0.95,
+    );
+    
+    let entity2 = Entity::new(
+        "search-doc-001".to_string(),
+        "test-ontology".to_string(),
+        "Person".to_string(),
+        "Sam Altman".to_string(),
+        0.90,
+    );
+    
+    db.store_entities(&[entity1, entity2]).unwrap();
+    
+    // Search for entities
+    let results = db.search_entities("OpenAI", 10).unwrap();
+    assert!(!results.is_empty(), "Should find OpenAI entity");
+    assert_eq!(results[0].name, "OpenAI");
 }

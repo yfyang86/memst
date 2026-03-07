@@ -1,77 +1,119 @@
-//! Error types for KG extraction V2
+//! Error types for KG extraction
 
 use thiserror::Error;
 
+/// Result type alias
 pub type Result<T> = std::result::Result<T, ExtractError>;
 
+/// Result with anyhow error support
+pub type AnyhowResult<T> = std::result::Result<T, anyhow::Error>;
+
+/// Main error type for extraction operations
 #[derive(Error, Debug, Clone)]
 pub enum ExtractError {
+    #[error("Ontology error: {0}")]
+    Ontology(String),
+    
     #[error("Database error: {0}")]
     Database(String),
     
-    #[error("DuckDB error: {0}")]
-    DuckDb(String),
-    
-    #[error("Ontology error: {0}")]
-    Ontology(String),
+    #[error("Serialization error: {0}")]
+    Serialization(String),
     
     #[error("Prompt error: {0}")]
     Prompt(String),
     
     #[error("LLM error: {0}")]
-    Llm(String),
+    LLM(String),
     
     #[error("Extraction error: {0}")]
     Extraction(String),
     
-    #[error("JSON parse error: {0}")]
-    JsonParse(String),
+    #[error("Entity not found: {0}")]
+    EntityNotFound(String),
     
-    #[error("Entity linking error: {0}")]
-    EntityLinking(String),
-    
-    #[error("Validation error: {0}")]
-    Validation(String),
-    
-    #[error("Not found: {0}")]
-    NotFound(String),
+    #[error("Invalid configuration: {0}")]
+    Config(String),
     
     #[error("IO error: {0}")]
-    Io(String),
+    IO(String),
+    
 }
 
+impl ExtractError {
+    pub fn ontology(msg: impl Into<String>) -> Self {
+        Self::Ontology(msg.into())
+    }
+    
+    pub fn database(msg: impl Into<String>) -> Self {
+        Self::Database(msg.into())
+    }
+    
+    pub fn serialization(msg: impl Into<String>) -> Self {
+        Self::Serialization(msg.into())
+    }
+    
+    pub fn prompt(msg: impl Into<String>) -> Self {
+        Self::Prompt(msg.into())
+    }
+    
+    pub fn llm(msg: impl Into<String>) -> Self {
+        Self::LLM(msg.into())
+    }
+    
+    pub fn extraction(msg: impl Into<String>) -> Self {
+        Self::Extraction(msg.into())
+    }
+    
+    pub fn entity_not_found(id: impl Into<String>) -> Self {
+        Self::EntityNotFound(id.into())
+    }
+    
+    pub fn config(msg: impl Into<String>) -> Self {
+        Self::Config(msg.into())
+    }
+    
+    pub fn io(msg: impl Into<String>) -> Self {
+        Self::IO(msg.into())
+    }
+}
+
+// Database error conversions
+#[cfg(feature = "duckdb")]
 impl From<duckdb::Error> for ExtractError {
     fn from(e: duckdb::Error) -> Self {
-        ExtractError::DuckDb(e.to_string())
+        Self::Database(e.to_string())
+    }
+}
+
+#[cfg(feature = "duckdb")]
+impl From<libduckdb_sys::Error> for ExtractError {
+    fn from(e: libduckdb_sys::Error) -> Self {
+        Self::Database(e.to_string())
+    }
+}
+
+#[cfg(feature = "sqlite")]
+impl From<rusqlite::Error> for ExtractError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Database(e.to_string())
     }
 }
 
 impl From<serde_json::Error> for ExtractError {
     fn from(e: serde_json::Error) -> Self {
-        ExtractError::JsonParse(e.to_string())
+        Self::Serialization(e.to_string())
     }
 }
 
 impl From<std::io::Error> for ExtractError {
     fn from(e: std::io::Error) -> Self {
-        ExtractError::Io(e.to_string())
+        Self::IO(e.to_string())
     }
 }
 
-impl ExtractError {
-    pub fn ontology(msg: impl Into<String>) -> Self {
-        ExtractError::Ontology(msg.into())
-    }
-    
-    pub fn prompt(msg: impl Into<String>) -> Self {
-        ExtractError::Prompt(msg.into())
-    }
-    
-    pub fn llm(msg: impl Into<String>) -> Self {
-        ExtractError::Llm(msg.into())
-    }
-    
-    pub fn extraction(msg: impl Into<String>) -> Self {
-        ExtractError::Extraction(msg.into())
+impl From<toml::de::Error> for ExtractError {
+    fn from(e: toml::de::Error) -> Self {
+        Self::Serialization(format!("TOML parse error: {}", e))
     }
 }

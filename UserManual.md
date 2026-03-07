@@ -25,10 +25,16 @@ Date: 2025
 13. [Multi-Agent Support (Phase 13)](#multi-agent-support-phase-13)
 14. [MCP Adapter (Phase 14)](#mcp-adapter-phase-14)
 15. [Memory Evolution & KG Decay (Phase 15)](#memory-evolution--kg-decay-phase-15)
-16. [Python Bindings](#python-bindings)
-17. [Configuration](#configuration)
-18. [CLI Reference](#cli-reference)
-19. [API Reference](#api-reference)
+16. [KG Extraction v2 (Phase 16)](#16-kg-extraction-v2-phase-16)
+17. [Python Bindings](#17-python-bindings)
+18. [Configuration](#18-configuration)
+19. [CLI Reference](#19-cli-reference)
+20. [API Reference](#20-api-reference)
+21. [Error Handling](#21-error-handling)
+22. [Best Practices](#22-best-practices)
+23. [Troubleshooting](#23-troubleshooting)
+24. [Migration Notes](#24-migration-notes)
+25. [Appendix: Feature Summary](#25-appendix-feature-summary)
 
 ---
 
@@ -1224,24 +1230,136 @@ let sleep_manager = SleepManager::new(4);
 sleep_manager.scheduler().schedule_kg_decay(graph_id)?;
 ```
 
-### LLM-Based Extraction (Future)
+## 16. KG Extraction v2 (Phase 16)
 
-The KG extraction service uses LLM to extract structured knowledge:
+### KG Extraction v2 (memst-extract-v2)
+
+The new KG extraction service provides multi-backend storage and LLM-powered extraction:
+
+#### Features
+
+| Feature | Description |
+|---------|-------------|
+| **Multi-backend** | SQLite (default) or DuckDB for production |
+| **Feature flags** | Choose backend at compile time |
+| **Ontology support** | 80+ intelligence domains |
+| **LLM extraction** | Chain-of-thought entity/relationship extraction |
+| **Entity linking** | Automatic disambiguation |
+
+#### Backend Selection
+
+```toml
+# Cargo.toml - SQLite backend (default, for development)
+[dependencies]
+memst-extract-v2 = { path = "../memst-extract-v2" }
+
+# DuckDB backend (for production analytics)
+memst-extract-v2 = { path = "../memst-extract-v2", default-features = false, features = ["duckdb"] }
+```
+
+#### Basic Usage
 
 ```rust
-use memst_sleep::kg_extract::KgExtractionService;
+use memst_extract_v2::{ExtractionService, KgStorage};
 
-let service = KgExtractionService::new(llm_client);
-let result = service.extract_from_text(text).await?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create in-memory storage (for testing)
+    let storage = KgStorage::new_in_memory().await?;
+    
+    // Or create file-based storage
+    // let storage = KgStorage::new("./data/kg.db").await?;
+    
+    // Create extraction service
+    let service = ExtractionService::new(storage).await?;
+    
+    // Extract entities from text
+    let job = service.extract_entities(
+        "doc-001",                           // Document ID
+        "OpenAI released GPT-4 Turbo...",    // Text to analyze
+        "tech-ai"                            // Ontology ID
+    ).await?;
+    
+    println!("Job ID: {}", job.id);
+    println!("Entities extracted: {}", job.entity_count);
+    println!("Tokens used: {}", job.tokens_used);
+    
+    Ok(())
+}
+```
 
-for entity in result.entities {
-    println!("Found: {} ({:?})", entity.name, entity.temporal_relevance);
+#### Ontology Management
+
+```rust
+use memst_extract_v2::OntologyManager;
+
+// Load ontologies from schema JSON
+let schema_json = include_str!("schema-full.json");
+let manager = OntologyManager::from_schema_json(schema_json)?;
+
+// List all ontologies
+for ontology in manager.list_all() {
+    println!("{}: {}", ontology.id, ontology.english_name);
+}
+
+// Find ontology by category
+let ai_ontology = manager.get_by_category(
+    "领域情报类",
+    "科技情报",
+    "人工智能"
+);
+```
+
+#### Entity Linking
+
+```rust
+use memst_extract_v2::extraction::Entity;
+
+// Create entity mentions
+let mention1 = Entity::new(
+    "doc-001".to_string(),
+    "tech-ai".to_string(),
+    "Organization".to_string(),
+    "OpenAI".to_string(),
+    0.95,
+);
+
+let mention2 = Entity::new(
+    "doc-002".to_string(),
+    "tech-ai".to_string(),
+    "Organization".to_string(),
+    "OpenAI".to_string(),
+    0.92,
+);
+
+// Link mentions to canonical entities
+let mentions = vec![mention1, mention2];
+let linked = service.link_entities(&mentions).await?;
+```
+
+#### Storage Operations
+
+```rust
+use memst_extract_v2::ontology::{Ontology, EntityType, RelationType, ArgumentRole};
+
+// Store ontology
+let ontology = Ontology {
+    id: "custom-domain".to_string(),
+    top_category: "Custom".to_string(),
+    // ... other fields
+};
+storage.store_ontology(&ontology)?;
+
+// Search entities
+let results = storage.search_entities("OpenAI", 10)?;
+for entity in results {
+    println!("Found: {} ({})", entity.name, entity.entity_type);
 }
 ```
 
 ---
 
-## Python Bindings
+## 17. Python Bindings
 
 MemSt provides Python bindings via PyO3 for seamless integration with Python applications.
 
@@ -1352,7 +1470,7 @@ working_memories = store.get_memories_by_tier(memst.MemoryTier.WORKING)
 
 ---
 
-## Configuration
+## 18. Configuration
 
 MemSt loads LLM + embedding settings from `config.toml` by default (and falls back to environment variables if no config is found).
 
@@ -1420,7 +1538,7 @@ export MEMST_STORE_PATH="./data"
 
 ---
 
-## CLI Reference
+## 19. CLI Reference
 
 ### Global Options
 
@@ -1541,7 +1659,7 @@ memst mcp manifest
 
 ---
 
-## API Reference
+## 20. API Reference
 
 See [memst-server-api.md](memst-server-api.md) for detailed REST API documentation.
 
@@ -1564,7 +1682,7 @@ See [memst-server-api.md](memst-server-api.md) for detailed REST API documentati
 
 ---
 
-## Error Handling
+## 21. Error Handling
 
 MemSt uses structured errors throughout:
 
@@ -1593,7 +1711,7 @@ match result {
 
 ---
 
-## Best Practices
+## 22. Best Practices
 
 ### Memory Management
 
@@ -1631,7 +1749,7 @@ match result {
 
 ---
 
-## Troubleshooting
+## 23. Troubleshooting
 
 ### Common Issues
 
@@ -1662,7 +1780,7 @@ max_concurrent_jobs = 4
 
 ---
 
-## Migration Notes
+## 24. Migration Notes
 
 ### From v0.x to v1.0
 
@@ -1687,7 +1805,7 @@ consolidation_interval = 3600
 
 ---
 
-## Appendix: Feature Summary
+## 25. Appendix: Feature Summary
 
 | Phase | Feature | Status |
 |-------|---------|--------|

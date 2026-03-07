@@ -7,8 +7,8 @@
 
 use crate::error::{ExtractError, Result};
 use crate::ontology::Ontology;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Extraction stage
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,8 +41,8 @@ pub struct PromptExample {
 /// Hierarchical prompt engine
 pub struct PromptEngine {
     base_system_prompt: String,
-    domain_prompts: HashMap<String, DomainPrompt>,
-    output_formatters: HashMap<String, OutputFormatter>,
+    domain_prompts: DashMap<String, DomainPrompt>,
+    output_formatters: DashMap<String, OutputFormatter>,
 }
 
 /// Domain-specific prompt configuration
@@ -57,7 +57,6 @@ struct DomainPrompt {
 /// Output format configuration
 #[derive(Debug, Clone)]
 struct OutputFormatter {
-    format: String,
     schema: serde_json::Value,
 }
 
@@ -66,13 +65,13 @@ impl PromptEngine {
     pub fn new() -> Self {
         Self {
             base_system_prompt: Self::build_base_system_prompt(),
-            domain_prompts: HashMap::new(),
-            output_formatters: HashMap::new(),
+            domain_prompts: DashMap::new(),
+            output_formatters: DashMap::new(),
         }
     }
     
     /// Register ontology and generate domain prompt
-    pub fn register_ontology(&mut self, ontology: &Ontology) -> Result<()> {
+    pub fn register_ontology(&self, ontology: &Ontology) -> Result<()> {
         let domain_prompt = DomainPrompt {
             entity_definitions: self.build_entity_definitions(ontology),
             relation_taxonomy: self.build_relation_taxonomy(ontology),
@@ -83,13 +82,17 @@ impl PromptEngine {
         self.domain_prompts.insert(ontology.id.clone(), domain_prompt);
         
         let formatter = OutputFormatter {
-            format: "json".to_string(),
             schema: self.build_output_schema(ontology),
         };
         
         self.output_formatters.insert(ontology.id.clone(), formatter);
         
         Ok(())
+    }
+    
+    /// Check if an ontology is already registered
+    pub fn has_ontology(&self, ontology_id: &str) -> bool {
+        self.domain_prompts.contains_key(ontology_id)
     }
     
     /// Build complete prompt for extraction
@@ -235,7 +238,7 @@ impl PromptEngine {
         let mut tax = String::new();
         
         // Group by category
-        let mut by_category: HashMap<String, Vec<&str>> = HashMap::new();
+        let mut by_category: std::collections::HashMap<String, Vec<&str>> = std::collections::HashMap::new();
         for rel in &ontology.relation_types {
             by_category.entry(rel.category.clone())
                 .or_default()
