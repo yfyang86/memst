@@ -1,7 +1,7 @@
 \PassOptionsToPackage{dvipsnames}{xcolor}
 \documentclass[11pt,letterpaper]{article}
-\usepackage{mathalfa}
-\usepackage[all]{hypcap}
+\usepackage{mathalpha}
+% Packages specific to this document
 \usepackage{algorithm}
 \usepackage{algorithmicx}
 \usepackage{algpseudocode}
@@ -15,41 +15,38 @@
 \usepackage{mathrsfs}
 \usepackage{nicefrac}
 \usepackage{listings}
-\usepackage{mathalfa}
 \usepackage{dsfont}
 \usepackage{fdsymbol}
 \usepackage{wrapfig}
 \usepackage{array}
 \usepackage{multicol}
-\usepackage{multirow}
 \usepackage{url}
-\usepackage{algpseudocode}
 \usepackage{fancyhdr}
 \usepackage{rotating}
 \usepackage[capitalise]{cleveref}
-\usepackage{listings}
 \usepackage{tikz}
 \usetikzlibrary{shapes,arrows,positioning,calc}
 
 % Citation and bibliography setup
-\PassOptionsToPackage{comma,numbers,compress}{natbib}
-\usepackage[comma,authoryear,compress]{natbib}
+\usepackage[comma,numbers,compress]{natbib}
 \bibliographystyle{plainnat}
 
 % Caption setup
 \usepackage[font=small,labelfont=bf]{caption}
 
 % Color definitions
+\usepackage{xcolor}
 \definecolor{lightblue}{rgb}{0.22,0.45,0.70}
 \definecolor{YaleBlue}{rgb}{0.06,0.30,0.56}
 \definecolor{memstblue}{RGB}{41, 98, 255}
 
-% Hyperref setup
+% Hyperref setup - load hypcap after hyperref
 \usepackage{hyperref}
 \hypersetup{
     colorlinks = true,
     citecolor = {YaleBlue},
 }
+\usepackage{hypcap}
 
 \title{\centering \textbf{MemSt}: A Git-Like Semantic Memory Architecture for AI Agents}
 \author{\centering Yifan Yang\\

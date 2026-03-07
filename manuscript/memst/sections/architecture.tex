@@ -3,6 +3,44 @@
 
 MemSt adopts a layered architecture (Figure \ref{fig:architecture}) with clear separation between interfaces, language bindings, and core storage components. This section describes the key architectural components.
 
+\begin{figure*}[t]
+    \centering
+    \begin{tikzpicture}[
+        node distance=1.5cm,
+        box/.style={rectangle, draw, rounded corners, minimum width=3cm, minimum height=0.8cm, align=center, fill=lightblue!20},
+        arrow/.style={->, >=stealth, thick}
+    ]
+        % Top layer
+        \node[box, fill=memstblue!30] (ui) {Web UI / React};
+        \node[box, fill=memstblue!30, right=of ui] (api) {REST API / FastAPI};
+        \node[box, fill=memstblue!30, right=of api] (mcp) {MCP Adapter};
+        \node[box, fill=memstblue!30, right=of mcp] (cli) {CLI / memst};
+        
+        % Middle layer
+        \node[box, below=of ui, xshift=1.5cm] (python) {Python Bindings (PyO3)};
+        \node[box, right=of python, xshift=1.5cm] (rust) {Rust Core (memst-core)};
+        
+        % Bottom layers
+        \node[box, below=of python, fill=green!20] (search) {Hybrid Search\\BM25 + HNSW};
+        \node[box, right=of search, fill=green!20] (repo) {MemRepo\\Git-like Store};
+        \node[box, right=of repo, fill=green!20] (kg) {KG Extraction v2\\SQLite/DuckDB};
+        \node[box, right=of kg, fill=green!20] (sleep) {Sleep-Time\\Consolidation};
+        
+        % Arrows
+        \draw[arrow] (ui) -- (python);
+        \draw[arrow] (api) -- (python);
+        \draw[arrow] (mcp) -- (python);
+        \draw[arrow] (cli) -- (rust);
+        \draw[arrow] (python) -- (rust);
+        \draw[arrow] (rust) -- (search);
+        \draw[arrow] (rust) -- (repo);
+        \draw[arrow] (rust) -- (kg);
+        \draw[arrow] (rust) -- (sleep);
+    \end{tikzpicture}
+    \caption{MemSt architecture overview showing the multi-layer design with interfaces (top), language bindings (middle), and core storage/processing components (bottom).}
+    \label{fig:architecture}
+\end{figure*}
+
 \subsection{Git-Like Memory Repository (MemRepo)}
 
 At the foundation of MemSt is \textbf{MemRepo}, a content-addressable storage system inspired by Git's object model. Unlike traditional databases that use location-based addressing, MemRepo stores all data as immutable objects referenced by their Blake3 hash.
