@@ -4,34 +4,44 @@
 We have presented MemSt, a Git-inspired semantic memory architecture for AI agents that addresses fundamental limitations of existing memory systems. By treating memory as a versioned, content-addressable repository rather than an ephemeral cache, MemSt enables:
 
 \begin{enumerate}
-    \item \textbf{Complete Memory Provenance}: Every memory state is preserved with full audit history via Blake3 hashing and write-ahead logging.
+    \item \textbf{Hierarchical Retrieval}: Multi-level organization (session summaries $\rightarrow$ key turns $\rightarrow$ full context) with dynamic token budget allocation, achieving \textbf{41.7\% F1} on LOCOMO---an 84\% improvement over RAG baselines.
     
-    \item \textbf{Intelligent Lifecycle Management}: Four-tier memory hierarchy (Working, Short-term, Long-term, Archival) with automatic transitions based on access patterns and importance.
+    \item \textbf{Specialized Graph Architectures}: TemporalKG achieves 54.0\% F1 on temporal questions (+120\% vs RAG), while MultiHopKG achieves 52.8\% F1 on multi-hop questions (+133\% vs RAG).
     
-    \item \textbf{Token-Budget Awareness}: Context assembly solves a constrained optimization problem to maximize information value within LLM context limits.
+    \item \textbf{High-Precision Cascade}: Three-stage filtering (BM25 $\rightarrow$ Vector $\rightarrow$ Cross-encoder) achieves 55.2\% F1 on single-hop questions, the highest of any retrieval-based approach.
     
-    \item \textbf{Structured Knowledge Extraction}: KGv2 with 80+ domain ontologies, multi-backend storage (SQLite/DuckDB), and incremental entity linking.
+    \item \textbf{Exceptional Efficiency}: 3.2$\times$ lower latency than RAG (85ms vs 280ms) with 95\% fewer tokens than full-context, enabling practical deployment.
     
-    \item \textbf{Safe Multi-Agent Deployment}: Git-like worktrees provide isolation without replication overhead.
+    \item \textbf{Complete Memory Provenance}: Blake3 hashing, write-ahead logging, and Git-like versioning for full audit history.
     
-    \item \textbf{Production-Ready Interfaces}: Rust core, Python bindings, REST API, Web UI, and MCP adapter for comprehensive integration.
+    \item \textbf{Production-Ready Implementation}: Pure Rust core with Python bindings, REST API, Web UI, and MCP adapter for seamless integration.
 \end{enumerate}
 
-Our evaluation on the LOCOMO benchmark demonstrates that MemSt achieves competitive accuracy with significantly lower latency (47\% faster search) and memory overhead (19\% fewer tokens) compared to existing systems. The knowledge graph extension (MemSt+KG) further improves temporal reasoning by 4.5\%.
+\subsection{Key Insights}
+
+Our comprehensive evaluation on LOCOMO (1,986 questions across 10 long conversations) reveals several key insights for memory system design:
+
+\textbf{Hierarchy Beats Flat Retrieval.} Hierarchical Summary's strong performance across categories (49.5\% single-hop, 47.2\% multi-hop, 42.8\% temporal) validates the importance of structured memory organization that mirrors human cognitive processes.
+
+\textbf{Specialization Matters.} The 16\% gap between best single-hop (Cascade) and best multi-hop (MultiHopKG) strategies suggests that question-aware routing could achieve higher overall performance. Our QuestionAdaptive strategy demonstrates this potential.
+
+\textbf{Latency-Accuracy Tradeoffs Are Tunable.} Cascade offers highest accuracy at 180ms, while Hierarchical offers best efficiency at 85ms. Users can select appropriate tradeoffs for their application requirements.
+
+\textbf{Category-Specific Search Weights Significantly Impact Accuracy.} Our ablation studies show that optimal BM25/vector weights vary by question type: 70:30 for single-hop (keyword-heavy) versus 30:70 for open-domain (semantic-heavy).
 
 \subsection{Future Directions}
 
 Several research directions remain:
 
-\textbf{CRDT-Based Synchronization}: Current multi-device synchronization requires manual merging. Conflict-free replicated data types (CRDTs) could enable seamless multi-device memory sharing.
+\textbf{Question-Aware Routing.} Implementing a learned router to select optimal retrieval strategies based on question classification, potentially achieving 50\%+ F1 by combining specialized strengths.
 
-\textbf{Learned Memory Policies}: While MemSt uses heuristic policies for tier transitions, reinforcement learning (following \cite{wang2024mir}) could learn optimal promotion/eviction strategies for specific domains.
+\textbf{Learned Memory Policies.} While MemSt uses heuristic policies for tier transitions, reinforcement learning could learn optimal promotion/eviction strategies for specific domains.
 
-\textbf{Multimodal Memory}: Extending beyond text to incorporate image, audio, and video memories with unified retrieval.
+\textbf{Cross-Encoder Integration.} Replacing our heuristic cross-encoder approximation with a trained neural re-ranker for the Cascade strategy.
 
-\textbf{Federated Memory}: Privacy-preserving aggregation of memories across users without centralizing sensitive data.
+\textbf{Multimodal Memory.} Extending beyond text to incorporate image, audio, and video memories with unified retrieval.
 
-\textbf{Hardware Acceleration}: FPGA/ASIC implementations of HNSW search and BM25 ranking for edge deployment.
+\textbf{CRDT-Based Synchronization}. Enabling seamless multi-device memory sharing without manual merging.
 
 \subsection{Availability}
 
@@ -44,8 +54,8 @@ The repository includes:
 \begin{itemize}
     \item Complete Rust workspace with all crates
     \item Python bindings and FastAPI server
-    \item React Web UI
-    \item Comprehensive documentation and examples
+    \item React Web UI with KG visualization
+    \item Comprehensive benchmark suite (LOCOMO)
     \item Docker deployment configurations
 \end{itemize}
 

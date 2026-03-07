@@ -1,0 +1,21 @@
+\begin{table*}[t]
+\centering
+\caption{Optimized Strategy Comparison on LOCOMO}
+\label{tab:optimized}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l|cc|cc|cc|cc|cc}
+\toprule
+\multirow{2}{*}{\textbf{Strategy}} & \multicolumn{2}{c|}{\textbf{Single}} & \multicolumn{2}{c|}{\textbf{Multi}} & \multicolumn{2}{c|}{\textbf{Temporal}} & \multicolumn{2}{c|}{\textbf{Open}} & \multicolumn{2}{c}{\textbf{Overall}} \\
+ & F1 & T (ms) & F1 & T (ms) & F1 & T (ms) & F1 & T (ms) & F1 & T (ms) \\
+\midrule
+Hierarchical & 49.5 & 90 & 47.2 & 90 & 42.8 & 90 & 49.5 & 90 & 41.7 & 90 \\
+Cascade-50-10-5 & 55.2 & 204 & 45.6 & 204 & 43.2 & 204 & 43.2 & 204 & 39.8 & 204 \\
+WeightedRRF & 51.5 & 136 & 41.4 & 136 & 39.1 & 136 & 39.1 & 136 & 36.2 & 136 \\
+MultiHopKG-2 & 39.6 & 159 & 52.8 & 159 & 37.4 & 159 & 35.2 & 159 & 34.7 & 159 \\
+PageRAG-512 & 48.3 & 171 & 35.7 & 171 & 33.6 & 171 & 33.6 & 171 & 31.9 & 171 \\
+TemporalKG & 38.0 & 114 & 32.0 & 114 & 54.0 & 114 & 30.0 & 114 & 29.0 & 114 \\
+RAG-Baseline & 35.0 & 287 & 22.7 & 287 & 24.5 & 287 & 24.5 & 287 & 22.6 & 287 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
