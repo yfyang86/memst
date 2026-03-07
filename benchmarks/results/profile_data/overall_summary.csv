@@ -1,0 +1,9 @@
+Strategy,F1_Percent,BLEU_Percent,Latency_p50_ms,Latency_p95_ms,Tokens,F1_per_1000_tokens
+QuestionAdaptive,49.19,39.35,145.8,151.3,1500,32.79
+Hierarchical,41.71,33.37,90.1,93.4,1500,27.81
+Cascade-50-10-5,39.80,31.51,204.1,210.5,1500,26.53
+WeightedRRF,36.18,29.10,136.4,140.6,1500,24.12
+MultiHopKG-2,34.67,27.58,159.2,164.1,1500,23.12
+PageRAG-512,31.91,25.07,170.9,175.8,1500,21.27
+TemporalKG,28.96,22.45,114.2,117.2,1500,19.31
+RAG-Baseline,22.59,17.43,287.1,294.0,1500,15.06

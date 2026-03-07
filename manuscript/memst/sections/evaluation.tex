@@ -67,7 +67,7 @@ Full-Context & 80.7 & 63.0 & 850ms & 1200ms & 19,500 & 0.3$\times$ \\
 
 Table~\ref{tab:category_results} breaks down performance by question type, revealing that different strategies excel in different domains.
 
-\begin{table}[h]
+\begin{table}[ht]
 \centering
 \caption{F1 scores by question category. Best per category in bold.}
 \label{tab:category_results}
@@ -102,7 +102,7 @@ Hierarchical & 49.5 & 47.2 & 42.8 & \textbf{49.5} \\
 
 Figure~\ref{fig:budget} shows the effect of token budget on Hierarchical Summary performance. We observe diminishing returns beyond 2,048 tokens, with only 1.5\% F1 improvement for doubling the budget to 4,096 tokens.
 
-\begin{figure}[h]
+\begin{figure}[ht]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
@@ -122,13 +122,13 @@ Figure~\ref{fig:budget} shows the effect of token budget on Hierarchical Summary
     (2048, 41.7)
     (4096, 43.2)
 };
-\addlegend{Hierarchical}
+\addlegendentry{Hierarchical}
 \addplot[color=red,mark=triangle] coordinates {
     (1024, 36.2)
     (2048, 39.8)
     (4096, 41.5)
 };
-\addlegend{Cascade}
+\addlegendentry{Cascade}
 \end{axis}
 \end{tikzpicture}
 \caption{Effect of token budget on F1 score. Diminishing returns beyond 2,048 tokens.}
@@ -139,7 +139,7 @@ Figure~\ref{fig:budget} shows the effect of token budget on Hierarchical Summary
 
 Table~\ref{tab:rrf_weights} demonstrates the importance of category-specific BM25/vector weighting in Reciprocal Rank Fusion (RRF).
 
-\begin{table}[h]
+\begin{table}[ht]
 \centering
 \caption{Effect of RRF weights on different question categories.}
 \label{tab:rrf_weights}
@@ -164,7 +164,7 @@ Single-hop questions benefit from BM25 weighting (70:30), as keyword matching ef
 
 Table~\ref{tab:comparison} compares MemSt against published memory system results on LOCOMO.
 
-\begin{table}[h]
+\begin{table}[ht]
 \centering
 \caption{Comparison with published memory systems (all F1 scores).}
 \label{tab:comparison}

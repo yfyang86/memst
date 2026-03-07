@@ -1,0 +1,5 @@
+Category,Best_Strategy,F1_Percent,Second_Best,Second_F1,Margin
+Single-hop,QuestionAdaptive,60.00,Cascade-50-10-5,55.20,4.80
+Multi-hop,QuestionAdaptive,57.50,MultiHopKG-2,52.80,4.70
+Temporal,QuestionAdaptive,62.50,TemporalKG,54.00,8.50
+Open-domain,QuestionAdaptive,55.00,Hierarchical,49.50,5.50

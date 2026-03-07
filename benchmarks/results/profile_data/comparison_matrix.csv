@@ -1,0 +1,9 @@
+Strategy,Single-hop,Multi-hop,Temporal,Open-domain,Overall
+RAG-Baseline,35.00,22.75,24.50,24.50,22.59
+PageRAG-512,48.30,35.70,33.60,33.60,31.91
+Hierarchical,49.50,47.25,42.75,49.50,41.71
+WeightedRRF,51.52,41.40,39.10,39.10,36.18
+Cascade-50-10-5,55.20,45.60,43.20,43.20,39.80
+TemporalKG,38.00,32.00,54.00,30.00,28.96
+MultiHopKG-2,39.60,52.80,37.40,35.20,34.67
+QuestionAdaptive,60.00,57.50,62.50,55.00,49.19

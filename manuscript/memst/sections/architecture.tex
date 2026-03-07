@@ -5,6 +5,7 @@ MemSt adopts a layered architecture (Figure \ref{fig:architecture}) with clear s
 
 \begin{figure*}[t]
     \centering
+    \resizebox{0.95\textwidth}{!}{
     \begin{tikzpicture}[
         node distance=1.5cm,
         box/.style={rectangle, draw, rounded corners, minimum width=3cm, minimum height=0.8cm, align=center, fill=lightblue!20},
@@ -37,6 +38,7 @@ MemSt adopts a layered architecture (Figure \ref{fig:architecture}) with clear s
         \draw[arrow] (rust) -- (kg);
         \draw[arrow] (rust) -- (sleep);
     \end{tikzpicture}
+    }
     \caption{MemSt architecture overview showing the multi-layer design with interfaces (top), language bindings (middle), and core storage/processing components (bottom).}
     \label{fig:architecture}
 \end{figure*}
@@ -90,7 +92,7 @@ Branching enables powerful workflows: experimental memory configurations can be 
 
 MemSt organizes memories into four tiers based on access frequency and importance:
 
-\begin{table}[h]
+\begin{table}[ht]
 \centering
 \caption{Memory Tier Characteristics}
 \begin{tabular}{@{}lllll@{}}

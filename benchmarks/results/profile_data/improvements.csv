@@ -1,0 +1,8 @@
+Strategy,F1_Percent,Absolute_Improvement,Relative_Improvement_Percent
+QuestionAdaptive,49.19,26.60,117.7
+Hierarchical,41.71,19.12,84.6
+Cascade-50-10-5,39.80,17.20,76.2
+WeightedRRF,36.18,13.59,60.2
+MultiHopKG-2,34.67,12.08,53.5
+PageRAG-512,31.91,9.32,41.2
+TemporalKG,28.96,6.37,28.2

@@ -1,0 +1,9 @@
+Key,Value
+Generated,2026-03-08T02:01:31.992992
+Total_Strategies,8
+Best_Strategy,QuestionAdaptive
+Best_F1,49.2%
+RAG_Baseline_F1,22.6%
+Improvement_Over_RAG,118%
+Fastest_Strategy,Hierarchical
+Fastest_Latency,85ms

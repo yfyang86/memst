@@ -11,7 +11,6 @@
 \usepackage{float}
 \usepackage{bm}
 \usepackage{mathtools}
-\usepackage{multirow} 
 \usepackage{mathrsfs}
 \usepackage{nicefrac}
 \usepackage{listings}
@@ -23,9 +22,11 @@
 \usepackage{url}
 \usepackage{fancyhdr}
 \usepackage{rotating}
-\usepackage[capitalise]{cleveref}
 \usepackage{tikz}
 \usetikzlibrary{shapes,arrows,positioning,calc}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.16}
+\usepackage[a4paper, margin=1in]{geometry}
 
 % Citation and bibliography setup
 \usepackage[comma,numbers,compress]{natbib}
@@ -48,16 +49,20 @@
 }
 \usepackage{hypcap}
 
+% Cleveref must be loaded AFTER hyperref
+\usepackage[capitalise]{cleveref}
+
 \title{\centering \textbf{MemSt}: A Git-Like Semantic Memory Architecture for AI Agents}
 \author{\centering Yifan Yang\\
 \vspace{1em}
-\hspace{0.6cm} \href{mailto:yfyang.86@hotmail.com}{\texttt{yfyang.86@hotmail.com}}}
+\hspace{0.6cm} \href{yfyang.86@hotmail.com}{\texttt{yfyang.86@hotmail.com}}}
 
 % Setup page style
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[C]{\textit{\footnotesize MemSt: Git-Like Semantic Memory for AI Agents}}
+\fancyhead[C]{\textit{\fontsize{9}{11}\selectfont MemSt: Git-Like Semantic Memory for AI Agents}}
 \fancyfoot[C]{\thepage}
+\addtolength{\headheight}{12pt}
 
 \begin{document}
 
