@@ -6,11 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from memst_server.config import get_config
 from memst_server.api import routes
+from memst_server.kg_extraction_service import get_kg_extraction_service
 
 
 def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
     config = get_config()
+    
+    # Initialize KG extraction service with config
+    if config.kg_extraction.enabled:
+        kg_service = get_kg_extraction_service(config.kg_extraction.db_path)
+        if kg_service.is_available:
+            print(f"KG Extraction v2 enabled (db: {config.kg_extraction.db_path or 'in-memory'})")
 
     app = FastAPI(
         title="MemSt API",

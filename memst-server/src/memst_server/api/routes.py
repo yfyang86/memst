@@ -11,11 +11,13 @@ from memst_server.db import UserDatabase
 from memst_server.memst_client import get_memst_client
 from memst_server.nanobot_client import get_nanobot_client, _save_to_working_memory
 from memst_server.memory_service import MemoryReloadService
+from memst_server.kg_extraction_service import get_kg_extraction_service
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
 _memst_client = get_memst_client()
 _nanobot_client = get_nanobot_client()
+_kg_service = get_kg_extraction_service()
 _db: Optional[UserDatabase] = None
 
 
@@ -1692,6 +1694,7 @@ class SettingsUpdateRequest(BaseModel):
     llm: Optional[Dict[str, Any]] = None
     embedding: Optional[Dict[str, Any]] = None
     server: Optional[Dict[str, Any]] = None
+    kg_extraction: Optional[Dict[str, Any]] = None
 
 
 @router.get("/settings", response_model=Dict)
@@ -1707,6 +1710,7 @@ def update_settings(request: SettingsUpdateRequest):
         llm=request.llm,
         embedding=request.embedding,
         server=request.server,
+        kg_extraction=request.kg_extraction,
     )
 
 
@@ -1714,6 +1718,142 @@ def update_settings(request: SettingsUpdateRequest):
 def reset_settings():
     """Reset settings to defaults."""
     return get_db().reset_settings()
+
+
+# =============================================================================
+# KG Extraction v2 Routes
+# =============================================================================
+
+class OntologyLoadRequest(BaseModel):
+    """Request to load ontologies from schema JSON."""
+    schema_json: str
+
+
+class EntityExtractRequest(BaseModel):
+    """Request to extract entities from text."""
+    doc_id: str
+    text: str
+    ontology_id: str
+
+
+class SessionExtractRequest(BaseModel):
+    """Request to extract entities from session messages."""
+    ontology_id: str
+
+
+@router.get("/kg/status", response_model=Dict)
+def get_kg_status():
+    """Get KG Extraction v2 service status."""
+    return {
+        "available": _kg_service.is_available,
+        "ontologies_loaded": len(_kg_service.list_ontologies()),
+        "version": "2.0",
+    }
+
+
+@router.post("/kg/ontologies/load", response_model=Dict)
+def load_ontologies(request: OntologyLoadRequest):
+    """Load ontologies from schema JSON.
+    
+    The schema JSON should be an array of ontology entries with fields:
+    - top_category: Top-level category
+    - first_category: First-level category  
+    - second_category: Second-level category
+    - chinese_name: Chinese name
+    - english_name: English name
+    - overview: Description
+    """
+    if not _kg_service.is_available:
+        raise HTTPException(status_code=503, detail="KG Extraction v2 is not available")
+    
+    try:
+        ids = _kg_service.load_ontologies_from_schema(request.schema_json)
+        return {
+            "success": True,
+            "loaded": len(ids),
+            "ontology_ids": ids,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to load ontologies: {str(e)}")
+
+
+@router.get("/kg/ontologies", response_model=List[Dict])
+def list_ontologies():
+    """List all loaded ontologies."""
+    return _kg_service.list_ontologies()
+
+
+@router.get("/kg/ontologies/{ontology_id}", response_model=Dict)
+def get_ontology(ontology_id: str):
+    """Get ontology by ID."""
+    ontology = _kg_service.get_ontology(ontology_id)
+    if ontology is None:
+        raise HTTPException(status_code=404, detail=f"Ontology '{ontology_id}' not found")
+    return ontology
+
+
+@router.post("/kg/extract", response_model=Dict)
+def extract_entities(request: EntityExtractRequest):
+    """Extract entities from text.
+    
+    Requires ontologies to be loaded first via /kg/ontologies/load.
+    """
+    if not _kg_service.is_available:
+        raise HTTPException(status_code=503, detail="KG Extraction v2 is not available")
+    
+    result = _kg_service.extract_entities(
+        doc_id=request.doc_id,
+        text=request.text,
+        ontology_id=request.ontology_id,
+    )
+    
+    if result is None:
+        raise HTTPException(status_code=500, detail="Extraction failed")
+    
+    return result
+
+
+@router.post("/kg/search", response_model=List[Dict])
+def search_entities(query: str, limit: int = 10):
+    """Search extracted entities by name."""
+    if not _kg_service.is_available:
+        raise HTTPException(status_code=503, detail="KG Extraction v2 is not available")
+    
+    return _kg_service.search_entities(query, limit)
+
+
+@router.post("/sessions/{session_id}/kg/extract", response_model=Dict)
+def extract_from_session(session_id: str, request: SessionExtractRequest):
+    """Extract entities from all messages in a session.
+    
+    This processes all messages in the session and extracts entities
+    using the specified ontology.
+    """
+    if not _kg_service.is_available:
+        raise HTTPException(status_code=503, detail="KG Extraction v2 is not available")
+    
+    # Get messages from session
+    messages = []
+    if _memst_client.is_available:
+        try:
+            messages = _memst_client.get_messages(session_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get messages: {str(e)}")
+    
+    if not messages:
+        raise HTTPException(status_code=404, detail="No messages found in session")
+    
+    # Extract entities from messages
+    result = _kg_service.extract_from_session_messages(
+        session_id=session_id,
+        messages=messages,
+        ontology_id=request.ontology_id,
+    )
+    
+    if result is None:
+        raise HTTPException(status_code=500, detail="Extraction failed")
+    
+    return result
 
 
 # =============================================================================
@@ -1726,5 +1866,6 @@ def health_check():
     return {
         "status": "ok",
         "memst_available": _memst_client.is_available if _memst_client else False,
+        "kg_extraction_available": _kg_service.is_available if _kg_service else False,
         "version": "0.1.0",
     }
