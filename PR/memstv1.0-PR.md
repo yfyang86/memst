@@ -412,4 +412,4 @@ MemSt v1.0 的目标：**给 AI Agent 一个会"进化"的本地记忆库**。
 
 ---
 
-*MemSt v1.0.0 - Formal Release, 2026-03-06*
+*MemSt v1.0.0 - Formal Release, 2026-03-07*
