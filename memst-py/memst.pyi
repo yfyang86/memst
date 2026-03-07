@@ -396,6 +396,28 @@ class KgStorageWrapper:
     
     @staticmethod
     def new_in_memory() -> "KgStorageWrapper": ...
+    
+    def load_ontologies_from_schema(self, schema_json: str) -> List[str]:
+        """Load ontologies from schema JSON and store them in the database.
+        
+        Args:
+            schema_json: JSON string containing ontology schema entries
+            
+        Returns:
+            List of ontology IDs that were stored
+        """
+        ...
+    
+    def get_ontology(self, ontology_id: str) -> Optional[Ontology]:
+        """Get an ontology from the database by ID.
+        
+        Args:
+            ontology_id: The ontology ID to look up
+            
+        Returns:
+            The ontology if found, None otherwise
+        """
+        ...
 
 class Entity:
     """Extracted entity."""
@@ -450,6 +472,17 @@ class ExtractionService:
     def extract_entities(self, doc_id: str, text: str, ontology_id: str) -> ExtractionJob: ...
     
     def search_entities(self, query: str, limit: int = 10) -> List[Entity]: ...
+    
+    def load_ontologies(self, schema_json: str) -> List[str]:
+        """Load ontologies from schema JSON into the service's internal storage.
+        
+        Args:
+            schema_json: JSON string containing ontology schema entries
+            
+        Returns:
+            List of ontology IDs that were loaded
+        """
+        ...
 
 class Ontology:
     """Ontology definition."""
