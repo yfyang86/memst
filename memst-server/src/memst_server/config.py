@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Optional
 from functools import lru_cache
 
-import toml
+import tomllib as toml
 from pydantic import BaseModel
 
 
@@ -82,6 +82,13 @@ class EmbeddingConfig(BaseModel):
         return self.base_url if self.base_url else self.api_url
 
 
+class KGExtractionConfig(BaseModel):
+    """KG Extraction v2 configuration."""
+    enabled: bool = True
+    db_path: Optional[str] = None  # None = in-memory, or path to SQLite file
+    default_ontology: Optional[str] = None  # Default ontology ID to use
+
+
 class ServerConfig(BaseModel):
     """Server configuration."""
     host: str = "127.0.0.1"
@@ -96,6 +103,7 @@ class Config(BaseModel):
     llm: Optional[LLMConfig] = None
     embedding: Optional[EmbeddingConfig] = None
     server: ServerConfig = ServerConfig()
+    kg_extraction: KGExtractionConfig = KGExtractionConfig()
 
 
 def find_config_file() -> Optional[Path]:
@@ -158,6 +166,7 @@ def load_config(config_path: Optional[Path] = None) -> Config:
             llm=_load_llm_config(data.get("llm", {})),
             embedding=_load_embedding_config(data.get("embedding", {})),
             server=ServerConfig(**data.get("server", {})),
+            kg_extraction=KGExtractionConfig(**data.get("kg_extraction", {})),
         )
 
     # Return default config

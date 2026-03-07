@@ -37,6 +37,11 @@ def get_default_settings_from_config() -> Dict[str, Any]:
                 "port": config.server.port,
                 "store_path": config.server.store_path,
             },
+            "kg_extraction": {
+                "enabled": config.kg_extraction.enabled,
+                "db_path": config.kg_extraction.db_path,
+                "default_ontology": config.kg_extraction.default_ontology,
+            },
         }
 
     # Fallback to hardcoded defaults
@@ -61,6 +66,11 @@ def get_default_settings_from_config() -> Dict[str, Any]:
             "host": "127.0.0.1",
             "port": 8192,
             "store_path": "./memst-store",
+        },
+        "kg_extraction": {
+            "enabled": True,
+            "db_path": None,
+            "default_ontology": None,
         },
     }
 
@@ -144,6 +154,7 @@ class UserDatabase:
                 llm TEXT NOT NULL,
                 embedding TEXT NOT NULL,
                 server TEXT NOT NULL,
+                kg_extraction TEXT,
                 updated_at TEXT NOT NULL
             )
         """)
@@ -170,9 +181,10 @@ class UserDatabase:
         if cursor.fetchone()[0] == 0:
             defaults = DEFAULT_SETTINGS
             cursor.execute(
-                "INSERT INTO settings (id, llm, embedding, server, updated_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO settings (id, llm, embedding, server, kg_extraction, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (1, json.dumps(defaults["llm"]), json.dumps(defaults["embedding"]),
-                 json.dumps(defaults["server"]), datetime.utcnow().isoformat())
+                 json.dumps(defaults["server"]), json.dumps(defaults.get("kg_extraction", {})),
+                 datetime.utcnow().isoformat())
             )
 
         conn.commit()
@@ -290,17 +302,23 @@ class UserDatabase:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT llm, embedding, server FROM settings WHERE id = 1")
+        cursor.execute("SELECT llm, embedding, server, kg_extraction FROM settings WHERE id = 1")
         row = cursor.fetchone()
 
         conn.close()
 
         if row:
-            return {
+            result = {
                 "llm": json.loads(row["llm"]),
                 "embedding": json.loads(row["embedding"]),
                 "server": json.loads(row["server"]),
             }
+            # kg_extraction may be null in older databases
+            if row["kg_extraction"]:
+                result["kg_extraction"] = json.loads(row["kg_extraction"])
+            else:
+                result["kg_extraction"] = DEFAULT_SETTINGS.get("kg_extraction", {})
+            return result
         return DEFAULT_SETTINGS.copy()
 
     def update_settings(
@@ -308,6 +326,7 @@ class UserDatabase:
         llm: Optional[Dict[str, Any]] = None,
         embedding: Optional[Dict[str, Any]] = None,
         server: Optional[Dict[str, Any]] = None,
+        kg_extraction: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Update settings."""
         conn = self._get_connection()
@@ -318,13 +337,15 @@ class UserDatabase:
         new_llm = llm if llm is not None else current["llm"]
         new_embedding = embedding if embedding is not None else current["embedding"]
         new_server = server if server is not None else current["server"]
+        new_kg = kg_extraction if kg_extraction is not None else current.get("kg_extraction", {})
 
         cursor.execute(
-            "UPDATE settings SET llm = ?, embedding = ?, server = ?, updated_at = ? WHERE id = 1",
+            "UPDATE settings SET llm = ?, embedding = ?, server = ?, kg_extraction = ?, updated_at = ? WHERE id = 1",
             (
                 json.dumps(new_llm),
                 json.dumps(new_embedding),
                 json.dumps(new_server),
+                json.dumps(new_kg),
                 datetime.utcnow().isoformat(),
             )
         )
@@ -336,6 +357,7 @@ class UserDatabase:
             "llm": new_llm,
             "embedding": new_embedding,
             "server": new_server,
+            "kg_extraction": new_kg,
         }
 
     def reset_settings(self) -> Dict[str, Any]:
@@ -345,11 +367,12 @@ class UserDatabase:
 
         defaults = DEFAULT_SETTINGS
         cursor.execute(
-            "UPDATE settings SET llm = ?, embedding = ?, server = ?, updated_at = ? WHERE id = 1",
+            "UPDATE settings SET llm = ?, embedding = ?, server = ?, kg_extraction = ?, updated_at = ? WHERE id = 1",
             (
                 json.dumps(defaults["llm"]),
                 json.dumps(defaults["embedding"]),
                 json.dumps(defaults["server"]),
+                json.dumps(defaults.get("kg_extraction", {})),
                 datetime.utcnow().isoformat(),
             )
         )
@@ -361,6 +384,7 @@ class UserDatabase:
             "llm": defaults["llm"].copy(),
             "embedding": defaults["embedding"].copy(),
             "server": defaults["server"].copy(),
+            "kg_extraction": defaults.get("kg_extraction", {}).copy(),
         }
 
     # =============================================================================

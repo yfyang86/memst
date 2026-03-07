@@ -38,3 +38,11 @@ port = 8193
 store_path = "/tmp/data"
 ## CORS origins (comma-separated list of allowed origins, or "*" for all)
 cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+[kg_extraction]
+## Enable KG Extraction v2
+enabled = true
+## Database path for KG storage (null/empty = in-memory)
+# db_path = "./memst-store/kg.db"
+## Default ontology ID to use for extraction
+# default_ontology = "lingyuqingbao-lei-kejiqingbao-rengongzhineng"
