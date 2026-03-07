@@ -85,9 +85,9 @@ store_path = "/tmp/data"
 
 [llm]
 type = "openai"
-base_url = "https://your-endpoint.com/v1"
-api_key = "YOUR_API_KEY_HERE"
-model = "/workspace/models/openai-mirror/gpt-oss-120b/"
+base_url = "http://localhost:8080/v1"
+api_key = "your-api-key-here"
+model = "gpt-4"
 
 [embedding]
 type = "openai"

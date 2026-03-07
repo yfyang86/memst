@@ -3,15 +3,15 @@
 //! These tests require a valid LLM configuration in ~/.config/memst/config.toml
 //! Run with: MEMST_RUN_INTEGRATION_TESTS=1 cargo test -p memst-sleep --test kg_extraction_real_tests
 //!
-//! Expected configuration:
+//! Expected configuration in ~/.config/memst/config.toml:
 //! ```toml
 //! [llm]
-//! base_url = "https://your-endpoint.com/v1"
-//! api_key = "YOUR_API_KEY_HERE"
-//! model = "/workspace/models/openai-mirror/gpt-oss-120b/"
+//! base_url = "https://your-llm-endpoint.com/v1"
+//! api_key = "your-api-key-here"
+//! model = "gpt-4"
 //!
 //! [embedding]
-//! base_url = "http://127.0.0.1:1234/v1/"
+//! base_url = "http://localhost:8081/v1/embeddings"
 //! model = "text-embedding-bge-m3"
 //! max_context_length = 8192
 //! embedding_length = 1024
@@ -269,8 +269,8 @@ fn test_config_file_format() {
                 assert!(!llm.api_url.is_empty(), "LLM API URL should not be empty");
                 
                 // Verify it matches expected values
-                if llm.api_url.contains("martingale") {
-                    eprintln!("✓ Using martingale LLM endpoint");
+                if !llm.api_url.is_empty() {
+                    eprintln!("✓ Using configured LLM endpoint");
                 }
             } else {
                 eprintln!("⚠ No LLM config found");
