@@ -54,6 +54,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 
 ## Workspace Layout
 
+### Core Libraries
 - **memst-core**: Core library (store/search/vector/hybrid/context/memory)
 - **memst-repo**: Git-alike MemRepo backend (WAL, merge, worktrees)
 - **memst-sleep**: Async sleep-time consolidation pipeline
@@ -62,6 +63,13 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **memst-cli**: `memst` CLI binary
 - **memst-py**: Python extension module (`import memst`)
 - **memst-lib**: Shared library/FFI glue
+
+### Server & Web UI
+- **memst-server**: Python FastAPI backend server with nanobot agent integration
+- **memst-ui**: React/TypeScript frontend web interface
+
+### Third Party (Submodules)
+- **third/nanobot**: Nanobot AI agent framework (git submodule)
 
 ## Quick Start
 
@@ -210,28 +218,40 @@ memst --help
 
 ### Build Python bindings (local dev)
 
-The Python bindings require a working Python environment. There are some known issues with certain Python versions.
+The Python bindings require a working Python environment.
+
+**Prerequisites:**
+
+```bash
+# Clone submodules (nanobot)
+git submodule update --init --recursive
+```
 
 **Setup using uv (recommended):**
 
 ```bash
-# Create a fresh virtual environment with Python 3.12 (avoids Python 3.13 issues)
+# Create a fresh virtual environment with Python 3.13
 cd memst-server
-uv venv --python 3.12
-uv pip install fastapi uvicorn duckdb python-dotenv pydantic pydantic-settings httpx toml
+uv venv --python 3.13
+
+# Install server dependencies
+uv pip install fastapi uvicorn duckdb python-dotenv pydantic pydantic-settings httpx toml python-multipart
+
+# Install nanobot (from submodule)
 uv pip install -e ../third/nanobot
 
 # Build and install memst-py using maturin
 cd ../memst-py
 
-# Option 1: Using uv run (recommended - handles virtual env automatically)
-uv run maturin develop --release
+# Build release wheel
+unset CONDA_PREFIX
+uv run maturin build --release
 
-# Option 2: Using maturin directly with explicit VIRTUAL_ENV
-VIRTUAL_ENV=../memst-server/.venv ../memst-server/.venv/bin/maturin develop --release
+# Install the wheel in server venv
+cd ../memst-server
+uv pip install ../target/wheels/memst_py-0.1.1-cp313-cp313-*.whl
 
 # Verify
-cd ../memst-server
 PYTHONPATH=src .venv/bin/python -c "import memst; print(memst.__version__)"
 ```
 
@@ -268,10 +288,13 @@ cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 **Troubleshooting:**
 
-- If you get `SIGABRT` / `Library not loaded: libpython3.13.dylib`, recreate the venv with Python 3.12: `uv venv --python 3.12`
-- If you get `ModuleNotFoundError: No module named 'memst_server'`, ensure `PYTHONPATH=src` is set
-- If frontend CORS errors occur, add your frontend origin to `cors_origins` in config.toml
-- If frontend can't connect to backend, check the API URL in `memst-ui/src/config.local.ts`
+- **Python version**: Python 3.13 is recommended. If you have issues with Python 3.14, use 3.13: `uv venv --python 3.13`
+- **Module not found**: If you get `ModuleNotFoundError: No module named 'memst_server'`, ensure `PYTHONPATH=src` is set
+- **CORS errors**: If frontend CORS errors occur, add your frontend origin to `cors_origins` in config.toml
+- **Frontend connection**: If frontend can't connect to backend, check the API URL in `memst-ui/src/config.local.ts`
+- **Nanobot not available**: Ensure you ran `git submodule update --init --recursive` and installed nanobot with `uv pip install -e third/nanobot`
+- **memst-py build fails**: Make sure to `unset CONDA_PREFIX` before building with maturin
+- **SQLite/DuckDB issues**: Ensure you have the proper build tools installed for your platform
 
 ## Configuration
 
@@ -292,6 +315,31 @@ port = 8193
 store_path = "/tmp/data"
 
 ## CORS origins (comma-separated list, or "*" for all)
+cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+[llm]
+type = "openai"
+api_url = "http://localhost:8080/v1"
+model = "gpt-4"
+timeout = 60
+max_tokens = 8192
+temperature = 0.7
+api_key = ""
+
+[embedding]
+type = "openai"
+api_url = "http://localhost:8081/v1/embeddings"
+model = "text-embedding-bge_m3"
+timeout = 30
+expected_dimension = 1024
+
+[kg_extraction]
+## Enable KG Extraction v2
+enabled = true
+## Database path (null/empty = in-memory)
+# db_path = "./memst-store/kg.db"
+## Default ontology ID
+# default_ontology = "lingyuqingbao-lei-kejiqingbao-rengongzhineng"
 ## Required for frontend access
 cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 ```
