@@ -30,7 +30,7 @@ We evaluate MemSt on the LOCOMO (Long-term Conversational Memory) benchmark, a c
 
 \subsection{Overall Performance}
 
-Table~\ref{tab:main_results} presents the overall performance comparison. MemSt's Hierarchical Summary strategy achieves \textbf{41.7\% F1}, representing an \textbf{84\% improvement} over the RAG baseline (22.6\%) and competitive performance with the full-context approach (80.7\%) at only 7\% of the token cost.
+Table~\ref{tab:main_results} presents the overall performance comparison. MemSt's QuestionAdaptive strategy achieves \textbf{49.2\% F1}---the highest among all retrieval-based approaches---representing a \textbf{118\% improvement} over the RAG baseline (22.6\%). The Hierarchical Summary strategy achieves 41.7\% F1 with the fastest latency (85ms), making it suitable for latency-sensitive applications.
 
 \begin{table*}[t]
 \centering

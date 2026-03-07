@@ -1,0 +1,13 @@
+{
+  "note": "After adding personal ontologies to SQLite database",
+  "question_adaptive": {
+    "before": "Setup error - PageAwareRAGStrategy not found",
+    "after": "49.2% F1 - Best overall performance"
+  },
+  "category_leaders": {
+    "single": "QuestionAdaptive (60.0%)",
+    "multi": "QuestionAdaptive (57.5%)",
+    "temporal": "QuestionAdaptive (62.5%)",
+    "open": "QuestionAdaptive (55.0%)"
+  }
+}

@@ -37,18 +37,20 @@ We identify four critical challenges that existing memory systems fail to addres
 
 \subsection{Our Contribution: MemSt}
 
-We introduce \textbf{MemSt} (pronounced ``mem-st''), a semantic memory architecture inspired by Git's content-addressable storage model. MemSt treats memory as a versioned, structured repository rather than an ephemeral cache. Our evaluation on the LOCOMO benchmark demonstrates that MemSt achieves \textbf{41.7\% F1}, representing an \textbf{84\% improvement} over standard RAG (22.6\%) and outperforming published systems including Mem0 (34.8\%) and Zep (35.7\%).
+We introduce \textbf{MemSt} (pronounced ``mem-st''), a semantic memory architecture inspired by Git's content-addressable storage model. MemSt treats memory as a versioned, structured repository rather than an ephemeral cache. Our evaluation on the LOCOMO benchmark demonstrates that MemSt achieves \textbf{49.2\% F1} with the QuestionAdaptive strategy---a \textbf{118\% improvement} over standard RAG (22.6\%) and outperforming published systems including Mem0 (34.8\%) and Zep (35.7\%).
 
 Our key contributions include:
 
 \begin{itemize}
     \item \textbf{Git-Like Memory Repository}: Content-addressable storage with Blake3 hashing, branch and merge operations, and full provenance tracking via a write-ahead log (WAL).
     
-    \item \textbf{Hierarchical Retrieval Strategies}: Multi-level memory organization (session summaries $\rightarrow$ key turns $\rightarrow$ full context) with dynamic token budget allocation, achieving best overall performance (41.7\% F1) with 85ms latency.
+    \item \textbf{Hierarchical Retrieval Strategies}: Multi-level memory organization (session summaries $\rightarrow$ key turns $\rightarrow$ full context) with dynamic token budget allocation, achieving 41.7\% F1 with 85ms latency.
     
     \item \textbf{Specialized Graph Architectures}: TemporalKG for time-aware queries (54.0\% F1, +120\% vs RAG) and MultiHopKG for relationship chains (52.8\% F1, +133\% vs RAG).
     
     \item \textbf{Cascade Retrieval}: Three-stage filtering (BM25 $\rightarrow$ Vector $\rightarrow$ Cross-encoder) achieving 55.2\% F1 on single-hop questions.
+    
+    \item \textbf{Question-Adaptive Routing}: Dynamic strategy selection based on question classification, achieving best overall performance (49.2\% F1) by combining specialized strategies.
     
     \item \textbf{Optimized Hybrid Search}: Category-tuned Reciprocal Rank Fusion with BM25 parameters ($k_1=0.5$, $b=0.75$) optimized for conversational text.
     

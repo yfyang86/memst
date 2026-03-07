@@ -4,7 +4,7 @@
 We have presented MemSt, a Git-inspired semantic memory architecture for AI agents that addresses fundamental limitations of existing memory systems. By treating memory as a versioned, content-addressable repository rather than an ephemeral cache, MemSt enables:
 
 \begin{enumerate}
-    \item \textbf{Hierarchical Retrieval}: Multi-level organization (session summaries $\rightarrow$ key turns $\rightarrow$ full context) with dynamic token budget allocation, achieving \textbf{41.7\% F1} on LOCOMO---an 84\% improvement over RAG baselines.
+    \item \textbf{Question-Adaptive Routing}: Dynamic strategy selection based on question classification, achieving \textbf{49.2\% F1} on LOCOMO---a \textbf{118\% improvement} over RAG baselines and outperforming all specialized strategies.
     
     \item \textbf{Specialized Graph Architectures}: TemporalKG achieves 54.0\% F1 on temporal questions (+120\% vs RAG), while MultiHopKG achieves 52.8\% F1 on multi-hop questions (+133\% vs RAG).
     
@@ -21,7 +21,7 @@ We have presented MemSt, a Git-inspired semantic memory architecture for AI agen
 
 Our comprehensive evaluation on LOCOMO (1,986 questions across 10 long conversations) reveals several key insights for memory system design:
 
-\textbf{Hierarchy Beats Flat Retrieval.} Hierarchical Summary's strong performance across categories (49.5\% single-hop, 47.2\% multi-hop, 42.8\% temporal) validates the importance of structured memory organization that mirrors human cognitive processes.
+\textbf{Adaptive Routing Unlocks Performance.} The QuestionAdaptive strategy's strong performance across all categories (60.0\% single-hop, 57.5\% multi-hop, 62.5\% temporal) validates that question-aware strategy selection can combine the strengths of specialized approaches, achieving better results than any single strategy.
 
 \textbf{Specialization Matters.} The 16\% gap between best single-hop (Cascade) and best multi-hop (MultiHopKG) strategies suggests that question-aware routing could achieve higher overall performance. Our QuestionAdaptive strategy demonstrates this potential.
 
