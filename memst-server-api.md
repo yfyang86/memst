@@ -20,9 +20,11 @@ This document describes the REST API for the MemSt backend server.
 8. [Search](#search)
 9. [Files](#files)
 10. [Knowledge Graph](#knowledge-graph)
-11. [Statistics](#statistics)
-12. [Settings](#settings)
-13. [Health](#health)
+11. [Trace](#trace)
+12. [KG Extraction v2](#kg-extraction-v2)
+13. [Statistics](#statistics)
+14. [Settings](#settings)
+15. [Health](#health)
 
 ---
 
@@ -798,6 +800,149 @@ Query parameter:
 
 ```bash
 curl "http://127.0.0.1:8193/api/v1/sessions/{session_id}/trace?op_type=memory_retrieval"
+```
+
+---
+
+## KG Extraction v2
+
+Entity extraction using the KG Extraction v2 engine.
+
+### Get KG Status
+
+Check KG Extraction service status.
+
+**Endpoint:** `GET /kg/status`
+
+```bash
+curl http://127.0.0.1:8193/api/v1/kg/status
+```
+
+**Response:**
+```json
+{
+  "available": true,
+  "ontologies_loaded": 5,
+  "version": "2.0"
+}
+```
+
+---
+
+### Load Ontologies
+
+Load ontologies from schema JSON.
+
+**Endpoint:** `POST /kg/ontologies/load`
+
+```bash
+curl -X POST http://127.0.0.1:8193/api/v1/kg/ontologies/load \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema_json": "[{\"top_category\": \"领域情报类\", \"first_category\": \"科技情报\", \"second_category\": \"人工智能\", \"chinese_name\": \"科技情报-人工智能\", \"english_name\": \"Tech Intelligence-AI\", \"overview\": \"监测AI技术发展\"}]"
+  }'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "loaded": 1,
+  "ontology_ids": ["lingyuqingbao-lei-kejiqingbao-rengongzhineng"]
+}
+```
+
+---
+
+### List Ontologies
+
+List all loaded ontologies.
+
+**Endpoint:** `GET /kg/ontologies`
+
+```bash
+curl http://127.0.0.1:8193/api/v1/kg/ontologies
+```
+
+---
+
+### Get Ontology
+
+Get a specific ontology by ID.
+
+**Endpoint:** `GET /kg/ontologies/{ontology_id}`
+
+```bash
+curl http://127.0.0.1:8193/api/v1/kg/ontologies/lingyuqingbao-lei-kejiqingbao-rengongzhineng
+```
+
+---
+
+### Extract Entities
+
+Extract entities from text.
+
+**Endpoint:** `POST /kg/extract`
+
+```bash
+curl -X POST http://127.0.0.1:8193/api/v1/kg/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "doc_id": "doc-001",
+    "text": "OpenAI released GPT-4 Turbo in 2023. Sam Altman is the CEO.",
+    "ontology_id": "lingyuqingbao-lei-kejiqingbao-rengongzhineng"
+  }'
+```
+
+**Response:**
+```json
+{
+  "id": "job-uuid",
+  "doc_id": "doc-001",
+  "ontology_id": "lingyuqingbao-lei-kejiqingbao-rengongzhineng",
+  "status": "completed",
+  "entity_count": 3,
+  "relationship_count": 0,
+  "tokens_used": 1250
+}
+```
+
+---
+
+### Search Entities
+
+Search extracted entities by name.
+
+**Endpoint:** `POST /kg/search`
+
+```bash
+curl -X POST "http://127.0.0.1:8193/api/v1/kg/search?query=OpenAI&limit=10"
+```
+
+---
+
+### Extract from Session
+
+Extract entities from all messages in a session.
+
+**Endpoint:** `POST /sessions/{session_id}/kg/extract`
+
+```bash
+curl -X POST http://127.0.0.1:8193/api/v1/sessions/{session_id}/kg/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ontology_id": "lingyuqingbao-lei-kejiqingbao-rengongzhineng"
+  }'
+```
+
+**Response:**
+```json
+{
+  "session_id": "session-uuid",
+  "messages_processed": 10,
+  "total_tokens_used": 5200,
+  "status": "completed"
+}
 ```
 
 ---
