@@ -2624,6 +2624,7 @@ name = "memst-graph-helix"
 version = "1.0.0"
 dependencies = [
  "chrono",
+ "fs2",
  "helix-db",
  "memst-core",
  "serde_json",

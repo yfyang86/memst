@@ -21,6 +21,7 @@ pub fn run_all(fresh: &mut dyn FnMut() -> KnowledgeGraph) {
     neighborhood(&mut fresh());
     stats_and_decay_helpers(&mut fresh());
     search(&mut fresh());
+    sessions_share_entities(&mut fresh());
 }
 
 /// `reopen` must return the same store each time; the previous handle is
@@ -373,4 +374,70 @@ fn search(graph: &mut KnowledgeGraph) {
 
     graph.delete_entity(alice.id).unwrap();
     assert_eq!(graph.embedded_entity_ids().unwrap().len(), 2);
+}
+
+/// One graph serves several sessions: the same thing met twice is one entity,
+/// and queries can still be narrowed to a session.
+fn sessions_share_entities(graph: &mut KnowledgeGraph) {
+    let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+
+    let (rust, created) = graph
+        .resolve_or_add_entity(
+            Entity::new("Rust", "language", first).with_attributes(serde_json::json!({"since": 2015})),
+        )
+        .unwrap();
+    assert!(created);
+    let (alice, _) = graph.resolve_or_add_entity(Entity::new("Alice", "person", first)).unwrap();
+
+    // Second session meets "rust" again, with one new and one conflicting attribute.
+    let again = Entity::new("RUST", "language", second)
+        .with_attributes(serde_json::json!({"since": 1999, "paradigm": "systems"}));
+    let (resolved, created) = graph.resolve_or_add_entity(again).unwrap();
+    assert!(!created);
+    assert_eq!(resolved.id, rust.id, "same name and type resolve to the same entity");
+    assert_eq!(resolved.session_id, first, "the creating session is kept");
+    assert_eq!(resolved.seen_in, vec![second]);
+    assert_eq!(resolved.attributes["since"], 2015, "existing attributes win");
+    assert_eq!(resolved.attributes["paradigm"], "systems", "missing attributes are added");
+    // Same name, different type: a different thing.
+    let (metal, created) = graph.resolve_or_add_entity(Entity::new("Rust", "material", second)).unwrap();
+    assert!(created);
+    assert_ne!(metal.id, rust.id);
+    // Meeting it a third time from the same session changes nothing.
+    graph.resolve_or_add_entity(Entity::new("rust", "language", second)).unwrap();
+    assert_eq!(graph.get_entity(rust.id).unwrap().unwrap().seen_in, vec![second]);
+    assert_eq!(graph.all_entities().unwrap().len(), 3);
+
+    // A deprecated entity is not resolved to.
+    graph.update_entity(alice.id, |e| e.deprecate("left")).unwrap();
+    let (new_alice, created) = graph.resolve_or_add_entity(Entity::new("Alice", "person", second)).unwrap();
+    assert!(created);
+    assert_ne!(new_alice.id, alice.id);
+
+    // Session filters.
+    let in_first: Vec<Uuid> = sorted_ids(graph.find_entities(EntityQuery::new().with_session(first)).unwrap());
+    assert_eq!(in_first, sorted(vec![rust.id, alice.id]));
+    let in_second = sorted_ids(graph.find_entities(EntityQuery::new().with_session(second)).unwrap());
+    assert_eq!(in_second, sorted(vec![rust.id, metal.id, new_alice.id]));
+    assert!(graph.find_entities(EntityQuery::new().with_session(Uuid::new_v4())).unwrap().is_empty());
+
+    graph.add_relationship(Relationship::new(alice.id, "uses", rust.id, first)).unwrap();
+    graph.add_relationship(Relationship::new(new_alice.id, "uses", rust.id, second)).unwrap();
+    let by_session = graph.find_relationships(RelationshipQuery::new().with_session(second)).unwrap();
+    assert_eq!(by_session.len(), 1);
+    assert_eq!(by_session[0].1.id, new_alice.id);
+
+    let mut scoped = EntitySearch::text("rust");
+    scoped.session_id = Some(first);
+    let hits = graph.search_entities(&scoped).unwrap().hits;
+    assert_eq!(hits.iter().map(|h| h.entity.id).collect::<Vec<_>>(), vec![rust.id]);
+}
+
+fn sorted(mut ids: Vec<Uuid>) -> Vec<Uuid> {
+    ids.sort();
+    ids
+}
+
+fn sorted_ids(entities: Vec<Entity>) -> Vec<Uuid> {
+    sorted(entities.into_iter().map(|e| e.id).collect())
 }

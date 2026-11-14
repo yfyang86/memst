@@ -87,10 +87,21 @@ enum Command {
     Graph {
         /// Storage backend: auto, json or helix.
         ///
-        /// `auto` uses whatever the session already has (HelixDB, else
-        /// graph.json) and creates new graphs in HelixDB.
+        /// `auto` uses the store's shared HelixDB graph. A session that still
+        /// has its own graph from an older MemSt keeps using it until
+        /// `graph migrate` has been run.
         #[arg(long, global = true, default_value = "auto")]
         backend: String,
+
+        /// Whose graph to use. Owners share the store and never see each
+        /// other's entities.
+        #[arg(long, global = true, default_value = "default")]
+        owner: String,
+
+        /// For query and search: include entities from every session, not
+        /// only the given one.
+        #[arg(long, global = true)]
+        all_sessions: bool,
 
         #[command(subcommand)]
         command: GraphCommand,
@@ -258,6 +269,11 @@ enum GraphCommand {
         /// JSON attributes
         #[arg(short, long)]
         attributes: Option<String>,
+
+        /// Always create a new entity, even if one with the same name and
+        /// type already exists
+        #[arg(long)]
+        new: bool,
     },
 
     #[command(about = "Add a relationship")]
@@ -362,11 +378,8 @@ enum GraphCommand {
         all: bool,
     },
 
-    #[command(about = "Copy a session's graph.json into HelixDB")]
-    Migrate {
-        /// Session ID
-        session_id: Uuid,
-    },
+    #[command(about = "Copy every per-session graph of this store into the shared graph")]
+    Migrate,
 }
 
 /// Text an entity is embedded from: name, type and attributes.
@@ -386,18 +399,53 @@ fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>> {
     Ok(runtime.block_on(client.embed_batch(texts))?)
 }
 
-/// Open a session's knowledge graph with the requested backend.
+/// Open the knowledge graph a session of this store uses.
+///
+/// With `read_ok`, a graph that another process is writing is opened
+/// read-only instead of failing.
 #[cfg(feature = "helix")]
-fn open_graph(dir: &std::path::Path, backend: &str) -> Result<KnowledgeGraph> {
-    let choice: memst_graph_helix::BackendChoice = backend.parse().map_err(anyhow::Error::msg)?;
-    Ok(memst_graph_helix::open(dir, choice)?)
+fn open_graph(
+    store_dir: &std::path::Path,
+    session_dir: &std::path::Path,
+    backend: &str,
+    owner: &str,
+    read_ok: bool,
+) -> Result<KnowledgeGraph> {
+    use memst_graph_helix::{GraphLocation, StoreGraphOptions};
+
+    let mut options = StoreGraphOptions {
+        choice: backend.parse().map_err(anyhow::Error::msg)?,
+        owner: owner.to_string(),
+        read_only: false,
+    };
+    let (graph, location) = match memst_graph_helix::open_store(store_dir, session_dir, &options) {
+        Err(memst_core::error::Error::LockError(reason)) if read_ok => {
+            eprintln!("note: {reason}");
+            eprintln!("note: reading without the lock; very recent writes may not be visible yet");
+            options.read_only = true;
+            memst_graph_helix::open_store(store_dir, session_dir, &options)?
+        }
+        other => other?,
+    };
+    if location == GraphLocation::LegacySession && backend == "auto" {
+        eprintln!(
+            "note: this session uses its own graph from an older MemSt; run `memst graph migrate` to move it into the shared graph"
+        );
+    }
+    Ok(graph)
 }
 
 /// Open a session's knowledge graph (built without HelixDB: JSON only).
 #[cfg(not(feature = "helix"))]
-fn open_graph(dir: &std::path::Path, backend: &str) -> Result<KnowledgeGraph> {
+fn open_graph(
+    _store_dir: &std::path::Path,
+    session_dir: &std::path::Path,
+    backend: &str,
+    _owner: &str,
+    _read_ok: bool,
+) -> Result<KnowledgeGraph> {
     match backend {
-        "auto" | "json" => Ok(KnowledgeGraph::new(dir)?),
+        "auto" | "json" => Ok(KnowledgeGraph::new(session_dir)?),
         other => anyhow::bail!(
             "graph backend '{other}' is not available: this memst was built without the 'helix' feature"
         ),
@@ -831,10 +879,28 @@ fn main() -> Result<()> {
             println!("  Long-term: {}", long_term);
         }
 
-        Command::Graph { backend, command } => {
+        Command::Graph { backend, owner, all_sessions, command } => {
             let store = SessionStore::open(&args.store)?;
             
-            // Extract session_id from the command
+            if let GraphCommand::Migrate = command {
+                #[cfg(feature = "helix")]
+                {
+                    let report = memst_graph_helix::migrate_store(&args.store, owner)?;
+                    if report.sessions == 0 {
+                        println!("Nothing to migrate: no session has a graph of its own left.");
+                    } else {
+                        println!(
+                            "Migrated {} session graph(s): {} entities and {} relationships, into the shared graph for owner '{}'.",
+                            report.sessions, report.entities, report.relationships, owner
+                        );
+                        println!("The per-session graphs were kept as a backup.");
+                    }
+                    return Ok(());
+                }
+                #[cfg(not(feature = "helix"))]
+                anyhow::bail!("this memst was built without the 'helix' feature");
+            }
+
             let session_id = match &command {
                 GraphCommand::AddEntity { session_id, .. } => *session_id,
                 GraphCommand::AddRel { session_id, .. } => *session_id,
@@ -843,30 +909,18 @@ fn main() -> Result<()> {
                 GraphCommand::Neighbors { session_id, .. } => *session_id,
                 GraphCommand::Search { session_id, .. } => *session_id,
                 GraphCommand::Embed { session_id, .. } => *session_id,
-                GraphCommand::Migrate { session_id } => *session_id,
+                GraphCommand::Migrate => unreachable!("handled above"),
             };
+            let reads_only = matches!(
+                command,
+                GraphCommand::Query { .. }
+                    | GraphCommand::Stats { .. }
+                    | GraphCommand::Neighbors { .. }
+                    | GraphCommand::Search { .. }
+            );
 
             let session_path = store.session_path(session_id);
-
-            if let GraphCommand::Migrate { .. } = command {
-                #[cfg(feature = "helix")]
-                {
-                    let (entities, relationships) =
-                        memst_graph_helix::migrate_json_to_helix(&session_path)?;
-                    println!(
-                        "Migrated {} entities and {} relationships to HelixDB ({})",
-                        entities,
-                        relationships,
-                        session_path.join(memst_graph_helix::HELIX_DIR).display()
-                    );
-                    println!("graph.json was kept as a backup.");
-                    return Ok(());
-                }
-                #[cfg(not(feature = "helix"))]
-                anyhow::bail!("this memst was built without the 'helix' feature");
-            }
-
-            let mut graph = open_graph(&session_path, backend)?;
+            let mut graph = open_graph(&args.store, &session_path, backend, owner, reads_only)?;
 
             match command {
                 GraphCommand::AddEntity {
@@ -874,6 +928,7 @@ fn main() -> Result<()> {
                     name,
                     entity_type,
                     attributes,
+                    new,
                 } => {
                     let mut entity = Entity::new(name, entity_type, *session_id);
                     if let Some(attrs) = attributes {
@@ -881,8 +936,21 @@ fn main() -> Result<()> {
                             entity = entity.with_attributes(attrs_map);
                         }
                     }
-                    let added = graph.add_entity(entity)?;
-                    println!("Added entity: {} (type: {})", added.id, added.entity_type);
+                    // The graph is shared across sessions, so the same thing
+                    // mentioned again is the same entity unless --new is given.
+                    let (added, created) = if *new {
+                        (graph.add_entity(entity)?, true)
+                    } else {
+                        graph.resolve_or_add_entity(entity)?
+                    };
+                    if created {
+                        println!("Added entity: {} (type: {})", added.id, added.entity_type);
+                    } else {
+                        println!(
+                            "Known entity: {} (type: {}); now also linked to this session",
+                            added.id, added.entity_type
+                        );
+                    }
                 }
 
                 GraphCommand::AddRel {
@@ -914,7 +982,7 @@ fn main() -> Result<()> {
                 }
 
                 GraphCommand::Query {
-                    session_id: _,
+                    session_id,
                     entity_type,
                     limit,
                     json,
@@ -923,6 +991,9 @@ fn main() -> Result<()> {
                     // applies to matching entities (it used to be applied
                     // before filtering, which could return too few).
                     let mut query = EntityQuery::new().with_limit(*limit);
+                    if !*all_sessions {
+                        query = query.with_session(*session_id);
+                    }
                     if let Some(et) = entity_type {
                         query = query.with_type(et.clone());
                     }
@@ -960,11 +1031,16 @@ fn main() -> Result<()> {
                     }
                 }
 
-                GraphCommand::Stats { session_id: _ } => {
+                GraphCommand::Stats { session_id } => {
                     let stats = graph.stats()?;
-                    println!("Graph Statistics for Session");
+                    let in_session = graph
+                        .find_entities(EntityQuery::new().with_session(*session_id))?
+                        .len();
+                    println!("Graph Statistics");
                     println!("==============================");
                     println!("Backend: {}", graph.backend_kind());
+                    println!("Owner: {}", owner);
+                    println!("Entities in this session: {}", in_session);
                     println!("Total Entities: {}", stats.entity_count);
                     println!("Total Relationships: {}", stats.relationship_count);
                     println!("Entity Types: {}", stats.entity_types.len());
@@ -1007,7 +1083,7 @@ fn main() -> Result<()> {
                 }
 
                 GraphCommand::Search {
-                    session_id: _,
+                    session_id,
                     query,
                     limit,
                     semantic,
@@ -1016,6 +1092,9 @@ fn main() -> Result<()> {
                 } => {
                     let mut search = EntitySearch::text(query.clone()).with_limit(*limit);
                     search.include_deprecated = *include_deprecated;
+                    if !*all_sessions {
+                        search.session_id = Some(*session_id);
+                    }
                     if *semantic {
                         // A missing or failing embedding API must not stop
                         // the search: carry on with keywords only.
@@ -1085,7 +1164,7 @@ fn main() -> Result<()> {
                     println!("Embedded {} entities.", pending.len());
                 }
 
-                GraphCommand::Migrate { .. } => unreachable!("handled before the graph is opened"),
+                GraphCommand::Migrate => unreachable!("handled before the graph is opened"),
             }
         }
     }

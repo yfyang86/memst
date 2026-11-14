@@ -42,6 +42,12 @@
 //! there.
 
 mod codec;
+mod store;
+
+pub use store::{
+    migrate_store, open_store, unmigrated_sessions, GraphLocation, MigrationReport, StoreGraphOptions,
+    MIGRATED_MARKER,
+};
 
 use helix_db::dsl::prelude::{g, read_batch, write_batch, IndexSpec, QueryRequest, VectorDistanceMetric};
 use helix_db::{Client, HelixDbSource, HelixError};
@@ -55,9 +61,14 @@ use std::path::{Path, PathBuf};
 
 /// Directory (inside a graph directory) that holds the HelixDB database.
 pub const HELIX_DIR: &str = "graph.helix";
+/// Lock file (next to [`HELIX_DIR`]) held by the process writing the graph.
+pub const LOCK_FILE: &str = "graph.helix.lock";
 
 const NODE_LABEL: &str = "Entity";
 const EDGE_TYPE: &str = "REL";
+/// Property holding an entity's owner; also the tenant key of the search
+/// indexes.
+const OWNER_PROPERTY: &str = "owner";
 /// Property covered by the BM25 index (see `codec::search_text`).
 const TEXT_PROPERTY: &str = "search_text";
 /// Longest time to wait for a freshly requested index to activate.
@@ -68,8 +79,11 @@ const VECTOR_PROPERTY: &str = "embedding";
 /// far below HelixDB's 16 MiB response and 200,000-value parameter limits.
 const PAGE: usize = 2_000;
 
+/// Owner used when none is given.
+pub const DEFAULT_OWNER: &str = "default";
+
 /// Options for [`HelixGraphBackend::open_with`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct HelixGraphOptions {
     /// Let the embedded engine send HelixDB's anonymous usage telemetry.
     ///
@@ -78,6 +92,46 @@ pub struct HelixGraphOptions {
     /// in the environment, the backend sets `HELIX_TELEMETRY_LEVEL=off` for
     /// this process before opening the database.
     pub telemetry: bool,
+
+    /// Whose graph this handle sees.
+    ///
+    /// One database holds every owner's graph. Each entity is stamped with
+    /// its owner, every read and write is restricted to this owner, and the
+    /// search indexes are partitioned by it, so a handle can never read or
+    /// change another owner's data. `None` turns the restriction off; it
+    /// exists only to read databases written before owners were recorded
+    /// (see [`migrate_store`]) and has no native search.
+    pub owner: Option<String>,
+
+    /// Open without taking the writer lock. Every write fails; reads see
+    /// what the writer has made durable.
+    pub read_only: bool,
+}
+
+impl Default for HelixGraphOptions {
+    fn default() -> Self {
+        Self {
+            telemetry: false,
+            owner: Some(DEFAULT_OWNER.to_string()),
+            read_only: false,
+        }
+    }
+}
+
+impl HelixGraphOptions {
+    /// Options for the given owner.
+    pub fn for_owner(owner: impl Into<String>) -> Self {
+        Self {
+            owner: Some(owner.into()),
+            ..Self::default()
+        }
+    }
+
+    /// The same options, read-only.
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
 }
 
 /// Knowledge graph stored in an embedded HelixDB database.
@@ -89,6 +143,9 @@ pub struct HelixGraphBackend {
     root: PathBuf,
     /// Dimension the vector index is known to exist for (set on first use).
     vector_dimension: std::sync::Mutex<Option<usize>>,
+    owner: Option<String>,
+    /// Held for the lifetime of a writer; `None` for a read-only handle.
+    writer_lock: Option<std::fs::File>,
 }
 
 impl HelixGraphBackend {
@@ -106,8 +163,22 @@ impl HelixGraphBackend {
             std::env::set_var("HELIX_TELEMETRY_LEVEL", "off");
         }
 
+        if options.owner.as_deref() == Some("") {
+            return Err(Error::InvalidOperation("graph owner must not be empty".to_string()));
+        }
         let root = dir.join(HELIX_DIR);
+        if options.read_only && !root.is_dir() {
+            return Err(Error::InvalidOperation(format!(
+                "no HelixDB graph to read in {}",
+                dir.display()
+            )));
+        }
         std::fs::create_dir_all(&root)?;
+        let writer_lock = if options.read_only {
+            None
+        } else {
+            Some(acquire_writer_lock(dir)?)
+        };
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -119,21 +190,57 @@ impl HelixGraphBackend {
             root: root.clone(),
             database: "kg".to_string(),
         };
-        let client = block_on(&runtime, Client::open(source)).map_err(helix_error)?;
+        let client = if options.read_only {
+            block_on(&runtime, Client::open_reader(source))
+        } else {
+            block_on(&runtime, Client::open(source))
+        }
+        .map_err(helix_error)?;
 
         let backend = Self {
             client,
             runtime: Some(runtime),
             root,
             vector_dimension: std::sync::Mutex::new(None),
+            owner: options.owner,
+            writer_lock,
         };
-        backend.ensure_indexes()?;
+        if backend.writer_lock.is_some() {
+            backend.ensure_indexes()?;
+        }
         Ok(backend)
     }
 
     /// Whether a HelixDB graph already exists in `dir`.
     pub fn exists(dir: &Path) -> bool {
         dir.join(HELIX_DIR).is_dir()
+    }
+
+    /// The owner this handle is restricted to, if any.
+    pub fn owner(&self) -> Option<&str> {
+        self.owner.as_deref()
+    }
+
+    /// Whether this handle was opened read-only.
+    pub fn is_read_only(&self) -> bool {
+        self.writer_lock.is_none()
+    }
+
+    fn writable(&self) -> Result<()> {
+        if self.is_read_only() {
+            return Err(Error::InvalidOperation(
+                "the graph is open read-only".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Value that selects this owner's partition of a search index.
+    fn tenant(&self) -> Result<helix_db::dsl::prelude::PropertyValue> {
+        self.owner
+            .clone()
+            .map(helix_db::dsl::prelude::PropertyValue::String)
+            .ok_or_else(|| Error::GraphBackend("helix: an unscoped handle has no native search".to_string()))
     }
 
     /// Filesystem location of the database.
@@ -163,15 +270,21 @@ impl HelixGraphBackend {
         for spec in [
             IndexSpec::node_unique_equality(NODE_LABEL, "uid"),
             IndexSpec::node_equality(NODE_LABEL, "entity_type"),
-            // BM25 keyword search. The vector index is created on the first
-            // `set_entity_embedding`, when the dimension is known.
-            IndexSpec::node_text(NODE_LABEL, TEXT_PROPERTY, None::<&str>),
+            IndexSpec::node_equality(NODE_LABEL, OWNER_PROPERTY),
+            IndexSpec::node_equality(NODE_LABEL, "resolve_key"),
         ] {
             self.create_index(spec)?;
         }
-        self.wait_until_searchable(|| {
+        let Ok(tenant) = self.tenant() else {
+            return Ok(());
+        };
+        // BM25 keyword search, partitioned by owner. The vector index is
+        // created on the first `set_entity_embedding`, when the dimension is
+        // known.
+        self.create_index(IndexSpec::node_text(NODE_LABEL, TEXT_PROPERTY, Some(OWNER_PROPERTY)))?;
+        self.wait_until_searchable(move || {
             let probe = g()
-                .text_search_nodes(NODE_LABEL, TEXT_PROPERTY, "memst", 1, None)
+                .text_search_nodes(NODE_LABEL, TEXT_PROPERTY, "memst", 1, Some(tenant.clone()))
                 .value_map(Some(vec!["uid"]));
             QueryRequest::read(read_batch().var_as("probe", probe).returning(["probe"]))
         });
@@ -215,6 +328,7 @@ impl HelixGraphBackend {
     }
 
     fn ensure_vector_index(&self, dimension: usize) -> Result<()> {
+        let tenant = self.tenant()?;
         let mut known = self.vector_dimension.lock().expect("vector dimension lock");
         if *known == Some(dimension) {
             return Ok(());
@@ -229,7 +343,7 @@ impl HelixGraphBackend {
             VECTOR_PROPERTY,
             non_zero,
             VectorDistanceMetric::Cosine,
-            None::<&str>,
+            Some(OWNER_PROPERTY),
         ))?;
         *known = Some(dimension);
         drop(known);
@@ -237,7 +351,7 @@ impl HelixGraphBackend {
             let mut unit = vec![0.0; dimension];
             unit[0] = 1.0;
             let probe = g()
-                .vector_search_nodes(NODE_LABEL, VECTOR_PROPERTY, unit, 1, None)
+                .vector_search_nodes(NODE_LABEL, VECTOR_PROPERTY, unit, 1, Some(tenant.clone()))
                 .value_map(Some(vec!["uid"]));
             QueryRequest::read(read_batch().var_as("probe", probe).returning(["probe"]))
         });
@@ -253,7 +367,20 @@ impl HelixGraphBackend {
         let Value::Object(parameters) = parameters else {
             unreachable!("cypher parameters are always built with json!({{...}})");
         };
-        let parameters: BTreeMap<String, Value> = parameters.into_iter().collect();
+        let mut parameters: BTreeMap<String, Value> = parameters.into_iter().collect();
+        // Statements mark where the owner restriction goes: `%O` inside a
+        // property map that has other entries, `%N` on a node without one.
+        // The owner is always a parameter, never spliced into the text.
+        let query = match &self.owner {
+            Some(owner) => {
+                let query = query.replace("%O", "owner: $owner, ").replace("%N", " {owner: $owner}");
+                if query.contains("$owner") {
+                    parameters.insert("owner".to_string(), json!(owner));
+                }
+                query
+            }
+            None => query.replace("%O", "").replace("%N", ""),
+        };
         let client = self.client.clone();
         self.block_on(async move { client.cypher(&query, parameters, None).await })
             .map(|response| response.rows)
@@ -272,7 +399,7 @@ impl HelixGraphBackend {
 
     fn existing_entity_uids(&self, uids: &[String]) -> Result<HashSet<String>> {
         let rows = self.cypher(
-            "UNWIND $uids AS k MATCH (e:Entity {uid: k}) RETURN e.uid AS uid",
+            "UNWIND $uids AS k MATCH (e:Entity {%Ouid: k}) RETURN e.uid AS uid",
             json!({ "uids": uids }),
         )?;
         Ok(rows
@@ -305,12 +432,17 @@ impl GraphBackend for HelixGraphBackend {
     }
 
     fn put_entities(&mut self, entities: &[Entity]) -> Result<()> {
+        self.writable()?;
         for chunk in entities.chunks(PAGE) {
             // Later duplicates of an id within one batch win, as with a map.
             let mut rows: BTreeMap<String, Value> = BTreeMap::new();
             for entity in chunk {
                 let uid = entity.id.to_string();
-                rows.insert(uid.clone(), json!({ "uid": uid, "props": codec::entity_props(entity) }));
+                let mut props = codec::entity_props(entity);
+                if let Some(owner) = &self.owner {
+                    props[OWNER_PROPERTY] = json!(owner);
+                }
+                rows.insert(uid.clone(), json!({ "uid": uid, "props": props }));
             }
             let uids: Vec<String> = rows.keys().cloned().collect();
             let existing = self.existing_entity_uids(&uids)?;
@@ -332,7 +464,7 @@ impl GraphBackend for HelixGraphBackend {
                 // Cleared optional fields still disappear, because `props`
                 // carries them as explicit nulls.
                 self.cypher(
-                    "UNWIND $rows AS row WITH row.uid AS k, row.props AS props MATCH (e:Entity {uid: k}) SET e += props RETURN count(e) AS n",
+                    "UNWIND $rows AS row WITH row.uid AS k, row.props AS props MATCH (e:Entity {%Ouid: k}) SET e += props RETURN count(e) AS n",
                     json!({ "rows": update }),
                 )?;
             }
@@ -355,7 +487,7 @@ impl GraphBackend for HelixGraphBackend {
         let mut out = Vec::with_capacity(ids.len());
         for chunk in uids.chunks(PAGE) {
             let rows = self.cypher(
-                "UNWIND $uids AS k MATCH (e:Entity {uid: k}) RETURN properties(e) AS e",
+                "UNWIND $uids AS k MATCH (e:Entity {%Ouid: k}) RETURN properties(e) AS e",
                 json!({ "uids": chunk }),
             )?;
             for row in rows {
@@ -366,8 +498,9 @@ impl GraphBackend for HelixGraphBackend {
     }
 
     fn delete_entity(&mut self, id: EntityId) -> Result<bool> {
+        self.writable()?;
         let deleted = self.count(
-            "MATCH (e:Entity {uid: $uid}) DETACH DELETE e RETURN count(e) AS n",
+            "MATCH (e:Entity {%Ouid: $uid}) DETACH DELETE e RETURN count(e) AS n",
             json!({ "uid": id.to_string() }),
         )?;
         Ok(deleted > 0)
@@ -388,6 +521,10 @@ impl GraphBackend for HelixGraphBackend {
             conditions.push("e.confidence >= $min_confidence");
             parameters.insert("min_confidence".into(), codec::float(min));
         }
+        if let Some(session) = query.session_id {
+            conditions.push("$session IN e.sessions");
+            parameters.insert("session".into(), json!(session.to_string()));
+        }
         let filter = if conditions.is_empty() {
             String::new()
         } else {
@@ -395,7 +532,7 @@ impl GraphBackend for HelixGraphBackend {
         };
         // Only fixed fragments are interpolated; every value is a parameter.
         let statement = format!(
-            "MATCH (e:Entity) {filter}RETURN properties(e) AS e ORDER BY e.created_at, e.uid SKIP $skip LIMIT $limit"
+            "MATCH (e:Entity%N) {filter}RETURN properties(e) AS e ORDER BY e.created_at, e.uid SKIP $skip LIMIT $limit"
         );
 
         let mut out = Vec::new();
@@ -413,7 +550,23 @@ impl GraphBackend for HelixGraphBackend {
         }
     }
 
+    fn find_entity_by_name(&self, name: &str, entity_type: &str) -> Result<Option<Entity>> {
+        let rows = self.cypher(
+            "MATCH (e:Entity {%Oresolve_key: $key}) WHERE e.is_deprecated = false RETURN properties(e) AS e",
+            json!({ "key": codec::resolve_key(name, entity_type) }),
+        )?;
+        let mut best: Option<Entity> = None;
+        for row in rows {
+            let entity = codec::entity_from_row(row)?;
+            if best.as_ref().map_or(true, |b| entity.importance() > b.importance()) {
+                best = Some(entity);
+            }
+        }
+        Ok(best)
+    }
+
     fn put_relationship(&mut self, relationship: &Relationship) -> Result<()> {
+        self.writable()?;
         let uid = relationship.id.to_string();
         let (subject, object) = (
             relationship.subject_id.to_string(),
@@ -428,7 +581,7 @@ impl GraphBackend for HelixGraphBackend {
                 && existing.object_id == relationship.object_id
             {
                 self.cypher(
-                    "MATCH (:Entity {uid: $s})-[r:REL]->(:Entity {uid: $o}) WHERE r.uid = $uid SET r = $props RETURN count(r) AS n",
+                    "MATCH (:Entity {%Ouid: $s})-[r:REL]->(:Entity {uid: $o}) WHERE r.uid = $uid SET r = $props RETURN count(r) AS n",
                     json!({ "s": subject, "o": object, "uid": uid, "props": props }),
                 )?;
                 return Ok(());
@@ -437,7 +590,7 @@ impl GraphBackend for HelixGraphBackend {
         }
 
         let created = self.count(
-            "MATCH (a:Entity {uid: $s}), (b:Entity {uid: $o}) CREATE (a)-[r:REL]->(b) SET r += $props RETURN count(r) AS n",
+            "MATCH (a:Entity {%Ouid: $s}), (b:Entity {%Ouid: $o}) CREATE (a)-[r:REL]->(b) SET r += $props RETURN count(r) AS n",
             json!({ "s": subject, "o": object, "props": props }),
         )?;
         if created > 0 {
@@ -455,7 +608,7 @@ impl GraphBackend for HelixGraphBackend {
 
     fn get_relationship(&self, id: RelationshipId) -> Result<Option<Relationship>> {
         self.cypher(
-            "MATCH (:Entity)-[r:REL]->(:Entity) WHERE r.uid = $uid RETURN properties(r) AS r",
+            "MATCH (:Entity%N)-[r:REL]->(:Entity) WHERE r.uid = $uid RETURN properties(r) AS r",
             json!({ "uid": id.to_string() }),
         )?
         .pop()
@@ -464,8 +617,9 @@ impl GraphBackend for HelixGraphBackend {
     }
 
     fn delete_relationship(&mut self, id: RelationshipId) -> Result<bool> {
+        self.writable()?;
         let deleted = self.count(
-            "MATCH (:Entity)-[r:REL]->(:Entity) WHERE r.uid = $uid DELETE r RETURN count(r) AS n",
+            "MATCH (:Entity%N)-[r:REL]->(:Entity) WHERE r.uid = $uid DELETE r RETURN count(r) AS n",
             json!({ "uid": id.to_string() }),
         )?;
         Ok(deleted > 0)
@@ -477,9 +631,9 @@ impl GraphBackend for HelixGraphBackend {
         let subject = match query.subject_id {
             Some(id) => {
                 parameters.insert("s".into(), json!(id.to_string()));
-                "(:Entity {uid: $s})"
+                "(:Entity {%Ouid: $s})"
             }
-            None => "(:Entity)",
+            None => "(:Entity%N)",
         };
         let object = match query.object_id {
             Some(id) => {
@@ -496,6 +650,10 @@ impl GraphBackend for HelixGraphBackend {
         if let Some(min) = query.min_confidence {
             conditions.push("r.confidence >= $min_confidence");
             parameters.insert("min_confidence".into(), codec::float(min));
+        }
+        if let Some(session) = query.session_id {
+            conditions.push("r.session_id = $session");
+            parameters.insert("session".into(), json!(session.to_string()));
         }
         let filter = if conditions.is_empty() {
             String::new()
@@ -525,9 +683,9 @@ impl GraphBackend for HelixGraphBackend {
 
     fn expand(&self, frontier: &[EntityId], direction: Direction) -> Result<Vec<Relationship>> {
         const OUT: &str =
-            "UNWIND $uids AS k MATCH (:Entity {uid: k})-[r:REL]->(:Entity) RETURN properties(r) AS r";
+            "UNWIND $uids AS k MATCH (:Entity {%Ouid: k})-[r:REL]->(:Entity) RETURN properties(r) AS r";
         const IN: &str =
-            "UNWIND $uids AS k MATCH (:Entity {uid: k})<-[r:REL]-(:Entity) RETURN properties(r) AS r";
+            "UNWIND $uids AS k MATCH (:Entity {%Ouid: k})<-[r:REL]-(:Entity) RETURN properties(r) AS r";
 
         let mut uids: Vec<String> = frontier.iter().map(ToString::to_string).collect();
         uids.sort_unstable();
@@ -547,9 +705,10 @@ impl GraphBackend for HelixGraphBackend {
     }
 
     fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32]) -> Result<bool> {
+        self.writable()?;
         self.ensure_vector_index(embedding.len())?;
         let updated = self.count(
-            "MATCH (e:Entity {uid: $uid}) SET e += {embedding: $embedding} RETURN count(e) AS n",
+            "MATCH (e:Entity {%Ouid: $uid}) SET e += {embedding: $embedding} RETURN count(e) AS n",
             json!({ "uid": id.to_string(), "embedding": embedding }),
         )?;
         Ok(updated > 0)
@@ -559,7 +718,7 @@ impl GraphBackend for HelixGraphBackend {
         let mut out = Vec::new();
         loop {
             let rows = self.cypher(
-                "MATCH (e:Entity) WHERE e.embedding IS NOT NULL RETURN e.uid AS uid, e.embedding AS embedding ORDER BY uid SKIP $skip LIMIT $limit",
+                "MATCH (e:Entity%N) WHERE e.embedding IS NOT NULL RETURN e.uid AS uid, e.embedding AS embedding ORDER BY uid SKIP $skip LIMIT $limit",
                 json!({ "skip": out.len(), "limit": PAGE }),
             )?;
             let page = rows.len();
@@ -581,6 +740,7 @@ impl GraphBackend for HelixGraphBackend {
         embedding: Option<&[f32]>,
         limit: usize,
     ) -> Result<Option<Vec<(EntityId, f32)>>> {
+        let tenant = self.tenant()?;
         // Fusion needs more than `limit` candidates from each side.
         let k = if text.is_some() && embedding.is_some() { limit * 3 } else { limit };
         let mut batch = read_batch();
@@ -588,7 +748,7 @@ impl GraphBackend for HelixGraphBackend {
         if let Some(text) = text {
             batch = batch.var_as(
                 "keyword",
-                g().text_search_nodes(NODE_LABEL, TEXT_PROPERTY, text, k, None)
+                g().text_search_nodes(NODE_LABEL, TEXT_PROPERTY, text, k, Some(tenant.clone()))
                     .value_map(Some(vec!["uid", "$score"])),
             );
             returning.push("keyword");
@@ -596,7 +756,7 @@ impl GraphBackend for HelixGraphBackend {
         if let Some(embedding) = embedding {
             batch = batch.var_as(
                 "semantic",
-                g().vector_search_nodes(NODE_LABEL, VECTOR_PROPERTY, embedding.to_vec(), k, None)
+                g().vector_search_nodes(NODE_LABEL, VECTOR_PROPERTY, embedding.to_vec(), k, Some(tenant))
                     .value_map(Some(vec!["uid", "$distance"])),
             );
             returning.push("semantic");
@@ -628,11 +788,11 @@ impl GraphBackend for HelixGraphBackend {
     }
 
     fn entity_count(&self) -> Result<usize> {
-        self.count("MATCH (e:Entity) RETURN count(e) AS n", json!({}))
+        self.count("MATCH (e:Entity%N) RETURN count(e) AS n", json!({}))
     }
 
     fn relationship_count(&self) -> Result<usize> {
-        self.count("MATCH (:Entity)-[r:REL]->(:Entity) RETURN count(r) AS n", json!({}))
+        self.count("MATCH (:Entity%N)-[r:REL]->(:Entity) RETURN count(r) AS n", json!({}))
     }
 }
 
@@ -709,6 +869,39 @@ pub fn migrate_json_to_helix(dir: &Path) -> Result<(usize, usize)> {
     let source = KnowledgeGraph::new(dir)?;
     let mut target = open(dir, BackendChoice::Helix)?;
     source.copy_into(&mut target)
+}
+
+/// Take the exclusive writer lock for the graph in `dir`.
+///
+/// HelixDB itself lets a second writer in and fences the *first*, whose
+/// writes then start failing mid-flight. MemSt wants the opposite: the
+/// process already writing keeps going, and the newcomer is told plainly.
+fn acquire_writer_lock(dir: &Path) -> Result<std::fs::File> {
+    use fs2::FileExt;
+    use std::io::{Read, Seek, Write};
+
+    let path = dir.join(LOCK_FILE);
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
+    if file.try_lock_exclusive().is_err() {
+        let mut holder = String::new();
+        let _ = file.read_to_string(&mut holder);
+        let holder = holder.trim();
+        return Err(Error::LockError(format!(
+            "the graph in {} is open for writing by another process{}; open it read-only, or try again when that process has finished",
+            dir.display(),
+            if holder.is_empty() { String::new() } else { format!(" (pid {holder})") }
+        )));
+    }
+    file.set_len(0)?;
+    file.rewind()?;
+    write!(file, "{}", std::process::id())?;
+    file.flush()?;
+    Ok(file)
 }
 
 fn helix_error(error: HelixError) -> Error {

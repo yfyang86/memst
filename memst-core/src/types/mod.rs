@@ -659,6 +659,12 @@ pub struct Entity {
     /// Deprecation reason if deprecated
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deprecation_reason: Option<String>,
+
+    /// Other sessions that also mention this entity, besides `session_id`
+    /// (the session that first created it). Filled in when the graph is
+    /// shared across sessions and the same entity is met again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seen_in: Vec<Uuid>,
 }
 
 fn default_relevance() -> f32 { 1.0 }
@@ -683,6 +689,7 @@ impl Entity {
             last_decay_at: chrono::Utc::now(),
             is_deprecated: false,
             deprecation_reason: None,
+            seen_in: Vec::new(),
         }
     }
     
@@ -704,6 +711,7 @@ impl Entity {
             last_decay_at: chrono::Utc::now(),
             is_deprecated: false,
             deprecation_reason: None,
+            seen_in: Vec::new(),
         }
     }
 
@@ -723,6 +731,21 @@ impl Entity {
     pub fn with_confidence(mut self, confidence: f32) -> Self {
         self.confidence = confidence.clamp(0.0, 1.0);
         self
+    }
+
+    /// Whether this entity was created in, or later seen in, `session`.
+    pub fn is_in_session(&self, session: Uuid) -> bool {
+        self.session_id == session || self.seen_in.contains(&session)
+    }
+
+    /// Record that `session` also mentions this entity.
+    /// Returns whether anything changed.
+    pub fn mark_seen_in(&mut self, session: Uuid) -> bool {
+        if self.is_in_session(session) {
+            return false;
+        }
+        self.seen_in.push(session);
+        true
     }
 
     /// Record an access to this entity.
@@ -866,6 +889,8 @@ pub struct EntityQuery {
     pub limit: usize,
     /// Minimum confidence threshold
     pub min_confidence: Option<f32>,
+    /// Only entities created in or seen in this session
+    pub session_id: Option<Uuid>,
 }
 
 impl EntityQuery {
@@ -877,6 +902,12 @@ impl EntityQuery {
     /// Filter by entity type.
     pub fn with_type(mut self, entity_type: impl Into<String>) -> Self {
         self.entity_type = Some(entity_type.into());
+        self
+    }
+
+    /// Only entities created in or seen in this session.
+    pub fn with_session(mut self, session_id: Uuid) -> Self {
+        self.session_id = Some(session_id);
         self
     }
 
@@ -912,6 +943,8 @@ pub struct RelationshipQuery {
     pub limit: usize,
     /// Minimum confidence threshold
     pub min_confidence: Option<f32>,
+    /// Only relationships recorded by this session
+    pub session_id: Option<Uuid>,
 }
 
 impl RelationshipQuery {
@@ -929,6 +962,12 @@ impl RelationshipQuery {
     /// Filter by object.
     pub fn with_object(mut self, object_id: EntityId) -> Self {
         self.object_id = Some(object_id);
+        self
+    }
+
+    /// Only relationships recorded by this session.
+    pub fn with_session(mut self, session_id: Uuid) -> Self {
+        self.session_id = Some(session_id);
         self
     }
 

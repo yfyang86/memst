@@ -5,13 +5,33 @@ through a `GraphBackend`. There are two:
 
 | Backend | Crate | Storage | Use |
 |---------|-------|---------|-----|
+| HelixDB | `memst-graph-helix` | `<store>/graph.helix/`, one embedded database shared by every session | Default |
 | JSON | `memst-core` | `<session>/graph.json`, whole graph in memory, file rewritten on every change | Tests, tiny graphs, MemSt 1.0 stores |
-| HelixDB | `memst-graph-helix` | `<session>/graph.helix/`, embedded database | Default for new graphs |
 
 [HelixDB](https://github.com/yfyang86/helix-db) is a graph database with vector
 and BM25 search in one transactional engine. MemSt uses it **embedded**: the
 engine is compiled into the process and writes to a directory. There is no
 server to run.
+
+## One graph per store
+
+A store has one graph, shared by all its sessions, so something mentioned in
+two conversations is one entity with edges from both.
+
+- **Sessions.** Every entity records the session that created it and any other
+  session that later mentions it. `resolve_or_add_entity` is how a mention is
+  written: an entity with the same name (ignoring case) and type is reused and
+  linked to the new session; otherwise a new one is created. Queries and
+  searches can be narrowed to one session.
+- **Owners.** The database holds every owner's graph. Each entity is stamped
+  with its owner, every read and write is restricted to the handle's owner, and
+  the search indexes are partitioned by owner. A handle cannot read, change,
+  link to, or take over the id of another owner's entity. The default owner is
+  `default`.
+- **One writer.** The process that opens the graph for writing holds a lock
+  file (`<store>/graph.helix.lock`). A second writer fails immediately with a
+  message naming the holder; it does not disturb the first. Read-only handles
+  open alongside the writer and see what it has made durable.
 
 ## Using it
 
@@ -30,24 +50,44 @@ memst --store ./data graph embed <session>                             # store e
 memst --store ./data graph search <session> "who writes code" --semantic   # BM25 + vectors
 ```
 
-`--backend auto|json|helix` (default `auto`) picks the backend. `auto` uses
-what the session already has, and creates new graphs in HelixDB. A session that
-only has a `graph.json` therefore keeps using it until it is migrated:
+Options that apply to every `graph` command:
+
+- `--owner NAME` selects whose graph to use (default `default`).
+- `--all-sessions` makes `query` and `search` cover every session instead of
+  only the one given.
+- `--backend auto|json|helix` (default `auto`).
+
+`add-entity` reuses an existing entity with the same name and type and links it
+to the session; `--new` forces a separate entity.
+
+If another process is writing the graph, commands that only read (`query`,
+`search`, `stats`, `neighbors`) carry on read-only and say so; commands that
+write stop with the lock message.
+
+### Stores from older versions
+
+A session that still has its own graph (`graph.json` from MemSt 1.0, or a
+per-session `graph.helix/`) keeps using it, with a note, until the store is
+migrated:
 
 ```bash
-memst --store ./data graph migrate <session>
+memst --store ./data graph migrate
 ```
 
-Migration copies every entity and relationship, keeps their ids, and leaves
-`graph.json` in place as a backup. It is safe to run twice.
+This copies every per-session graph into the shared graph for the chosen
+owner. Ids, embeddings and session links are preserved, the old graphs are
+kept and marked as migrated, and running it again copies only what is new.
+Entities are copied as they are: the same name in two sessions arrives as two
+entities, which the evolution engine can then propose to merge.
 
 From Rust:
 
 ```rust
-use memst_graph_helix::{open, BackendChoice};
+use memst_graph_helix::{open_store, StoreGraphOptions};
 
-let mut graph = open(session_dir, BackendChoice::Auto)?;
-graph.add_entity(entity)?;
+let options = StoreGraphOptions { owner: "alice".into(), ..Default::default() };
+let (mut graph, _location) = open_store(store_dir, session_dir, &options)?;
+let (entity, created) = graph.resolve_or_add_entity(entity)?;
 let nearby = graph.neighborhood(entity_id, 2, memst_core::graph::Direction::Both)?;
 ```
 
@@ -121,6 +161,9 @@ and are also stored by the JSON backend (inside `graph.json`).
 | `Entity` | Node labelled `Entity`; each field is a typed property |
 | `Entity::id` | Property `uid`, with a unique index |
 | `Entity::entity_type` | Property `entity_type`, with an equality index |
+| owner | Property `owner`, with an equality index; also the partition key of the search indexes |
+| sessions mentioning the entity | Property `sessions`, a list of ids, creating session first |
+| name and type, for recognising the same entity again | Property `resolve_key`, with an equality index |
 | `Entity::attributes` | Property `attributes`, a JSON string (HelixDB stores scalars and flat lists, not nested maps) |
 | name, type and attribute text | Property `search_text`, with a BM25 text index |
 | entity embedding | Property `embedding`, with a cosine vector index |
@@ -152,8 +195,9 @@ pass.
 
 ## Things to know
 
-- **One writer per graph directory.** HelixDB fences a second writer on the
-  same directory. Each CLI invocation opens, writes and closes.
+- **One writer per store.** See above. HelixDB on its own would let a second
+  writer in and fence the first, whose writes would then fail part-way; the
+  lock file reverses that.
 - **Telemetry is off.** HelixDB's embedded mode sends anonymous usage telemetry
   by default. The backend sets `HELIX_TELEMETRY_LEVEL=off` before opening unless
   `HelixGraphOptions { telemetry: true }` is passed or the variable is already
@@ -163,9 +207,10 @@ pass.
   graph). The backend waits up to ten seconds for an index it has just
   requested, so a one-shot CLI command does not exit before the index exists.
   Past that limit it carries on and searches fall back until the build is done.
-- **Graphs written before this change** have no `search_text`, so BM25 does not
-  see their entities until each is written again; the fallback covers them in
-  the meantime.
+- **Session filters are not indexed.** Narrowing to a session filters the
+  owner's entities by their session list; it is not an index lookup.
+- **Read-only handles lag.** A reader sees a write once the writer has made it
+  durable, not at the instant it is written.
 - **Sync over async.** `GraphBackend` is synchronous and HelixDB is async, so
   the backend owns a two-thread Tokio runtime and blocks per call. Inside
   another async runtime, call it from `spawn_blocking`.
@@ -192,9 +237,6 @@ pass.
   in.
 - **Search over relationships.** Only entities are indexed for BM25 and
   vectors.
-- **One graph per user.** Graphs are still per session, as before. A single
-  database per store, with `session_id` as an indexed property, would allow
-  cross-session entities.
 - **KG extraction v2** (`memst-extract-v2`) still writes to its own SQLite
   tables and does not feed this graph.
 - **Bi-temporal edges.** See `docs/research/memst-and-the-field.md`.

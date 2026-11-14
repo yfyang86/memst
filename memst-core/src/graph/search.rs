@@ -16,6 +16,8 @@ pub struct EntitySearch {
     pub limit: usize,
     /// Also return deprecated entities.
     pub include_deprecated: bool,
+    /// Only entities created in or seen in this session.
+    pub session_id: Option<uuid::Uuid>,
 }
 
 impl EntitySearch {
@@ -79,12 +81,17 @@ pub(super) fn run(backend: &dyn GraphBackend, query: &EntitySearch) -> Result<En
         ));
     }
     let limit = if query.limit == 0 { 10 } else { query.limit };
-    // Deprecated entities are dropped after ranking, so ask for some spare.
-    let fetch = if query.include_deprecated { limit } else { limit * 2 };
+    // Deprecated entities, and those outside the requested session, are
+    // dropped after ranking, so ask for some spare.
+    let fetch = match (query.include_deprecated, query.session_id) {
+        (true, None) => limit,
+        (_, None) => limit * 2,
+        (_, Some(_)) => limit * 5,
+    };
 
     let fallback_reason = match backend.search_entities(text, embedding, fetch) {
         Ok(Some(ranked)) => {
-            let hits = materialise(backend, ranked, limit, query.include_deprecated)?;
+            let hits = materialise(backend, ranked, limit, query)?;
             if !hits.is_empty() {
                 return Ok(EntitySearchResult {
                     hits,
@@ -100,7 +107,7 @@ pub(super) fn run(backend: &dyn GraphBackend, query: &EntitySearch) -> Result<En
 
     let ranked = fallback(backend, text, embedding)?;
     Ok(EntitySearchResult {
-        hits: materialise(backend, ranked, limit, query.include_deprecated)?,
+        hits: materialise(backend, ranked, limit, query)?,
         method: SearchMethod::Fallback,
         fallback_reason: Some(fallback_reason),
     })
@@ -111,7 +118,7 @@ fn materialise(
     backend: &dyn GraphBackend,
     ranked: Vec<(EntityId, f32)>,
     limit: usize,
-    include_deprecated: bool,
+    query: &EntitySearch,
 ) -> Result<Vec<EntityHit>> {
     let ids: Vec<EntityId> = ranked.iter().map(|(id, _)| *id).collect();
     let mut entities: HashMap<EntityId, Entity> = backend
@@ -122,7 +129,8 @@ fn materialise(
     Ok(ranked
         .into_iter()
         .filter_map(|(id, score)| Some(EntityHit { entity: entities.remove(&id)?, score }))
-        .filter(|hit| include_deprecated || !hit.entity.is_deprecated)
+        .filter(|hit| query.include_deprecated || !hit.entity.is_deprecated)
+        .filter(|hit| query.session_id.map_or(true, |s| hit.entity.is_in_session(s)))
         .take(limit)
         .collect())
 }

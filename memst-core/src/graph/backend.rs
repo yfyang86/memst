@@ -73,6 +73,24 @@ pub trait GraphBackend: Send {
     /// Entities matching the query's type / name / confidence filters.
     fn scan_entities(&self, query: &EntityQuery) -> Result<Vec<Entity>>;
 
+    /// The entity with this exact name (ignoring case) and type, if any:
+    /// how the same real-world thing is recognised when it is met again.
+    /// Deprecated entities are not returned. With several matches, the most
+    /// important one wins.
+    fn find_entity_by_name(&self, name: &str, entity_type: &str) -> Result<Option<Entity>> {
+        let query = EntityQuery {
+            entity_type: Some(entity_type.to_string()),
+            name_contains: Some(name.to_string()),
+            ..EntityQuery::default()
+        };
+        let wanted = name.to_lowercase();
+        Ok(self
+            .scan_entities(&query)?
+            .into_iter()
+            .filter(|e| !e.is_deprecated && e.name.to_lowercase() == wanted)
+            .max_by(|a, b| a.importance().total_cmp(&b.importance())))
+    }
+
     /// Insert or replace a relationship.
     fn put_relationship(&mut self, relationship: &Relationship) -> Result<()>;
 
@@ -143,6 +161,11 @@ pub fn entity_matches(entity: &Entity, query: &EntityQuery) -> bool {
             return false;
         }
     }
+    if let Some(session) = query.session_id {
+        if !entity.is_in_session(session) {
+            return false;
+        }
+    }
     true
 }
 
@@ -165,6 +188,11 @@ pub fn relationship_matches(relationship: &Relationship, query: &RelationshipQue
     }
     if let Some(min) = query.min_confidence {
         if relationship.confidence < min {
+            return false;
+        }
+    }
+    if let Some(session) = query.session_id {
+        if relationship.session_id != session {
             return false;
         }
     }

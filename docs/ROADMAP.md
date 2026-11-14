@@ -20,8 +20,8 @@ evaluation, then the manuscript. Findings behind these choices are in
 | # | Sprint | Status | Done when |
 |---|--------|--------|-----------|
 | 1 | Green build and CI | **Done** | `cargo test --workspace` and the Python tests pass, and run in CI |
-| 2 | One graph per store | Next | Conformance suite passes on the store-level graph; old stores migrate; a query scoped to one owner never returns another's entities |
-| 3 | Extraction into HelixDB | Planned | Extracting a conversation makes its entities searchable with no manual step; the server has no separate graph store |
+| 2 | One graph per store | **Done** | Conformance suite passes on the store-level graph; old stores migrate; a query scoped to one owner never returns another's entities |
+| 3 | Extraction into HelixDB | Next | Extracting a conversation makes its entities searchable with no manual step; the server has no separate graph store |
 | 4 | Non-destructive, time-aware graph | Planned | A corrected fact outranks and hides the stale one; an entity merge can be undone |
 | 5 | Evaluation harness | Planned | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
 | 6 | Security and MCP | Planned | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
@@ -32,10 +32,12 @@ The manuscript update follows sprint 5.
 
 **1. Green build and CI.** Done. See the addendum in `CodeReview/CR-20261114.md`.
 
-**2. One graph per store.** Single HelixDB database per store, with session
-and owner as indexed properties and an ownership filter on every query and
-search. Migrate per-session HelixDB and `graph.json` graphs. Resolve the same
-entity across sessions at write time. Fail clearly on a second writer.
+**2. One graph per store.** Done. One HelixDB database per store; entities
+carry their owner and the sessions that mention them; every query and search is
+restricted to the handle's owner, with search indexes partitioned by owner;
+`resolve_or_add_entity` reuses an entity met again; a lock file refuses a
+second writer while read-only handles keep working; `memst graph migrate` moves
+per-session graphs across. See `docs/graph-backend-helix.md`.
 
 **3. Extraction into HelixDB.** Extraction writes to the graph with provenance
 (source message, extraction run). Local embedding model; entities embedded at

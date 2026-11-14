@@ -69,6 +69,40 @@ impl KnowledgeGraph {
         Ok(entity)
     }
 
+    /// Add an entity, unless the graph already has one with the same name
+    /// (ignoring case) and type: then that entity is kept, marked as also
+    /// seen in the new entity's session, and given any attributes it lacked.
+    ///
+    /// Use this when writing what a conversation mentions, so that the same
+    /// thing met in several sessions is one node. Returns the stored entity
+    /// (whose id may differ from the argument's) and whether it was created.
+    pub fn resolve_or_add_entity(&mut self, entity: Entity) -> Result<(Entity, bool)> {
+        let Some(mut existing) = self
+            .backend
+            .find_entity_by_name(&entity.name, &entity.entity_type)?
+        else {
+            self.backend.put_entity(&entity)?;
+            return Ok((entity, true));
+        };
+
+        let mut changed = existing.mark_seen_in(entity.session_id);
+        if let (Some(kept), Some(incoming)) = (
+            existing.attributes.as_object_mut(),
+            entity.attributes.as_object(),
+        ) {
+            for (key, value) in incoming {
+                if !kept.contains_key(key) {
+                    kept.insert(key.clone(), value.clone());
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.backend.put_entity(&existing)?;
+        }
+        Ok((existing, false))
+    }
+
     /// Add many entities in one write.
     pub fn add_entities(&mut self, entities: &[Entity]) -> Result<()> {
         self.backend.put_entities(entities)

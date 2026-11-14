@@ -48,7 +48,20 @@ pub fn entity_props(entity: &Entity) -> Value {
         "last_decay_at": timestamp(entity.last_decay_at),
         "is_deprecated": entity.is_deprecated,
         "deprecation_reason": entity.deprecation_reason,
+        // Every session that mentions the entity, creating session first.
+        "sessions": std::iter::once(entity.session_id)
+            .chain(entity.seen_in.iter().copied())
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>(),
+        // Exact-match key for recognising the same entity again.
+        "resolve_key": resolve_key(&entity.name, &entity.entity_type),
     })
+}
+
+/// Key under which an entity is recognised when met again: its name
+/// (ignoring case) and type.
+pub fn resolve_key(name: &str, entity_type: &str) -> String {
+    format!("{}\u{1f}{}", name.to_lowercase(), entity_type)
 }
 
 /// Text indexed for keyword search: the name, the type, and every string
@@ -101,7 +114,13 @@ pub fn relationship_props(relationship: &Relationship) -> Value {
 
 pub fn entity_from_row(row: Vec<Value>) -> Result<Entity> {
     let props = Props::from_row(row, "entity")?;
+    let session_id = props.uuid("session_id")?;
     Ok(Entity {
+        seen_in: props
+            .uuid_list("sessions")?
+            .into_iter()
+            .filter(|id| *id != session_id)
+            .collect(),
         id: props.uuid("uid")?,
         name: props.string("name")?,
         entity_type: props.string("entity_type")?,
@@ -225,6 +244,23 @@ impl Props {
         self.optional_string(key)
             .map(|text| Uuid::parse_str(&text).map_err(|e| corrupt(self.kind, key, &e.to_string())))
             .transpose()
+    }
+
+    /// A list of UUID strings; absent means empty.
+    fn uuid_list(&self, key: &str) -> Result<Vec<Uuid>> {
+        let Some(value) = self.map.get(key) else {
+            return Ok(Vec::new());
+        };
+        value
+            .as_array()
+            .ok_or_else(|| corrupt(self.kind, key, "not a list"))?
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .and_then(|text| Uuid::parse_str(text).ok())
+                    .ok_or_else(|| corrupt(self.kind, key, "not a list of ids"))
+            })
+            .collect()
     }
 
     fn f32(&self, key: &str) -> Result<f32> {

@@ -544,6 +544,7 @@ impl MemoryExtractor for LlmExtractor {
                 last_decay_at: chrono::Utc::now(),
                 is_deprecated: false,
                 deprecation_reason: None,
+                seen_in: Vec::new(),
             };
             entities.push(entity.clone());
             entity_map.insert(name, entity.id);
@@ -722,6 +723,7 @@ impl MemoryExtractor for RuleBasedExtractor {
                     last_decay_at: chrono::Utc::now(),
                     is_deprecated: false,
                     deprecation_reason: None,
+                    seen_in: Vec::new(),
                 };
                 entities.push(entity.clone());
 
