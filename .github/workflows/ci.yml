@@ -19,20 +19,18 @@ env:
 
 jobs:
   test:
-    name: cargo test --workspace
+    name: cargo test
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # The workspace includes the Python extension (memst-py). PyO3 0.22
-      # supports Python up to 3.13, and the runner's default is newer.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
+      # memst-py is a Python extension module: its test binary cannot link
+      # without libpython, and the "python bindings" job builds and tests it
+      # properly, through maturin.
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude memst-py --locked
 
   features:
     name: feature combinations
