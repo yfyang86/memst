@@ -41,6 +41,10 @@
 //! but blocks that runtime's worker thread; wrap calls in `spawn_blocking`
 //! there.
 
+// Proving that HelixDB's query futures are `Send` walks deeply nested types;
+// newer compilers (1.100) exceed the default limit of 128 doing so.
+#![recursion_limit = "512"]
+
 mod codec;
 mod store;
 
