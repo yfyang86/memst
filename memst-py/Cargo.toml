@@ -15,6 +15,11 @@ pyo3 = { version = "0.22", features = ["extension-module"] }
 # MemSt core
 memst-core = { path = "../memst-core", default-features = false }
 
+# Knowledge graph: shared HelixDB graph, ingestion, local embeddings
+memst-graph-helix = { path = "../memst-graph-helix" }
+memst-sleep = { path = "../memst-sleep" }
+memst-embed = { path = "../memst-embed" }
+
 # KG Extraction v2 (use SQLite backend for Python bindings)
 memst-extract-v2 = { path = "../memst-extract-v2", default-features = true }
 

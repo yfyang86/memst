@@ -1466,9 +1466,22 @@ def log_operation(session_id: str, operation: OperationLog):
 
 @router.get("/sessions/{session_id}/knowledge-graph", response_model=Dict)
 def get_knowledge_graph(session_id: str, tiers: Optional[str] = None):
-    """Get knowledge graph for session - parses from memories."""
+    """Get knowledge graph for session.
+
+    Served from the store's knowledge graph (the engine's shared HelixDB
+    graph) when it has entities for this session. Otherwise falls back to
+    the older behaviour: a rough graph guessed from capitalised words in the
+    session's memories. The response's "source" says which one it is.
+    """
     import json
     import re
+
+    from memst_server import graph_service
+
+    if not tiers and _memst_client and _memst_client.is_available:
+        from_graph = graph_service.session_graph(str(_memst_client.store_path), session_id)
+        if from_graph is not None:
+            return from_graph
 
     data_path = _get_data_path()
     graph_file = data_path / f"{session_id}_knowledge_graph.json"
@@ -1595,7 +1608,7 @@ def get_knowledge_graph(session_id: str, tiers: Optional[str] = None):
                 node["connections"] += 1
                 other["connections"] += 1
 
-    result = {"nodes": nodes, "edges": edges}
+    result = {"nodes": nodes, "edges": edges, "source": "regex"}
 
     # Save to file
     with open(graph_file, "w") as f:
@@ -1606,16 +1619,41 @@ def get_knowledge_graph(session_id: str, tiers: Optional[str] = None):
 
 @router.post("/sessions/{session_id}/knowledge-graph/parse")
 def parse_knowledge_graph(session_id: str, tiers: Optional[str] = None):
-    """Trigger knowledge graph parsing for session with optional tier selection."""
-    # Force regeneration by deleting cached graph
+    """Build the knowledge graph for a session.
+
+    Runs LLM extraction over the session's messages and writes the result
+    into the store's knowledge graph. If that is not possible (no LLM
+    configured, engine unavailable, extraction failed) the older regex-based
+    graph is rebuilt instead and the reason is returned as "warning".
+    """
+    from memst_server import graph_service
+
+    # Force regeneration of the regex fallback by deleting its cache
     data_path = _get_data_path()
     graph_file = data_path / f"{session_id}_knowledge_graph.json"
 
     if graph_file.exists():
         graph_file.unlink()
 
-    # Return parsed graph with specified tiers
-    return get_knowledge_graph(session_id, tiers)
+    warning = None
+    report = None
+    if not tiers and _memst_client and _memst_client.is_available:
+        try:
+            report = graph_service.ingest_session(
+                str(_memst_client.store_path),
+                session_id,
+                _memst_client.get_messages(session_id),
+                get_db().get_settings().get("llm", {}),
+            )
+        except Exception as e:
+            warning = f"LLM extraction into the knowledge graph was not possible: {e}"
+
+    result = get_knowledge_graph(session_id, tiers)
+    if report is not None:
+        result["ingest"] = report
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def get_knowledge_context(session_id: str, query: str) -> Dict[str, Any]:

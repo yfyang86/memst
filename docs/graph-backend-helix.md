@@ -146,10 +146,53 @@ Two behaviours worth knowing:
 - Vector search returns the nearest entities however far away they are. A
   semantic query always fills its limit once embeddings exist, so judge by
   score, not by presence.
-- An entity is only searchable by vector after it has an embedding. Nothing
-  embeds automatically: call `set_entity_embedding`, or run `memst graph embed`,
-  which uses the embedding API from `config.toml` or `MEMST_EMBEDDING_API_URL`.
-  If `--semantic` cannot reach that API, the CLI warns and searches by keywords.
+- An entity is searchable by vector once it has an embedding. `graph ingest`
+  embeds what it writes. Entities added another way are embedded by
+  `memst graph embed` (or `KnowledgeGraph::embed_pending`), which only touches
+  entities that are new, have changed, or were embedded by a different model.
+
+### Where embeddings come from
+
+`--embedder auto|local|http|none` (default `auto`):
+
+- `http`: the OpenAI-compatible endpoint from `config.toml` or
+  `MEMST_EMBEDDING_API_URL`.
+- `local`: BGE-M3 running on the CPU through ONNX Runtime (`memst-embed`).
+  1024 dimensions, multilingual, no API key. The model is about 2.2 GB,
+  downloaded from Hugging Face on first use into `~/.cache/memst/models`
+  (override with `MEMST_MODEL_DIR`), and needs no network afterwards. On four
+  cores it embeds roughly 45 short texts a second.
+- `auto`: `http` when an endpoint is configured, otherwise `local`.
+
+Each stored vector records the model and a fingerprint of the entity's text,
+so vectors from different models are never mixed and a renamed or extended
+entity is re-embedded. Use the same embedder for queries as for entities.
+
+## From conversation to graph
+
+```bash
+memst --store ./data graph ingest <session>
+```
+
+reads the session's messages that have not been ingested yet, extracts
+entities, relationships and events with the configured LLM (`config.toml`, or
+`MEMST_LLM_API_URL`, `MEMST_LLM_MODEL`, `MEMST_LLM_API_KEY`), and writes them
+into the shared graph (`memst_sleep::kg_ingest`):
+
+- an entity the graph already has (same name and type) is reused and linked to
+  the session;
+- a relationship already present is reinforced (confidence raised, relevance
+  restored) rather than repeated;
+- events become entities, with a `participated_in` edge from each participant;
+- everything records its session and source message, and each entity the
+  extraction run that last wrote it;
+- a relationship whose endpoint cannot be identified is skipped and counted;
+- new and changed entities are embedded.
+
+From Python the same graph is `memst.Graph` (`open`, `add_entity`,
+`add_relationship`, `entities`, `relationships`, `search`, `neighbors`,
+`ingest_extraction`, `ingest_messages`, `embed_pending`). The server's
+knowledge-graph endpoints use it.
 
 Embeddings are kept when an entity is updated, are copied by `graph migrate`,
 and are also stored by the JSON backend (inside `graph.json`).
@@ -232,13 +275,8 @@ pass.
 
 ## Not done yet
 
-- **Automatic embedding.** Entities are embedded only on request. Embedding at
-  extraction time, and re-embedding when an entity's text changes, are not wired
-  in.
 - **Search over relationships.** Only entities are indexed for BM25 and
   vectors.
-- **KG extraction v2** (`memst-extract-v2`) still writes to its own SQLite
-  tables and does not feed this graph.
+- **Ontology-guided extraction** (`memst-extract-v2`) is not connected to this
+  graph. Its extraction step is a keyword demo, not an LLM call.
 - **Bi-temporal edges.** See `docs/research/memst-and-the-field.md`.
-- **Server and Python bindings.** `memst-py` and `apps/memst-server` do not
-  expose the graph, so they are unaffected.

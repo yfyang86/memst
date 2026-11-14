@@ -98,3 +98,34 @@ pub fn default_model_dir() -> PathBuf {
         .map(|cache| cache.join("memst").join("models"))
         .unwrap_or_else(|| PathBuf::from(".memst-models"))
 }
+
+/// Pick an embedder by name: `"local"`, `"http"`, `"auto"` or `"none"`.
+///
+/// `"auto"` uses the embedding endpoint from `config.toml` or
+/// `MEMST_EMBEDDING_API_URL` when one is configured, and the local model
+/// otherwise. `"none"` returns `Ok(None)`. `on_download` is called before the
+/// local model is fetched for the first time, with the cache directory.
+pub fn select_embedder(
+    kind: &str,
+    on_download: impl Fn(&Path),
+) -> Result<Option<Box<dyn Embedder>>> {
+    let local = || -> Result<Box<dyn Embedder>> {
+        let dir = default_model_dir();
+        if !LocalEmbedder::is_cached(&dir) {
+            on_download(&dir);
+        }
+        Ok(Box::new(LocalEmbedder::bge_m3_in(&dir)?))
+    };
+    match kind {
+        "none" => Ok(None),
+        "http" => Ok(Some(Box::new(memst_core::embed::HttpEmbedder::from_config()?))),
+        "local" => Ok(Some(local()?)),
+        "auto" => match memst_core::embed::HttpEmbedder::from_config() {
+            Ok(http) => Ok(Some(Box::new(http))),
+            Err(_) => Ok(Some(local()?)),
+        },
+        other => Err(Error::InvalidOperation(format!(
+            "unknown embedder '{other}' (expected auto, local, http or none)"
+        ))),
+    }
+}

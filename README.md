@@ -63,6 +63,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **memst-py**: Python extension module (`import memst`)
 - **memst-lib**: Shared library/FFI glue
 - **memst-graph-helix**: Knowledge-graph backend on embedded [HelixDB](https://github.com/yfyang86/helix-db) (graph + vector + BM25)
+- **memst-embed**: Local CPU text embeddings (BGE-M3), no API key needed
 
 ### Applications (`apps/`, outside the Rust workspace)
 - **apps/memst-server**: Python FastAPI backend server with nanobot agent integration

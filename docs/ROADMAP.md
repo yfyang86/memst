@@ -21,8 +21,8 @@ evaluation, then the manuscript. Findings behind these choices are in
 |---|--------|--------|-----------|
 | 1 | Green build and CI | **Done** | `cargo test --workspace` and the Python tests pass, and run in CI |
 | 2 | One graph per store | **Done** | Conformance suite passes on the store-level graph; old stores migrate; a query scoped to one owner never returns another's entities |
-| 3 | Extraction into HelixDB | Next | Extracting a conversation makes its entities searchable with no manual step; the server has no separate graph store |
-| 4 | Non-destructive, time-aware graph | Planned | A corrected fact outranks and hides the stale one; an entity merge can be undone |
+| 3 | Extraction into HelixDB | **Done**, two items carried into sprint 4 | Extracting a conversation makes its entities searchable with no manual step; the server has no separate graph store |
+| 4 | Non-destructive, time-aware graph | Next | A corrected fact outranks and hides the stale one; an entity merge can be undone |
 | 5 | Evaluation harness | Planned | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
 | 6 | Security and MCP | Planned | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
 
@@ -39,13 +39,28 @@ restricted to the handle's owner, with search indexes partitioned by owner;
 second writer while read-only handles keep working; `memst graph migrate` moves
 per-session graphs across. See `docs/graph-backend-helix.md`.
 
-**3. Extraction into HelixDB.** Extraction writes to the graph with provenance
-(source message, extraction run). Local embedding model; entities embedded at
-write and re-embedded when their text changes. BM25 over relationships. Graph
-exposed in `memst-py`; the server reads through it and drops its own graph
-tables.
+**3. Extraction into HelixDB.** Done:
 
-**4. Non-destructive, time-aware graph.** Valid-from, valid-to and
+- `memst-sleep` `kg_ingest` writes LLM extraction into the shared graph:
+  known entities reused, repeated relationships reinforced, provenance
+  (session, message, run) recorded, new and changed entities embedded.
+- `memst-embed`: BGE-M3 on the CPU. `KnowledgeGraph::embed_pending` embeds only
+  what is new, changed, or embedded by another model.
+- CLI `graph ingest`; Python `memst.Graph`; the server's knowledge-graph
+  endpoints read and build the engine's graph, with the old regex graph as
+  fallback.
+
+Carried into sprint 4:
+
+- **Ontology-guided extraction (`memst-extract-v2`) is not connected.** Its
+  extraction step does not call an LLM: it matches a fixed list of ten names.
+  Feeding that into the shared graph would only pollute it, so it was left
+  alone. Making it real (LLM call with the ontology prompt, then `kg_ingest`)
+  is the remaining work.
+- **BM25 search over relationships.**
+
+**4. Non-destructive, time-aware graph.** The two items carried from sprint
+3, then: valid-from, valid-to and
 superseded-by on relationships; superseded facts marked rather than only
 decayed. Reversible entity merges. Search and graph expansion in one query.
 Raw messages offered as a retrieval strategy.

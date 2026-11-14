@@ -401,33 +401,24 @@ enum GraphCommand {
 }
 
 /// The embedder the `--embedder` option selects, or `None` for "none".
+#[cfg(feature = "local-embeddings")]
 fn select_embedder(kind: &str) -> Result<Option<Box<dyn memst_core::embed::Embedder>>> {
-    use memst_core::embed::{Embedder, HttpEmbedder};
+    Ok(memst_embed::select_embedder(kind, |dir| {
+        eprintln!(
+            "note: downloading the BGE-M3 embedding model (about 2.2 GB) to {}; this happens once",
+            dir.display()
+        );
+    })?)
+}
 
-    #[cfg(feature = "local-embeddings")]
-    fn local() -> Result<Box<dyn Embedder>> {
-        let dir = memst_embed::default_model_dir();
-        if !memst_embed::LocalEmbedder::is_cached(&dir) {
-            eprintln!(
-                "note: downloading the BGE-M3 embedding model (about 2.2 GB) to {}; this happens once",
-                dir.display()
-            );
-        }
-        Ok(Box::new(memst_embed::LocalEmbedder::bge_m3_in(&dir)?))
-    }
-    #[cfg(not(feature = "local-embeddings"))]
-    fn local() -> Result<Box<dyn Embedder>> {
-        anyhow::bail!("this memst was built without the 'local-embeddings' feature")
-    }
-
+/// The embedder the `--embedder` option selects (built without the local model).
+#[cfg(not(feature = "local-embeddings"))]
+fn select_embedder(kind: &str) -> Result<Option<Box<dyn memst_core::embed::Embedder>>> {
+    use memst_core::embed::HttpEmbedder;
     match kind {
         "none" => Ok(None),
-        "http" => Ok(Some(Box::new(HttpEmbedder::from_config()?))),
-        "local" => Ok(Some(local()?)),
-        "auto" => match HttpEmbedder::from_config() {
-            Ok(http) => Ok(Some(Box::new(http))),
-            Err(_) => Ok(Some(local()?)),
-        },
+        "http" | "auto" => Ok(Some(Box::new(HttpEmbedder::from_config()?))),
+        "local" => anyhow::bail!("this memst was built without the 'local-embeddings' feature"),
         other => anyhow::bail!("unknown embedder '{other}' (expected auto, local, http or none)"),
     }
 }

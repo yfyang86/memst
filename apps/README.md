@@ -151,6 +151,21 @@ cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 - **memst-py build fails**: Make sure to `unset CONDA_PREFIX` before building with maturin
 - **SQLite/DuckDB issues**: Ensure you have the proper build tools installed for your platform
 
+## Knowledge graph
+
+`GET /sessions/{id}/knowledge-graph` and `POST .../knowledge-graph/parse` are
+served from the engine's shared knowledge graph. `parse` runs LLM extraction
+over the session's messages with the LLM from the server settings and writes
+the result into the graph; the response's `source` is then `"graph"`. Without a
+configured LLM, or if extraction fails, the previous regex-based graph is
+returned instead, with `source: "regex"` and a `warning`.
+
+The server holds the store's graph open for writing while it runs, so
+`memst graph` commands against the same store can read but not write. Set
+`MEMST_SERVER_EMBEDDER=none` to skip embedding, or `local` / `http` to choose;
+the default `auto` downloads the 2.2 GB local model on first use when no
+embedding API is configured.
+
 ## Desktop build (optional)
 
 ```bash
