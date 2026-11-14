@@ -57,7 +57,7 @@ Carried into sprint 4:
   Feeding that into the shared graph would only pollute it, so it was left
   alone. Making it real (LLM call with the ontology prompt, then `kg_ingest`)
   is the remaining work.
-- **BM25 search over relationships.**
+- **BM25 search over relationships.** Done at the start of sprint 4.
 
 **4. Non-destructive, time-aware graph.** The two items carried from sprint
 3, then: valid-from, valid-to and

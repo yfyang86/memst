@@ -223,3 +223,46 @@ fn json_backend_always_uses_the_fallback() {
     assert_eq!(result.method, SearchMethod::Fallback);
     assert!(result.fallback_reason.unwrap().contains("no native search"));
 }
+
+#[test]
+fn searches_relationships_with_helix_bm25() {
+    let dir = TempDir::new().unwrap();
+    let mut graph = helix(dir.path());
+    let session = Uuid::new_v4();
+    let alice = graph.add_entity(Entity::new("Alice", "person", session)).unwrap();
+    let bob = graph.add_entity(Entity::new("Bob", "person", session)).unwrap();
+    let rust = graph.add_entity(Entity::new("Rust", "language", session)).unwrap();
+    let uses = graph.add_relationship(Relationship::new(alice.id, "uses", rust.id, session)).unwrap();
+    let manages = graph.add_relationship(Relationship::new(bob.id, "manages", alice.id, session)).unwrap();
+
+    // Wait for the edge index, then HelixDB itself must answer.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let result = loop {
+        let result = graph.search_relationships("alice uses", 0).unwrap();
+        if result.method == SearchMethod::Native {
+            break result;
+        }
+        assert!(std::time::Instant::now() < deadline, "{:?}", result.fallback_reason);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    let ids: Vec<Uuid> = result.hits.iter().map(|(t, _)| t.0.id).collect();
+    assert_eq!(ids, vec![uses.id, manages.id], "ranked by how much of the query matches");
+    assert!(result.hits[0].1 > result.hits[1].1);
+
+    // Updating an edge keeps it searchable; deleting removes it.
+    graph.update_relationship(uses.id, Some(0.2)).unwrap();
+    assert_eq!(graph.search_relationships("rust", 0).unwrap().hits.len(), 1);
+    graph.delete_relationship(uses.id).unwrap();
+    let after = graph.search_relationships("rust", 0).unwrap();
+    assert!(after.hits.is_empty());
+
+    // Another owner's edges are not searchable from here.
+    drop(graph);
+    let other = memst_graph_helix::HelixGraphBackend::open_with(
+        dir.path(),
+        memst_graph_helix::HelixGraphOptions::for_owner("someone-else"),
+    )
+    .unwrap();
+    let other = KnowledgeGraph::with_backend(Box::new(other));
+    assert!(other.search_relationships("manages", 0).unwrap().hits.is_empty());
+}

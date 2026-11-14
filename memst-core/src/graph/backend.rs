@@ -137,6 +137,14 @@ pub trait GraphBackend: Send {
         Ok(None)
     }
 
+    /// Keyword search over relationships with the backend's own index: ids
+    /// best first with a relevance score, `Ok(None)` when the backend has no
+    /// such index, `Err` when it cannot be served right now. Same contract as
+    /// [`search_entities`](Self::search_entities).
+    fn search_relationships(&self, _text: &str, _limit: usize) -> Result<Option<Vec<(RelationshipId, f32)>>> {
+        Ok(None)
+    }
+
     /// Number of stored entities (including deprecated ones).
     fn entity_count(&self) -> Result<usize>;
 

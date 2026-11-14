@@ -23,6 +23,7 @@ pub fn run_all(fresh: &mut dyn FnMut() -> KnowledgeGraph) {
     search(&mut fresh());
     sessions_share_entities(&mut fresh());
     embeddings_follow_entities(&mut fresh());
+    relationship_search(&mut fresh());
 }
 
 /// `reopen` must return the same store each time; the previous handle is
@@ -518,4 +519,32 @@ fn embeddings_follow_entities(graph: &mut KnowledgeGraph) {
     assert_eq!(graph.embed_pending(&other).unwrap(), 2);
     graph.set_entity_embedding(rust.id, &[1.0, 0.0, 0.0]).unwrap();
     assert_eq!(graph.embed_pending(&other).unwrap(), 1);
+}
+
+/// Relationships are found by the words of "subject predicate object".
+fn relationship_search(graph: &mut KnowledgeGraph) {
+    let session = Uuid::new_v4();
+    let alice = graph.add_entity(Entity::new("Alice", "person", session)).unwrap();
+    let bob = graph.add_entity(Entity::new("Bob", "person", session)).unwrap();
+    let rust = graph.add_entity(Entity::new("Rust", "language", session)).unwrap();
+    let uses = graph.add_relationship(Relationship::new(alice.id, "uses", rust.id, session)).unwrap();
+    let manages = graph.add_relationship(Relationship::new(bob.id, "manages", alice.id, session)).unwrap();
+
+    let ids = |graph: &KnowledgeGraph, text: &str| -> Vec<Uuid> {
+        graph.search_relationships(text, 0).unwrap().hits.into_iter().map(|(t, _)| t.0.id).collect()
+    };
+    assert_eq!(ids(graph, "manages"), vec![manages.id]);
+    assert_eq!(ids(graph, "rust"), vec![uses.id]);
+    // Both mention Alice; the one matching more of the query comes first.
+    assert_eq!(ids(graph, "alice uses"), vec![uses.id, manages.id]);
+    assert!(ids(graph, "zzz-nothing").is_empty());
+    assert!(graph.search_relationships("  ", 0).is_err());
+    assert_eq!(graph.search_relationships("alice", 1).unwrap().hits.len(), 1);
+
+    let hit = &graph.search_relationships("manages", 0).unwrap().hits[0];
+    assert_eq!((hit.0 .1.id, hit.0 .2.id), (bob.id, alice.id), "hits carry both endpoints");
+    assert!(hit.1 > 0.0);
+
+    graph.delete_relationship(manages.id).unwrap();
+    assert!(ids(graph, "manages").is_empty());
 }

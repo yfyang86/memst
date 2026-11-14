@@ -282,6 +282,7 @@ impl HelixGraphBackend {
         // created on the first `set_entity_embedding`, when the dimension is
         // known.
         self.create_index(IndexSpec::node_text(NODE_LABEL, TEXT_PROPERTY, Some(OWNER_PROPERTY)))?;
+        self.create_index(IndexSpec::edge_text(EDGE_TYPE, TEXT_PROPERTY, Some(OWNER_PROPERTY)))?;
         self.wait_until_searchable(move || {
             let probe = g()
                 .text_search_nodes(NODE_LABEL, TEXT_PROPERTY, "memst", 1, Some(tenant.clone()))
@@ -572,7 +573,23 @@ impl GraphBackend for HelixGraphBackend {
             relationship.subject_id.to_string(),
             relationship.object_id.to_string(),
         );
-        let props = codec::relationship_props(relationship);
+        // The edge is indexed under the names of its endpoints as they are
+        // now; renaming an entity later does not re-index its edges.
+        let names: std::collections::HashMap<EntityId, Entity> = self
+            .get_entities(&[relationship.subject_id, relationship.object_id])?
+            .into_iter()
+            .map(|e| (e.id, e))
+            .collect();
+        let search_text = match (names.get(&relationship.subject_id), names.get(&relationship.object_id)) {
+            (Some(subject_entity), Some(object_entity)) => {
+                memst_core::graph::relationship_text(subject_entity, &relationship.predicate, object_entity)
+            }
+            _ => relationship.predicate.clone(),
+        };
+        let mut props = codec::relationship_props(relationship, &search_text);
+        if let Some(owner) = &self.owner {
+            props[OWNER_PROPERTY] = json!(owner);
+        }
 
         // An edge cannot be re-pointed, so an existing edge is updated in
         // place only when its endpoints are unchanged.
@@ -807,6 +824,20 @@ impl GraphBackend for HelixGraphBackend {
         };
         ranked.truncate(limit);
         Ok(Some(ranked))
+    }
+
+    /// BM25 over each edge's "subject predicate object" text.
+    fn search_relationships(&self, text: &str, limit: usize) -> Result<Option<Vec<(RelationshipId, f32)>>> {
+        let tenant = self.tenant()?;
+        let hits = g()
+            .text_search_edges(EDGE_TYPE, TEXT_PROPERTY, text, limit, Some(tenant))
+            .value_map(Some(vec!["uid", "$score"]));
+        let request = QueryRequest::read(read_batch().var_as("keyword", hits).returning(["keyword"]));
+        let client = self.client.clone();
+        let response = self
+            .block_on(async move { client.query::<Value>(request).send().await })
+            .map_err(helix_error)?;
+        Ok(Some(codec::search_hits(&response, "keyword", "$score")?))
     }
 
     fn entity_count(&self) -> Result<usize> {

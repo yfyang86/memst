@@ -139,6 +139,12 @@ by reciprocal rank. It reads the whole graph, so it is slower on large graphs,
 and it only looks at names, not attributes.
 
 `result.method` and `result.fallback_reason` say which path answered and why.
+
+Relationships are searchable too. `search_relationships("alice uses rust", 10)`
+(CLI: `graph search <session> "..." --relationships`) matches the words of
+"subject predicate object": BM25 over an edge index in HelixDB, word matching
+as the fallback. An edge is indexed under its endpoints' names at the time it
+is written; renaming an entity later does not re-index its edges.
 Deprecated entities are left out unless `include_deprecated` is set.
 
 Two behaviours worth knowing:
@@ -275,8 +281,6 @@ pass.
 
 ## Not done yet
 
-- **Search over relationships.** Only entities are indexed for BM25 and
-  vectors.
 - **Ontology-guided extraction** (`memst-extract-v2`) is not connected to this
   graph. Its extraction step is a keyword demo, not an LLM call.
 - **Bi-temporal edges.** See `docs/research/memst-and-the-field.md`.

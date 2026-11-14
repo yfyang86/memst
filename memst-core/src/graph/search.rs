@@ -72,6 +72,78 @@ pub struct EntitySearchResult {
     pub fallback_reason: Option<String>,
 }
 
+/// Relationship search hits, best first, and how they were found.
+#[derive(Debug, Clone)]
+pub struct RelationshipSearchResult {
+    /// `(relationship, subject, object)` with a relevance score, best first.
+    pub hits: Vec<(super::Triple, f32)>,
+    /// The path that answered.
+    pub method: SearchMethod,
+    /// Why the backend's native search was not used, on fallback.
+    pub fallback_reason: Option<String>,
+}
+
+/// The text a relationship is found by: "subject predicate object".
+pub fn relationship_text(subject: &Entity, predicate: &str, object: &Entity) -> String {
+    format!("{} {} {}", subject.name, predicate, object.name)
+}
+
+pub(super) fn run_relationships(
+    backend: &dyn GraphBackend,
+    text: &str,
+    limit: usize,
+) -> Result<(Vec<(crate::types::RelationshipId, f32)>, SearchMethod, Option<String>)> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(Error::InvalidOperation("relationship search needs a text query".to_string()));
+    }
+    let limit = if limit == 0 { 10 } else { limit };
+    let reason = match backend.search_relationships(text, limit) {
+        Ok(Some(ranked)) if !ranked.is_empty() => return Ok((ranked, SearchMethod::Native, None)),
+        Ok(Some(_)) => format!("{} search found nothing", backend.kind()),
+        Ok(None) => format!("the {} backend has no native search", backend.kind()),
+        Err(error) => format!("{} search failed: {error}", backend.kind()),
+    };
+
+    // MemSt's own matching: the fraction of query words found (as
+    // substrings) in "subject predicate object", ties broken by confidence
+    // and relevance.
+    let whole = text.to_lowercase();
+    let words: Vec<&str> = whole
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let relationships = backend.scan_relationships(&crate::types::RelationshipQuery::default())?;
+    let mut ids: Vec<EntityId> = relationships.iter().flat_map(|r| [r.subject_id, r.object_id]).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let entities: HashMap<EntityId, Entity> =
+        backend.get_entities(&ids)?.into_iter().map(|e| (e.id, e)).collect();
+    let mut ranked: Vec<(crate::types::RelationshipId, f32, f32)> = relationships
+        .iter()
+        .filter_map(|r| {
+            let haystack =
+                relationship_text(entities.get(&r.subject_id)?, &r.predicate, entities.get(&r.object_id)?)
+                    .to_lowercase();
+            let score = if haystack.contains(&whole) {
+                1.0
+            } else if words.is_empty() {
+                0.0
+            } else {
+                words.iter().filter(|w| haystack.contains(**w)).count() as f32 / words.len() as f32
+            };
+            (score > 0.0).then_some((r.id, score, r.confidence * r.relevance))
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.2.total_cmp(&a.2)));
+    ranked.truncate(limit);
+    Ok((
+        ranked.into_iter().map(|(id, score, _)| (id, score)).collect(),
+        SearchMethod::Fallback,
+        Some(reason),
+    ))
+}
+
 pub(super) fn run(backend: &dyn GraphBackend, query: &EntitySearch) -> Result<EntitySearchResult> {
     let text = query.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
     let embedding = query.embedding.as_deref().filter(|e| !e.is_empty());

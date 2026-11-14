@@ -64,8 +64,10 @@ pub fn resolve_key(name: &str, entity_type: &str) -> String {
     format!("{}\u{1f}{}", name.to_lowercase(), entity_type)
 }
 
-pub fn relationship_props(relationship: &Relationship) -> Value {
+pub fn relationship_props(relationship: &Relationship, search_text: &str) -> Value {
     json!({
+        // "subject predicate object", for the BM25 index over edges.
+        "search_text": search_text,
         "uid": relationship.id.to_string(),
         // Endpoints are repeated on the edge so a relationship can be
         // rebuilt from the edge alone. They never go stale: an edge cannot

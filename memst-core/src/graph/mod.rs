@@ -17,7 +17,9 @@ mod json;
 mod search;
 
 pub use backend::{entity_matches, relationship_matches, rrf_fuse, Direction, GraphBackend};
-pub use search::{EntityHit, EntitySearch, EntitySearchResult, SearchMethod};
+pub use search::{
+    relationship_text, EntityHit, EntitySearch, EntitySearchResult, RelationshipSearchResult, SearchMethod,
+};
 pub use json::JsonGraphBackend;
 
 use crate::error::{Error, Result};
@@ -232,6 +234,25 @@ impl KnowledgeGraph {
     /// [`EntitySearchResult::method`] says which path answered.
     pub fn search_entities(&self, query: &EntitySearch) -> Result<EntitySearchResult> {
         search::run(self.backend.as_ref(), query)
+    }
+
+    /// Search relationships by keywords, matched against
+    /// "subject predicate object" (for example "alice uses rust").
+    ///
+    /// Like [`search_entities`](Self::search_entities): the backend's index
+    /// first (HelixDB: BM25), then MemSt's own word matching when the backend
+    /// has none, fails, or finds nothing. `limit` 0 means 10.
+    pub fn search_relationships(&self, text: &str, limit: usize) -> Result<RelationshipSearchResult> {
+        let (ranked, method, fallback_reason) = search::run_relationships(self.backend.as_ref(), text, limit)?;
+        let mut hits = Vec::with_capacity(ranked.len());
+        for (id, score) in ranked {
+            if let Some(relationship) = self.backend.get_relationship(id)? {
+                if let Some(triple) = self.join_endpoints(vec![relationship])?.pop() {
+                    hits.push((triple, score));
+                }
+            }
+        }
+        Ok(RelationshipSearchResult { hits, method, fallback_reason })
     }
 
     /// Delete an entity and all its relationships.

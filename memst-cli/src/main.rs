@@ -371,6 +371,10 @@ enum GraphCommand {
         #[arg(long)]
         include_deprecated: bool,
 
+        /// Search relationships ("alice uses rust") instead of entities
+        #[arg(long)]
+        relationships: bool,
+
         /// JSON output
         #[arg(long)]
         json: bool,
@@ -1129,8 +1133,45 @@ fn main() -> Result<()> {
                     limit,
                     semantic,
                     include_deprecated,
+                    relationships,
                     json,
                 } => {
+                    if *relationships {
+                        let result = graph.search_relationships(query, *limit)?;
+                        let hits: Vec<_> = result
+                            .hits
+                            .iter()
+                            .filter(|((r, _, _), _)| *all_sessions || r.session_id == *session_id)
+                            .collect();
+                        if *json {
+                            let rows: Vec<_> = hits
+                                .iter()
+                                .map(|((r, s, o), score)| {
+                                    json!({
+                                        "id": r.id.to_string(),
+                                        "subject": s.name,
+                                        "predicate": r.predicate,
+                                        "object": o.name,
+                                        "confidence": r.confidence,
+                                        "score": score
+                                    })
+                                })
+                                .collect();
+                            println!("{}", serde_json::to_string_pretty(&rows)?);
+                        } else {
+                            if let Some(reason) = &result.fallback_reason {
+                                println!("(fallback search: {reason})");
+                            }
+                            if hits.is_empty() {
+                                println!("No relationships found.");
+                            }
+                            for ((r, s, o), score) in hits {
+                                println!("  {:.3}  {} --[{}]--> {}", score, s.name, r.predicate, o.name);
+                            }
+                        }
+                        return Ok(());
+                    }
+
                     let mut search = EntitySearch::text(query.clone()).with_limit(*limit);
                     search.include_deprecated = *include_deprecated;
                     if !*all_sessions {
