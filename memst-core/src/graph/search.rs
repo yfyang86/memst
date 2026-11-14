@@ -113,7 +113,8 @@ pub(super) fn run_relationships(
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .collect();
-    let relationships = backend.scan_relationships(&crate::types::RelationshipQuery::default())?;
+    let mut relationships = backend.scan_relationships(&crate::types::RelationshipQuery::default())?;
+    relationships.retain(crate::types::Relationship::is_current);
     let mut ids: Vec<EntityId> = relationships.iter().flat_map(|r| [r.subject_id, r.object_id]).collect();
     ids.sort_unstable();
     ids.dedup();

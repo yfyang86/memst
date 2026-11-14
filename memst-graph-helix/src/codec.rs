@@ -83,6 +83,9 @@ pub fn relationship_props(relationship: &Relationship, search_text: &str) -> Val
         "half_life_days": float(relationship.half_life_days),
         "is_stable": relationship.is_stable,
         "last_decay_at": timestamp(relationship.last_decay_at),
+        "valid_from": relationship.valid_from.map(timestamp),
+        "valid_to": relationship.valid_to.map(timestamp),
+        "superseded_by": relationship.superseded_by.map(|id| id.to_string()),
     })
 }
 
@@ -128,6 +131,9 @@ pub fn relationship_from_row(row: Vec<Value>) -> Result<Relationship> {
         half_life_days: props.f32("half_life_days")?,
         is_stable: props.bool("is_stable")?,
         last_decay_at: props.timestamp("last_decay_at")?,
+        valid_from: props.optional_timestamp("valid_from")?,
+        valid_to: props.optional_timestamp("valid_to")?,
+        superseded_by: props.optional_uuid("superseded_by")?,
     })
 }
 
@@ -252,6 +258,13 @@ impl Props {
         self.get(key)?
             .as_bool()
             .ok_or_else(|| corrupt(self.kind, key, "not a boolean"))
+    }
+
+    fn optional_timestamp(&self, key: &str) -> Result<Option<DateTime<Utc>>> {
+        if self.map.get(key).map_or(true, Value::is_null) {
+            return Ok(None);
+        }
+        self.timestamp(key).map(Some)
     }
 
     fn timestamp(&self, key: &str) -> Result<DateTime<Utc>> {

@@ -75,6 +75,7 @@ async fn extraction_lands_in_the_graph_searchable() {
             entities_reused: 0,
             relationships_created: 2,
             relationships_reinforced: 0,
+            relationships_superseded: 0,
             relationships_skipped: 1,
             entities_embedded: 3,
         }
@@ -125,6 +126,7 @@ async fn extraction_lands_in_the_graph_searchable() {
             entities_reused: 1,
             relationships_created: 1,
             relationships_reinforced: 1,
+            relationships_superseded: 0,
             relationships_skipped: 0,
             // Tokio is new; Rust gained an attribute, so its text changed.
             entities_embedded: 2,
@@ -178,4 +180,56 @@ async fn a_bad_llm_answer_is_an_error_and_writes_nothing() {
         .await;
     assert!(result.is_err());
     assert!(graph.all_entities().unwrap().is_empty());
+}
+
+const IN_PARIS: &str = r#"{"entities": [
+    {"name": "Alice", "type": "person", "confidence": 0.9},
+    {"name": "Paris", "type": "city", "confidence": 0.9},
+    {"name": "Rust", "type": "language", "confidence": 0.9}],
+  "relationships": [
+    {"subject": "Alice", "predicate": "lives in", "object": "Paris", "confidence": 0.8},
+    {"subject": "Alice", "predicate": "uses", "object": "Rust", "confidence": 0.8}], "events": []}"#;
+
+const IN_LYON: &str = r#"{"entities": [
+    {"name": "Alice", "type": "person", "confidence": 0.9},
+    {"name": "Lyon", "type": "city", "confidence": 0.9},
+    {"name": "Python", "type": "language", "confidence": 0.9}],
+  "relationships": [
+    {"subject": "Alice", "predicate": "lives_in", "object": "Lyon", "confidence": 0.9},
+    {"subject": "Alice", "predicate": "uses", "object": "Python", "confidence": 0.8}], "events": []}"#;
+
+#[tokio::test]
+async fn a_later_conversation_updates_a_single_valued_fact() {
+    let (mut graph, _dir) = graph();
+    let session = Uuid::new_v4();
+    let message = |text: &str| vec![(Uuid::new_v4(), text.to_string())];
+
+    ingestor(&[IN_PARIS])
+        .ingest_messages(&mut graph, session, &message("I live in Paris and use Rust."), 4000, None)
+        .await
+        .unwrap();
+    let report = ingestor(&[IN_LYON])
+        .ingest_messages(&mut graph, session, &message("I moved to Lyon. I also use Python now."), 4000, None)
+        .await
+        .unwrap();
+    assert_eq!(report.relationships_superseded, 1);
+    assert_eq!(report.relationships_created, 2);
+
+    // Where she lives has one answer; what she uses has two.
+    let alice = graph.find_entities(EntityQuery::new().with_type("person")).unwrap().remove(0);
+    let objects = |graph: &KnowledgeGraph, query: RelationshipQuery| -> Vec<String> {
+        let mut names: Vec<String> = graph.find_relationships(query).unwrap().into_iter().map(|t| t.2.name).collect();
+        names.sort();
+        names
+    };
+    let lives = RelationshipQuery::new().with_subject(alice.id);
+    assert_eq!(objects(&graph, lives.clone().with_predicate("lives_in")), vec!["Lyon"]);
+    assert_eq!(objects(&graph, RelationshipQuery::new().with_predicate("uses")), vec!["Python", "Rust"]);
+
+    // The old answer is history, not gone. ("lives in" and "lives_in" are
+    // stored as the same predicate.)
+    let all = graph.find_relationships(RelationshipQuery::new().with_subject(alice.id).with_superseded()).unwrap();
+    let paris = all.iter().find(|t| t.2.name == "Paris").expect("still on record");
+    assert!(!paris.0.is_current());
+    assert!(paris.0.superseded_by.is_some());
 }

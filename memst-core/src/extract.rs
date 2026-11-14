@@ -586,6 +586,9 @@ impl MemoryExtractor for LlmExtractor {
                     half_life_days: 30.0,
                     is_stable: false,
                     last_decay_at: chrono::Utc::now(),
+                    valid_from: None,
+                    valid_to: None,
+                    superseded_by: None,
                 });
             }
         }
@@ -741,6 +744,9 @@ impl MemoryExtractor for RuleBasedExtractor {
                         half_life_days: 30.0,
                         is_stable: false,
                         last_decay_at: chrono::Utc::now(),
+                        valid_from: None,
+                        valid_to: None,
+                        superseded_by: None,
                     });
                 }
                 prev_entity = Some(entity);

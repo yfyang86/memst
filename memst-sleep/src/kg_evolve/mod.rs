@@ -440,40 +440,15 @@ impl KgEvolutionEngine {
         keep_id: EntityId,
         merge_id: EntityId,
     ) -> Result<bool> {
-        let merge_entity = graph
-            .get_entity(merge_id)?
-            .ok_or(KgError::EntityNotFound(merge_id))?;
-
-        let kept = graph.update_entity(keep_id, |keep_entity| {
-            // Merge attributes (existing keys on the kept entity win)
-            if let (Some(keep_attrs), Some(merge_attrs)) = (
-                keep_entity.attributes.as_object_mut(),
-                merge_entity.attributes.as_object(),
-            ) {
-                for (key, value) in merge_attrs {
-                    if !keep_attrs.contains_key(key) {
-                        keep_attrs.insert(key.clone(), value.clone());
-                    }
-                }
-            }
-
-            // Update confidence (boost for merged entity)
-            keep_entity.confidence =
-                (keep_entity.confidence + merge_entity.confidence * 0.5).min(1.0);
-
-            // Combine access counts
-            keep_entity.access_count += merge_entity.access_count;
-        })?;
-        if !kept {
+        if graph.get_entity(merge_id)?.is_none() {
+            return Err(KgError::EntityNotFound(merge_id));
+        }
+        if graph.get_entity(keep_id)?.is_none() {
             return Err(KgError::EntityNotFound(keep_id));
         }
-
-        // Mark merged entity as deprecated; the reason names the replacement
-        graph.update_entity(merge_id, |e| e.deprecate(format!("Merged into {}", keep_id)))?;
-
-        // Transfer relationships from merge to keep
-        graph.migrate_relationships(merge_id, keep_id)?;
-
+        // The graph records what the merge changed, so it can be undone with
+        // `KnowledgeGraph::undo_merge(merge_id)`.
+        graph.merge_entities(keep_id, merge_id)?;
         Ok(true)
     }
 

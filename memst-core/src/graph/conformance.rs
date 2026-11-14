@@ -24,6 +24,8 @@ pub fn run_all(fresh: &mut dyn FnMut() -> KnowledgeGraph) {
     sessions_share_entities(&mut fresh());
     embeddings_follow_entities(&mut fresh());
     relationship_search(&mut fresh());
+    facts_change_over_time(&mut fresh());
+    merges_can_be_undone(&mut fresh());
 }
 
 /// `reopen` must return the same store each time; the previous handle is
@@ -547,4 +549,231 @@ fn relationship_search(graph: &mut KnowledgeGraph) {
 
     graph.delete_relationship(manages.id).unwrap();
     assert!(ids(graph, "manages").is_empty());
+}
+
+/// A corrected fact replaces the old one without erasing it.
+fn facts_change_over_time(graph: &mut KnowledgeGraph) {
+    let session = Uuid::new_v4();
+    let alice = graph.add_entity(Entity::new("Alice", "person", session)).unwrap();
+    let [paris, lyon, berlin] = ["Paris", "Lyon", "Berlin"]
+        .map(|city| graph.add_entity(Entity::new(city, "city", session)).unwrap());
+    let rust = graph.add_entity(Entity::new("Rust", "language", session)).unwrap();
+    graph.add_relationship(Relationship::new(alice.id, "uses", rust.id, session)).unwrap();
+
+    // Alice lives in Paris.
+    let (in_paris, superseded) = graph
+        .assert_single_valued(Relationship::new(alice.id, "lives_in", paris.id, session).with_confidence(0.6))
+        .unwrap();
+    assert!(superseded.is_empty());
+    assert!(in_paris.is_current());
+
+    // Said again: reinforced, not duplicated.
+    let (again, superseded) = graph
+        .assert_single_valued(Relationship::new(alice.id, "lives_in", paris.id, session).with_confidence(0.9))
+        .unwrap();
+    assert_eq!((again.id, again.confidence), (in_paris.id, 0.9));
+    assert!(superseded.is_empty());
+
+    let before_move = chrono::Utc::now();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // She moves to Lyon: the Paris fact is superseded, not deleted.
+    let (in_lyon, superseded) = graph
+        .assert_single_valued(Relationship::new(alice.id, "lives_in", lyon.id, session))
+        .unwrap();
+    assert_eq!(superseded, vec![in_paris.id]);
+
+    let lives: Vec<Uuid> = graph
+        .find_relationships(RelationshipQuery::new().with_subject(alice.id).with_predicate("lives_in"))
+        .unwrap()
+        .into_iter()
+        .map(|(_, _, object)| object.id)
+        .collect();
+    assert_eq!(lives, vec![lyon.id], "only the current fact is returned");
+
+    let (old, _, _) = graph.get_relationship(in_paris.id).unwrap().unwrap();
+    assert!(!old.is_current());
+    assert_eq!(old.superseded_by, Some(in_lyon.id));
+    assert!(old.valid_to.unwrap() > before_move);
+    assert_eq!(old.confidence, 0.9, "the old fact keeps what was known about it");
+
+    // The stale fact is gone from traversal, listings, limits and search...
+    let reachable: Vec<Uuid> = graph
+        .neighborhood(alice.id, 1, Direction::Outgoing)
+        .unwrap()
+        .into_iter()
+        .map(|(e, _)| e.id)
+        .collect();
+    assert!(reachable.contains(&lyon.id) && !reachable.contains(&paris.id));
+    assert_eq!(graph.get_relationships(alice.id).unwrap().len(), 2);
+    assert_eq!(graph.all_relationships().unwrap().len(), 2);
+    let limited = graph
+        .find_relationships(RelationshipQuery::new().with_predicate("lives_in").with_limit(1))
+        .unwrap();
+    assert_eq!(limited[0].2.id, lyon.id, "a superseded fact does not use up the limit");
+    let found: Vec<Uuid> = graph
+        .search_relationships("alice lives_in", 0)
+        .unwrap()
+        .hits
+        .into_iter()
+        .map(|(t, _)| t.2.id)
+        .filter(|id| *id != rust.id)
+        .collect();
+    assert_eq!(found, vec![lyon.id]);
+
+    // ...but not from history, or from the graph as it was known earlier.
+    let all = graph
+        .find_relationships(RelationshipQuery::new().with_predicate("lives_in").with_superseded())
+        .unwrap();
+    assert_eq!(all.len(), 2);
+    let history: Vec<Uuid> = graph
+        .relationship_history(alice.id, "lives_in")
+        .unwrap()
+        .into_iter()
+        .map(|(_, _, object)| object.id)
+        .collect();
+    assert_eq!(history, vec![paris.id, lyon.id]);
+    let then: Vec<Uuid> = graph
+        .relationships_as_of(before_move)
+        .unwrap()
+        .into_iter()
+        .filter(|(r, _, _)| r.predicate == "lives_in")
+        .map(|(_, _, object)| object.id)
+        .collect();
+    assert_eq!(then, vec![paris.id]);
+
+    // Explicit supersession, with a stated start of validity.
+    let moved_on = chrono::Utc::now() - chrono::Duration::days(1);
+    let mut in_berlin = Relationship::new(alice.id, "lives_in", berlin.id, session);
+    in_berlin.valid_from = Some(moved_on);
+    let in_berlin = graph.supersede_relationship(in_lyon.id, in_berlin).unwrap();
+    let (lyon_fact, _, _) = graph.get_relationship(in_lyon.id).unwrap().unwrap();
+    assert_eq!(lyon_fact.valid_to, Some(moved_on));
+    assert_eq!(lyon_fact.superseded_by, Some(in_berlin.id));
+    assert_eq!(graph.get_relationship(in_berlin.id).unwrap().unwrap().0.valid_from, Some(moved_on));
+
+    // A fact can only be superseded once, and only if it exists.
+    assert!(graph
+        .supersede_relationship(in_lyon.id, Relationship::new(alice.id, "lives_in", paris.id, session))
+        .is_err());
+    assert!(graph
+        .supersede_relationship(Uuid::new_v4(), Relationship::new(alice.id, "lives_in", paris.id, session))
+        .is_err());
+    assert_eq!(graph.relationship_history(alice.id, "lives_in").unwrap().len(), 3);
+
+    // Many-valued predicates are untouched by all this.
+    assert_eq!(
+        graph.find_relationships(RelationshipQuery::new().with_predicate("uses")).unwrap().len(),
+        1
+    );
+}
+
+/// Merging two entities loses nothing: it can be reversed exactly.
+fn merges_can_be_undone(graph: &mut KnowledgeGraph) {
+    let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+    let mut keep = Entity::new("Rust", "language", first)
+        .with_attributes(serde_json::json!({"since": 2015}))
+        .with_confidence(0.6);
+    keep.access_count = 2;
+    let mut dup = Entity::new("rust-lang", "language", second)
+        .with_attributes(serde_json::json!({"since": 1999, "paradigm": "systems"}))
+        .with_confidence(0.5);
+    dup.access_count = 3;
+    let user = Entity::new("User", "person", first);
+    let cargo = Entity::new("Cargo", "tool", second);
+    graph.add_entities(&[keep.clone(), dup.clone(), user.clone(), cargo.clone()]).unwrap();
+
+    let shared = graph.add_relationship(Relationship::new(user.id, "uses", keep.id, first)).unwrap();
+    let duplicate = graph.add_relationship(Relationship::new(user.id, "uses", dup.id, second)).unwrap();
+    let mut has = Relationship::new(dup.id, "has", cargo.id, second).with_confidence(0.7);
+    has.relevance = 0.3;
+    let has = graph.add_relationship(has).unwrap();
+    graph.set_entity_embedding(dup.id, &[0.0, 1.0, 0.0]).unwrap();
+
+    assert!(graph.merge_entities(keep.id, keep.id).is_err());
+    assert!(graph.merge_entities(keep.id, Uuid::new_v4()).is_err());
+    assert!(graph.undo_merge(dup.id).is_err(), "nothing to undo yet");
+
+    let record = graph.merge_entities(keep.id, dup.id).unwrap();
+    assert_eq!(record.added_attributes, vec!["paradigm"]);
+    assert_eq!(record.moved.len(), 2);
+
+    let merged_keep = graph.get_entity(keep.id).unwrap().unwrap();
+    assert_eq!(merged_keep.attributes, serde_json::json!({"since": 2015, "paradigm": "systems"}));
+    assert_eq!(merged_keep.access_count, 5);
+    assert_eq!(merged_keep.confidence, 0.85);
+    assert_eq!(merged_keep.seen_in, vec![second]);
+    let gone = graph.get_entity(dup.id).unwrap().unwrap();
+    assert!(gone.is_deprecated);
+    assert!(!gone.search_text().contains("merged"), "the record is not searchable text");
+    assert!(graph.relationships_of(dup.id, Direction::Both).unwrap().is_empty());
+    let after: Vec<(Uuid, String, Uuid)> = sorted_edges(graph);
+    assert_eq!(
+        after,
+        sorted_triples(vec![
+            (user.id, "uses".to_string(), keep.id),
+            (keep.id, "has".to_string(), cargo.id),
+        ])
+    );
+    assert!(graph.merge_record(dup.id).unwrap().is_some());
+    assert!(graph.merge_record(keep.id).unwrap().is_none());
+
+    // Something changes after the merge...
+    graph
+        .update_entity(keep.id, |e| e.attributes["homepage"] = serde_json::json!("rust-lang.org"))
+        .unwrap();
+
+    // ...and the merge is undone.
+    graph.undo_merge(dup.id).unwrap();
+
+    let restored_keep = graph.get_entity(keep.id).unwrap().unwrap();
+    assert_eq!(
+        restored_keep.attributes,
+        serde_json::json!({"since": 2015, "homepage": "rust-lang.org"}),
+        "what the merge added is removed; what came later stays"
+    );
+    assert_eq!((restored_keep.access_count, restored_keep.confidence), (2, 0.6));
+    assert!(restored_keep.seen_in.is_empty());
+
+    let restored_dup = graph.get_entity(dup.id).unwrap().unwrap();
+    assert!(!restored_dup.is_deprecated);
+    assert_eq!(restored_dup.deprecation_reason, None);
+    assert_eq!(restored_dup.attributes, dup.attributes);
+    assert!(graph.embedded_entity_ids().unwrap().contains(&dup.id), "its embedding was kept");
+
+    // Relationships are back where they were, with their ids and state.
+    assert_eq!(
+        sorted_edges(graph),
+        sorted_triples(vec![
+            (user.id, "uses".to_string(), keep.id),
+            (user.id, "uses".to_string(), dup.id),
+            (dup.id, "has".to_string(), cargo.id),
+        ])
+    );
+    let (restored_has, _, _) = graph.get_relationship(has.id).unwrap().unwrap();
+    assert_eq!((restored_has.confidence, restored_has.relevance), (0.7, 0.3));
+    assert!(graph.get_relationship(duplicate.id).unwrap().is_some());
+    assert!(graph.get_relationship(shared.id).unwrap().is_some());
+
+    // Undone once; and it can be merged again.
+    assert!(graph.undo_merge(dup.id).is_err());
+    assert!(graph.merge_record(dup.id).unwrap().is_none());
+    graph.merge_entities(keep.id, dup.id).unwrap();
+    assert_eq!(graph.all_relationships().unwrap().len(), 2);
+}
+
+fn sorted_triples(mut triples: Vec<(Uuid, String, Uuid)>) -> Vec<(Uuid, String, Uuid)> {
+    triples.sort();
+    triples
+}
+
+fn sorted_edges(graph: &KnowledgeGraph) -> Vec<(Uuid, String, Uuid)> {
+    sorted_triples(
+        graph
+            .all_relationships()
+            .unwrap()
+            .into_iter()
+            .map(|(r, s, o)| (s.id, r.predicate, o.id))
+            .collect(),
+    )
 }

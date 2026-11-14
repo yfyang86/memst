@@ -203,6 +203,41 @@ knowledge-graph endpoints use it.
 Embeddings are kept when an entity is updated, are copied by `graph migrate`,
 and are also stored by the JSON backend (inside `graph.json`).
 
+## Facts that change
+
+A relationship records when it was written (`created_at`) and, separately,
+when the fact held: `valid_from`, `valid_to`, and `superseded_by`.
+
+- `assert_single_valued(fact)` is for predicates with one value at a time
+  ("lives_in", "works_at"). If the subject already has that predicate with a
+  different object, the old relationship is given an end time and a pointer to
+  the new one. If it has the same object, it is reinforced.
+- `supersede_relationship(old_id, new)` does the same for one named
+  relationship.
+- Nothing is deleted. A superseded relationship no longer appears in queries,
+  traversals or search, so a stale fact cannot compete with the current one.
+  It is still returned by `relationship_history(subject, predicate)`, by
+  queries built `with_superseded()`, and by `relationships_as_of(time)`, which
+  gives the graph as it was known at that moment.
+
+`graph ingest` applies this to a default list of single-valued predicates
+(`memst_sleep::kg_ingest::SINGLE_VALUED_PREDICATES`; change it with
+`IngestPolicy`). It also stores predicates in one form, lower case with
+underscores, so "lives in", "Lives_In" and "lives-in" are the same predicate.
+Deciding which predicates are single-valued is a judgement the list encodes;
+a predicate missing from it accumulates values instead of replacing them.
+
+## Merging entities, and undoing it
+
+`merge_entities(keep, merged)` treats two entities as the same thing: `keep`
+gains the other's missing attributes, access count and sessions, every
+relationship of `merged` is re-pointed at `keep`, and `merged` is deprecated.
+The record of what changed is stored on the deprecated entity, and
+`undo_merge(merged)` reverses it: relationships return with their original
+ids and state, and `keep` loses what the merge gave it. Changes made to `keep`
+after the merge are left in place. The sleep-time evolution engine merges
+through this, so its merges can be undone too.
+
 ## Data model
 
 | MemSt | HelixDB |
@@ -283,4 +318,5 @@ pass.
 
 - **Ontology-guided extraction** (`memst-extract-v2`) is not connected to this
   graph. Its extraction step is a keyword demo, not an LLM call.
-- **Bi-temporal edges.** See `docs/research/memst-and-the-field.md`.
+- **Validity of entities.** Relationships carry validity in time; entities
+  only have deprecation.

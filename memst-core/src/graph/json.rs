@@ -47,6 +47,12 @@ struct EdgeRecord {
     is_stable: bool,
     #[serde(default = "chrono::Utc::now")]
     last_decay_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    valid_from: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    valid_to: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    superseded_by: Option<RelationshipId>,
 }
 
 fn default_relevance() -> f32 {
@@ -71,6 +77,9 @@ impl From<&Relationship> for EdgeRecord {
             half_life_days: r.half_life_days,
             is_stable: r.is_stable,
             last_decay_at: r.last_decay_at,
+            valid_from: r.valid_from,
+            valid_to: r.valid_to,
+            superseded_by: r.superseded_by,
         }
     }
 }
@@ -90,6 +99,9 @@ impl From<EdgeRecord> for Relationship {
             half_life_days: e.half_life_days,
             is_stable: e.is_stable,
             last_decay_at: e.last_decay_at,
+            valid_from: e.valid_from,
+            valid_to: e.valid_to,
+            superseded_by: e.superseded_by,
         }
     }
 }

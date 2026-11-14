@@ -851,6 +851,20 @@ pub struct Relationship {
     /// Last decay calculation timestamp
     #[serde(default = "chrono::Utc::now")]
     pub last_decay_at: chrono::DateTime<chrono::Utc>,
+
+    // ===== Validity in time =====
+    /// When the fact started to hold in the world, if known. (When it was
+    /// recorded is `created_at`.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// When the fact stopped holding. `None` while it still holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_to: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// The relationship that replaced this one, if it was superseded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<RelationshipId>,
 }
 
 impl Relationship {
@@ -874,6 +888,9 @@ impl Relationship {
             half_life_days: 30.0,
             is_stable: false,
             last_decay_at: chrono::Utc::now(),
+            valid_from: None,
+            valid_to: None,
+            superseded_by: None,
         }
     }
     
@@ -897,6 +914,9 @@ impl Relationship {
             half_life_days: 365.0,
             is_stable: true,
             last_decay_at: chrono::Utc::now(),
+            valid_from: None,
+            valid_to: None,
+            superseded_by: None,
         }
     }
 
@@ -910,6 +930,17 @@ impl Relationship {
     pub fn with_confidence(mut self, confidence: f32) -> Self {
         self.confidence = confidence.clamp(0.0, 1.0);
         self
+    }
+
+    /// Whether the fact still holds: not ended and not replaced.
+    pub fn is_current(&self) -> bool {
+        self.valid_to.is_none() && self.superseded_by.is_none()
+    }
+
+    /// Whether the fact was on record and held at `time`: recorded by then,
+    /// and not yet ended.
+    pub fn held_at(&self, time: chrono::DateTime<chrono::Utc>) -> bool {
+        self.created_at <= time && self.valid_to.map_or(true, |end| end > time)
     }
 }
 
@@ -980,6 +1011,9 @@ pub struct RelationshipQuery {
     pub min_confidence: Option<f32>,
     /// Only relationships recorded by this session
     pub session_id: Option<Uuid>,
+    /// Also return relationships that have ended or been superseded.
+    /// By default only current facts are returned.
+    pub include_superseded: bool,
 }
 
 impl RelationshipQuery {
@@ -1003,6 +1037,12 @@ impl RelationshipQuery {
     /// Only relationships recorded by this session.
     pub fn with_session(mut self, session_id: Uuid) -> Self {
         self.session_id = Some(session_id);
+        self
+    }
+
+    /// Also return relationships that have ended or been superseded.
+    pub fn with_superseded(mut self) -> Self {
+        self.include_superseded = true;
         self
     }
 

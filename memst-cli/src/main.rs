@@ -1018,6 +1018,9 @@ fn main() -> Result<()> {
                         half_life_days: 30.0,
                         is_stable: false,
                         last_decay_at: chrono::Utc::now(),
+                        valid_from: None,
+                        valid_to: None,
+                        superseded_by: None,
                     };
                     let _added = graph.add_relationship(relationship)?;
                     println!(
@@ -1305,6 +1308,12 @@ fn main() -> Result<()> {
                         report.relationships_reinforced,
                         report.relationships_skipped
                     );
+                    if report.relationships_superseded > 0 {
+                        println!(
+                            "Updated facts: {} earlier relationship(s) superseded.",
+                            report.relationships_superseded
+                        );
+                    }
                     println!("Embedded: {}.", report.entities_embedded);
                 }
 

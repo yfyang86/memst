@@ -41,6 +41,44 @@ pub fn embedding_source(entity: &Entity, embedder_id: &str) -> String {
     format!("{embedder_id}#{}", &fingerprint[..16])
 }
 
+/// Attribute, on a merged (deprecated) entity, holding the [`MergeRecord`].
+pub const MERGE_RECORD_ATTRIBUTE: &str = "_merge_record";
+
+/// A relationship that a merge re-pointed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MovedRelationship {
+    /// The relationship as it was, on the merged entity.
+    pub original: Relationship,
+    /// Its replacement on the kept entity, or `None` if it was dropped
+    /// because the kept entity already had the same fact.
+    pub replacement: Option<RelationshipId>,
+}
+
+/// Everything needed to reverse [`KnowledgeGraph::merge_entities`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MergeRecord {
+    /// The entity that was kept.
+    pub keep: EntityId,
+    /// The entity that was merged into it and deprecated.
+    pub merged: EntityId,
+    /// Attribute keys the kept entity gained.
+    pub added_attributes: Vec<String>,
+    /// The kept entity's confidence before the merge.
+    pub confidence_before: f32,
+    /// Access count added to the kept entity.
+    pub access_count_added: u32,
+    /// Sessions the kept entity became linked to.
+    pub sessions_added: Vec<uuid::Uuid>,
+    /// Whether the merged entity was already deprecated.
+    pub merged_was_deprecated: bool,
+    /// The merged entity's previous deprecation reason.
+    pub merged_deprecation_reason: Option<String>,
+    /// Relationships that were re-pointed or dropped.
+    pub moved: Vec<MovedRelationship>,
+    /// When the merge happened.
+    pub merged_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// A relationship together with its subject and object entities.
 pub type Triple = (Relationship, Entity, Entity);
 
@@ -243,10 +281,19 @@ impl KnowledgeGraph {
     /// first (HelixDB: BM25), then MemSt's own word matching when the backend
     /// has none, fails, or finds nothing. `limit` 0 means 10.
     pub fn search_relationships(&self, text: &str, limit: usize) -> Result<RelationshipSearchResult> {
-        let (ranked, method, fallback_reason) = search::run_relationships(self.backend.as_ref(), text, limit)?;
+        let wanted = if limit == 0 { 10 } else { limit };
+        // Ask for spare hits: superseded facts are dropped after ranking.
+        let (ranked, method, fallback_reason) =
+            search::run_relationships(self.backend.as_ref(), text, wanted * 2)?;
         let mut hits = Vec::with_capacity(ranked.len());
         for (id, score) in ranked {
+            if hits.len() == wanted {
+                break;
+            }
             if let Some(relationship) = self.backend.get_relationship(id)? {
+                if !relationship.is_current() {
+                    continue;
+                }
                 if let Some(triple) = self.join_endpoints(vec![relationship])?.pop() {
                     hits.push((triple, score));
                 }
@@ -279,14 +326,118 @@ impl KnowledgeGraph {
     }
 
     /// Relationships of an entity in the given direction, with both endpoints.
+    ///
+    /// Only current facts: relationships that have ended or been superseded
+    /// are left out (see [`relationship_history`](Self::relationship_history)).
     pub fn relationships_of(&self, entity_id: EntityId, direction: Direction) -> Result<Vec<Triple>> {
-        let relationships = self.backend.expand(&[entity_id], direction)?;
+        let mut relationships = self.backend.expand(&[entity_id], direction)?;
+        relationships.retain(Relationship::is_current);
         self.join_endpoints(relationships)
     }
 
-    /// Find relationships by query.
+    /// Find relationships by query. Returns current facts unless the query
+    /// asks for superseded ones too.
     pub fn find_relationships(&self, query: RelationshipQuery) -> Result<Vec<Triple>> {
-        let relationships = self.backend.scan_relationships(&query)?;
+        let relationships = if query.include_superseded {
+            self.backend.scan_relationships(&query)?
+        } else {
+            // Filter before applying the limit, so that superseded facts do
+            // not use up the caller's quota.
+            let unlimited = RelationshipQuery { limit: 0, ..query.clone() };
+            let mut current = self.backend.scan_relationships(&unlimited)?;
+            current.retain(Relationship::is_current);
+            if query.limit > 0 {
+                current.truncate(query.limit);
+            }
+            current
+        };
+        self.join_endpoints(relationships)
+    }
+
+    /// Record `new` as the replacement for the relationship `old_id`.
+    ///
+    /// Nothing is deleted. The old relationship gets an end time
+    /// (`new.valid_from`, or now) and a pointer to its replacement, and stops
+    /// appearing in ordinary queries, traversals and search; it remains
+    /// available through [`relationship_history`](Self::relationship_history)
+    /// and [`relationships_as_of`](Self::relationships_as_of).
+    pub fn supersede_relationship(&mut self, old_id: RelationshipId, new: Relationship) -> Result<Relationship> {
+        let Some(mut old) = self.backend.get_relationship(old_id)? else {
+            return Err(Error::InvalidOperation(format!("Relationship not found: {old_id}")));
+        };
+        if !old.is_current() {
+            return Err(Error::InvalidOperation(format!(
+                "Relationship {old_id} has already ended or been superseded"
+            )));
+        }
+        // Write the new fact first: if that fails, the old one still stands.
+        self.backend.put_relationship(&new)?;
+        old.valid_to = Some(new.valid_from.unwrap_or_else(chrono::Utc::now));
+        old.superseded_by = Some(new.id);
+        self.backend.put_relationship(&old)?;
+        Ok(new)
+    }
+
+    /// State that `subject predicate object` holds now, for a predicate that
+    /// has one value at a time ("lives_in", "works_at").
+    ///
+    /// - If that exact fact is current, it is reinforced and returned.
+    /// - If the subject currently has the predicate with other objects, those
+    ///   are superseded by the new fact.
+    /// - Otherwise the fact is simply added.
+    ///
+    /// Returns the current relationship and the ids it superseded.
+    pub fn assert_single_valued(&mut self, fact: Relationship) -> Result<(Relationship, Vec<RelationshipId>)> {
+        let current: Vec<Relationship> = self
+            .backend
+            .scan_relationships(
+                &RelationshipQuery::new()
+                    .with_subject(fact.subject_id)
+                    .with_predicate(fact.predicate.clone()),
+            )?
+            .into_iter()
+            .filter(Relationship::is_current)
+            .collect();
+
+        if let Some(same) = current.iter().find(|r| r.object_id == fact.object_id) {
+            let id = same.id;
+            let confidence = fact.confidence;
+            self.update_relationship_with(id, |r| {
+                r.confidence = r.confidence.max(confidence);
+                r.relevance = 1.0;
+                r.last_decay_at = chrono::Utc::now();
+            })?;
+            let stored = self.backend.get_relationship(id)?.expect("just updated");
+            return Ok((stored, Vec::new()));
+        }
+
+        self.backend.put_relationship(&fact)?;
+        let ended_at = fact.valid_from.unwrap_or_else(chrono::Utc::now);
+        let mut superseded = Vec::new();
+        for mut old in current {
+            old.valid_to = Some(ended_at);
+            old.superseded_by = Some(fact.id);
+            self.backend.put_relationship(&old)?;
+            superseded.push(old.id);
+        }
+        Ok((fact, superseded))
+    }
+
+    /// Every version of the fact `subject predicate *`, oldest first,
+    /// including those that were superseded.
+    pub fn relationship_history(&self, subject: EntityId, predicate: &str) -> Result<Vec<Triple>> {
+        let mut versions = self.backend.scan_relationships(
+            &RelationshipQuery::new().with_subject(subject).with_predicate(predicate),
+        )?;
+        versions.sort_by_key(|r| r.created_at);
+        self.join_endpoints(versions)
+    }
+
+    /// The relationships that were on record and held at `time`: the graph
+    /// as it was known then.
+    pub fn relationships_as_of(&self, time: chrono::DateTime<chrono::Utc>) -> Result<Vec<Triple>> {
+        let mut relationships = self.backend.scan_relationships(&RelationshipQuery::default())?;
+        relationships.retain(|r| r.held_at(time));
         self.join_endpoints(relationships)
     }
 
@@ -345,19 +496,29 @@ impl KnowledgeGraph {
 
     /// Re-point every relationship of `from_entity` at `to_entity`.
     ///
-    /// Used when merging entities. A relationship that would duplicate one
-    /// `to_entity` already has (same subject, predicate and object) is dropped
-    /// instead. Decay state and provenance of migrated edges are preserved.
+    /// A relationship that would duplicate one `to_entity` already has (same
+    /// subject, predicate and object) is dropped instead. Decay state and
+    /// provenance of migrated edges are preserved.
     ///
-    /// Returns the number of relationships migrated.
+    /// Returns the number of relationships migrated. To be able to undo
+    /// this, use [`merge_entities`](Self::merge_entities).
     pub fn migrate_relationships(&mut self, from_entity: EntityId, to_entity: EntityId) -> Result<usize> {
+        let moved = self.migrate_relationships_recorded(from_entity, to_entity)?;
+        Ok(moved.iter().filter(|m| m.replacement.is_some()).count())
+    }
+
+    fn migrate_relationships_recorded(
+        &mut self,
+        from_entity: EntityId,
+        to_entity: EntityId,
+    ) -> Result<Vec<MovedRelationship>> {
         if self.backend.get_entity(to_entity)?.is_none() {
             return Err(Error::InvalidOperation(format!(
                 "Migration target entity not found: {to_entity}"
             )));
         }
         if from_entity == to_entity {
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
         let moving = self.backend.expand(&[from_entity], Direction::Both)?;
@@ -369,10 +530,10 @@ impl KnowledgeGraph {
             .map(|r| (r.subject_id, r.predicate, r.object_id))
             .collect();
 
-        let mut migrated = 0;
-        for old in moving {
-            self.backend.delete_relationship(old.id)?;
-            let mut new = old;
+        let mut moved = Vec::with_capacity(moving.len());
+        for original in moving {
+            self.backend.delete_relationship(original.id)?;
+            let mut new = original.clone();
             if new.subject_id == from_entity {
                 new.subject_id = to_entity;
             }
@@ -380,13 +541,138 @@ impl KnowledgeGraph {
                 new.object_id = to_entity;
             }
             if !existing.insert((new.subject_id, new.predicate.clone(), new.object_id)) {
+                moved.push(MovedRelationship { original, replacement: None });
                 continue;
             }
             new.id = RelationshipId::new_v4();
             self.backend.put_relationship(&new)?;
-            migrated += 1;
+            moved.push(MovedRelationship { original, replacement: Some(new.id) });
         }
-        Ok(migrated)
+        Ok(moved)
+    }
+
+    /// Merge the entity `merged` into `keep`: they are the same thing.
+    ///
+    /// `keep` gains the attributes it lacked, the other's access count, and
+    /// a confidence boost; every relationship of `merged` is re-pointed at
+    /// `keep`; `merged` is deprecated. Nothing needed to reverse this is
+    /// lost: the record is stored on the deprecated entity, and
+    /// [`undo_merge`](Self::undo_merge) restores the previous state.
+    pub fn merge_entities(&mut self, keep: EntityId, merged: EntityId) -> Result<MergeRecord> {
+        if keep == merged {
+            return Err(Error::InvalidOperation("cannot merge an entity into itself".to_string()));
+        }
+        let Some(merged_entity) = self.backend.get_entity(merged)? else {
+            return Err(Error::InvalidOperation(format!("Entity not found: {merged}")));
+        };
+        let Some(mut keep_entity) = self.backend.get_entity(keep)? else {
+            return Err(Error::InvalidOperation(format!("Entity not found: {keep}")));
+        };
+
+        let mut record = MergeRecord {
+            keep,
+            merged,
+            added_attributes: Vec::new(),
+            confidence_before: keep_entity.confidence,
+            access_count_added: merged_entity.access_count,
+            sessions_added: Vec::new(),
+            merged_was_deprecated: merged_entity.is_deprecated,
+            merged_deprecation_reason: merged_entity.deprecation_reason.clone(),
+            moved: Vec::new(),
+            merged_at: chrono::Utc::now(),
+        };
+
+        if let (Some(kept), Some(incoming)) = (
+            keep_entity.attributes.as_object_mut(),
+            merged_entity.attributes.as_object(),
+        ) {
+            for (key, value) in incoming {
+                if !key.starts_with('_') && !kept.contains_key(key) {
+                    kept.insert(key.clone(), value.clone());
+                    record.added_attributes.push(key.clone());
+                }
+            }
+        }
+        keep_entity.confidence = (keep_entity.confidence + merged_entity.confidence * 0.5).min(1.0);
+        keep_entity.access_count += merged_entity.access_count;
+        for session in std::iter::once(merged_entity.session_id).chain(merged_entity.seen_in.iter().copied()) {
+            if keep_entity.mark_seen_in(session) {
+                record.sessions_added.push(session);
+            }
+        }
+        self.backend.put_entity(&keep_entity)?;
+
+        record.moved = self.migrate_relationships_recorded(merged, keep)?;
+
+        let mut deprecated = merged_entity;
+        deprecated.deprecate(format!("Merged into {keep}"));
+        if !deprecated.attributes.is_object() {
+            deprecated.attributes = serde_json::json!({});
+        }
+        deprecated.attributes[MERGE_RECORD_ATTRIBUTE] = serde_json::to_value(&record)?;
+        self.backend.put_entity(&deprecated)?;
+        Ok(record)
+    }
+
+    /// The record of the merge that deprecated `merged`, if it was merged
+    /// and the merge has not been undone.
+    pub fn merge_record(&self, merged: EntityId) -> Result<Option<MergeRecord>> {
+        let Some(entity) = self.backend.get_entity(merged)? else {
+            return Ok(None);
+        };
+        match entity.attributes.get(MERGE_RECORD_ATTRIBUTE) {
+            Some(value) => Ok(Some(serde_json::from_value(value.clone())?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Reverse a merge: `merged` becomes a live entity again with its own
+    /// relationships, and `keep` loses what the merge gave it.
+    ///
+    /// Relationships return with their original ids. Changes made to `keep`
+    /// after the merge are left alone: an attribute the merge added is only
+    /// removed if it still has the merged entity's value, and a relationship
+    /// moved by the merge and since deleted is still restored on `merged`.
+    pub fn undo_merge(&mut self, merged: EntityId) -> Result<MergeRecord> {
+        let Some(record) = self.merge_record(merged)? else {
+            return Err(Error::InvalidOperation(format!(
+                "Entity {merged} has no merge to undo"
+            )));
+        };
+        let mut merged_entity = self
+            .backend
+            .get_entity(merged)?
+            .expect("merge_record just read it");
+
+        // Bring the merged entity back before re-attaching its edges.
+        merged_entity.is_deprecated = record.merged_was_deprecated;
+        merged_entity.deprecation_reason = record.merged_deprecation_reason.clone();
+        if let Some(attributes) = merged_entity.attributes.as_object_mut() {
+            attributes.remove(MERGE_RECORD_ATTRIBUTE);
+        }
+        self.backend.put_entity(&merged_entity)?;
+
+        for moved in &record.moved {
+            if let Some(replacement) = moved.replacement {
+                self.backend.delete_relationship(replacement)?;
+            }
+            self.backend.put_relationship(&moved.original)?;
+        }
+
+        if let Some(mut keep_entity) = self.backend.get_entity(record.keep)? {
+            if let Some(kept) = keep_entity.attributes.as_object_mut() {
+                for key in &record.added_attributes {
+                    if kept.get(key) == merged_entity.attributes.get(key) {
+                        kept.remove(key);
+                    }
+                }
+            }
+            keep_entity.confidence = record.confidence_before;
+            keep_entity.access_count = keep_entity.access_count.saturating_sub(record.access_count_added);
+            keep_entity.seen_in.retain(|session| !record.sessions_added.contains(session));
+            self.backend.put_entity(&keep_entity)?;
+        }
+        Ok(record)
     }
 
     // ===== Traversal =====
@@ -413,6 +699,9 @@ impl KnowledgeGraph {
             let in_frontier: HashSet<EntityId> = frontier.iter().copied().collect();
             let mut next = Vec::new();
             for relationship in self.backend.expand(&frontier, direction)? {
+                if !relationship.is_current() {
+                    continue;
+                }
                 // An edge reaches the far endpoint only when followed in an
                 // allowed direction from a node that is in the frontier.
                 let forward = in_frontier.contains(&relationship.subject_id)

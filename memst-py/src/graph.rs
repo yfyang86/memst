@@ -88,6 +88,7 @@ fn report_json(report: &IngestReport) -> Value {
         "entities_reused": report.entities_reused,
         "relationships_created": report.relationships_created,
         "relationships_reinforced": report.relationships_reinforced,
+        "relationships_superseded": report.relationships_superseded,
         "relationships_skipped": report.relationships_skipped,
         "entities_embedded": report.entities_embedded,
     })

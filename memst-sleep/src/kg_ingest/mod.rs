@@ -28,6 +28,64 @@ pub const RUN_ATTRIBUTE: &str = "_extraction_run";
 /// Predicate linking a participant to an event.
 pub const PARTICIPATED_IN: &str = "participated_in";
 
+/// Predicates that hold one value at a time by default: a new object for
+/// the same subject replaces the old one instead of standing beside it.
+/// Compared after lower-casing and turning spaces and hyphens into `_`.
+pub const SINGLE_VALUED_PREDICATES: &[&str] = &[
+    "lives_in",
+    "resides_in",
+    "based_in",
+    "works_at",
+    "works_for",
+    "employed_by",
+    "married_to",
+    "reports_to",
+    "has_role",
+    "has_status",
+];
+
+/// Decides how extracted relationships are written.
+#[derive(Debug, Clone)]
+pub struct IngestPolicy {
+    /// Predicates that hold one value at a time (see
+    /// [`SINGLE_VALUED_PREDICATES`]). For these, a new object supersedes the
+    /// subject's current one. Every other predicate may have many objects.
+    pub single_valued: Vec<String>,
+}
+
+impl Default for IngestPolicy {
+    fn default() -> Self {
+        Self {
+            single_valued: SINGLE_VALUED_PREDICATES.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+}
+
+impl IngestPolicy {
+    /// Treat every predicate as many-valued: nothing is ever superseded.
+    pub fn never_supersede() -> Self {
+        Self { single_valued: Vec::new() }
+    }
+
+    fn is_single_valued(&self, predicate: &str) -> bool {
+        let normalised = normalise_predicate(predicate);
+        self.single_valued.iter().any(|p| *p == normalised)
+    }
+}
+
+/// The form predicates are stored in: lower case, words joined by `_`.
+/// Models write the same relation as "lives in", "Lives_In" or "lives-in";
+/// stored as written, those would be three different predicates.
+pub fn normalise_predicate(predicate: &str) -> String {
+    predicate
+        .trim()
+        .to_lowercase()
+        .split(|c: char| c.is_whitespace() || c == '-' || c == '_')
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
 /// Where an extraction came from.
 #[derive(Debug, Clone)]
 pub struct Provenance {
@@ -68,6 +126,8 @@ pub struct IngestReport {
     pub relationships_created: usize,
     /// Relationships seen again: confidence raised, relevance restored.
     pub relationships_reinforced: usize,
+    /// Earlier facts replaced by a new value of a single-valued predicate.
+    pub relationships_superseded: usize,
     /// Relationships dropped because an endpoint could not be identified.
     pub relationships_skipped: usize,
     /// Entities embedded (or re-embedded) afterwards.
@@ -80,17 +140,28 @@ impl IngestReport {
         self.entities_reused += other.entities_reused;
         self.relationships_created += other.relationships_created;
         self.relationships_reinforced += other.relationships_reinforced;
+        self.relationships_superseded += other.relationships_superseded;
         self.relationships_skipped += other.relationships_skipped;
         self.entities_embedded += other.entities_embedded;
     }
 }
 
-/// Write an extraction result into the graph. Does not embed; see
-/// [`ingest_and_embed`].
+/// Write an extraction result into the graph with the default
+/// [`IngestPolicy`]. Does not embed; see [`ingest_and_embed`].
 pub fn ingest_extraction(
     graph: &mut KnowledgeGraph,
     extraction: &KgExtractionResult,
     provenance: &Provenance,
+) -> Result<IngestReport> {
+    ingest_extraction_with(graph, extraction, provenance, &IngestPolicy::default())
+}
+
+/// Write an extraction result into the graph. Does not embed.
+pub fn ingest_extraction_with(
+    graph: &mut KnowledgeGraph,
+    extraction: &KgExtractionResult,
+    provenance: &Provenance,
+    policy: &IngestPolicy,
 ) -> Result<IngestReport> {
     let mut report = IngestReport::default();
     // Lower-cased name -> id, for resolving relationship endpoints.
@@ -153,6 +224,8 @@ pub fn ingest_extraction(
         }));
 
     for (subject, predicate, object, confidence, temporal) in triples {
+        let predicate = normalise_predicate(predicate);
+        let predicate = predicate.as_str();
         let (Some(subject_id), Some(object_id)) = (
             resolve_endpoint(graph, &by_name, subject)?,
             resolve_endpoint(graph, &by_name, object)?,
@@ -160,6 +233,23 @@ pub fn ingest_extraction(
             report.relationships_skipped += 1;
             continue;
         };
+
+        if policy.is_single_valued(predicate) {
+            let mut fact = Relationship::new(subject_id, predicate, object_id, provenance.session_id)
+                .with_confidence(confidence);
+            fact.source_message_id = provenance.source_message_id;
+            fact.half_life_days = temporal.default_half_life_days();
+            fact.is_stable = temporal.is_stable();
+            let new_id = fact.id;
+            let (stored, superseded) = graph.assert_single_valued(fact)?;
+            if stored.id == new_id {
+                report.relationships_created += 1;
+            } else {
+                report.relationships_reinforced += 1;
+            }
+            report.relationships_superseded += superseded.len();
+            continue;
+        }
 
         let existing = graph
             .find_relationships(
@@ -331,6 +421,17 @@ fn resolve_endpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn predicates_are_normalised() {
+        for spelling in ["lives in", "Lives_In", " lives-in ", "LIVES  IN"] {
+            assert_eq!(normalise_predicate(spelling), "lives_in");
+        }
+        assert_eq!(normalise_predicate("就职于"), "就职于");
+        assert!(IngestPolicy::default().is_single_valued("Works At"));
+        assert!(!IngestPolicy::default().is_single_valued("uses"));
+        assert!(!IngestPolicy::never_supersede().is_single_valued("lives_in"));
+    }
 
     #[test]
     fn batches_respect_the_size_limit() {

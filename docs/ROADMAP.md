@@ -59,11 +59,21 @@ Carried into sprint 4:
   is the remaining work.
 - **BM25 search over relationships.** Done at the start of sprint 4.
 
-**4. Non-destructive, time-aware graph.** The two items carried from sprint
-3, then: valid-from, valid-to and
-superseded-by on relationships; superseded facts marked rather than only
-decayed. Reversible entity merges. Search and graph expansion in one query.
-Raw messages offered as a retrieval strategy.
+**4. Non-destructive, time-aware graph.** In progress.
+
+Done:
+
+- Keyword search over relationships (carried from sprint 3).
+- Relationships carry validity in time. A new value of a single-valued
+  predicate supersedes the old one, which leaves queries, traversal and search
+  but stays in history and in point-in-time views. Ingestion applies this.
+- Entity merges are recorded and can be undone.
+
+Still to do:
+
+- Ontology-guided extraction with a real LLM call (carried from sprint 3).
+- Search and graph expansion in one query.
+- Raw messages offered as a retrieval strategy.
 
 **5. Evaluation harness.** Full-context and raw-history retrieval baselines
 under the same reader. LongMemEval-S. Hardened LoCoMo runs. Cost and latency
