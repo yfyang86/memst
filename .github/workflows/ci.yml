@@ -26,6 +26,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The workspace includes the Python extension (memst-py). PyO3 0.22
+      # supports Python up to 3.13, and the runner's default is newer.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
       - name: Test
         run: cargo test --workspace --locked
 
@@ -55,10 +60,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      # Run maturin from memst-py: at the repo root it would pick up the
+      # root pyproject.toml, which belongs to the benchmark scripts.
       - name: Build and install the extension
+        working-directory: memst-py
         run: |
           python -m pip install maturin pytest
-          maturin build --release -m memst-py/Cargo.toml --out dist
-          python -m pip install dist/*.whl
+          maturin build --release --out ../dist
+          python -m pip install ../dist/*.whl
       - name: Test
         run: python -m pytest memst-py/tests -q
