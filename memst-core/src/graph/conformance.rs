@@ -26,6 +26,7 @@ pub fn run_all(fresh: &mut dyn FnMut() -> KnowledgeGraph) {
     relationship_search(&mut fresh());
     facts_change_over_time(&mut fresh());
     merges_can_be_undone(&mut fresh());
+    search_brings_context(&mut fresh());
 }
 
 /// `reopen` must return the same store each time; the previous handle is
@@ -776,4 +777,44 @@ fn sorted_edges(graph: &KnowledgeGraph) -> Vec<(Uuid, String, Uuid)> {
             .map(|(r, s, o)| (s.id, r.predicate, o.id))
             .collect(),
     )
+}
+
+/// Search hits come with the facts around them.
+fn search_brings_context(graph: &mut KnowledgeGraph) {
+    let session = Uuid::new_v4();
+    let alice = graph.add_entity(Entity::new("Alice", "person", session)).unwrap();
+    let [paris, lyon] = ["Paris", "Lyon"].map(|c| graph.add_entity(Entity::new(c, "city", session)).unwrap());
+    let rust = graph.add_entity(Entity::new("Rust", "language", session)).unwrap();
+    let bob = graph.add_entity(Entity::new("Bob", "person", session)).unwrap();
+    graph.assert_single_valued(Relationship::new(alice.id, "lives_in", paris.id, session)).unwrap();
+    graph.assert_single_valued(Relationship::new(alice.id, "lives_in", lyon.id, session)).unwrap();
+    graph.add_relationship(Relationship::new(alice.id, "uses", rust.id, session)).unwrap();
+    graph.add_relationship(Relationship::new(bob.id, "manages", alice.id, session)).unwrap();
+    graph.add_relationship(Relationship::new(bob.id, "uses", rust.id, session)).unwrap();
+
+    let context = graph.search_with_context(&EntitySearch::text("alice")).unwrap();
+    assert_eq!(context.result.hits.len(), 1);
+    let mut facts: Vec<String> = context
+        .relationships
+        .iter()
+        .map(|(r, s, o)| format!("{} {} {}", s.name, r.predicate, o.name))
+        .collect();
+    facts.sort();
+    // Incoming and outgoing, current only (Paris was superseded), nothing unrelated.
+    assert_eq!(facts, vec!["Alice lives_in Lyon", "Alice uses Rust", "Bob manages Alice"]);
+
+    let text = context.to_text();
+    assert!(text.starts_with("Alice (person)"));
+    assert!(text.contains("Alice lives_in Lyon") && !text.contains("Paris"));
+
+    // Two hits sharing an edge: the edge appears once.
+    let both = graph.search_with_context(&EntitySearch::text("alice bob")).unwrap();
+    assert_eq!(both.result.hits.len(), 2);
+    let manages = both.relationships.iter().filter(|(r, _, _)| r.predicate == "manages").count();
+    assert_eq!(manages, 1);
+    assert_eq!(both.relationships.len(), 4);
+
+    let none = graph.search_with_context(&EntitySearch::text("zzz-nothing")).unwrap();
+    assert!(none.result.hits.is_empty() && none.relationships.is_empty());
+    assert_eq!(none.to_text(), "");
 }

@@ -375,6 +375,10 @@ enum GraphCommand {
         #[arg(long)]
         relationships: bool,
 
+        /// Also print the current relationships around each hit
+        #[arg(long)]
+        expand: bool,
+
         /// JSON output
         #[arg(long)]
         json: bool,
@@ -1137,6 +1141,7 @@ fn main() -> Result<()> {
                     semantic,
                     include_deprecated,
                     relationships,
+                    expand,
                     json,
                 } => {
                     if *relationships {
@@ -1194,7 +1199,20 @@ fn main() -> Result<()> {
                             ),
                         }
                     }
-                    let result = graph.search_entities(&search)?;
+                    let context = if *expand {
+                        graph.search_with_context(&search)?
+                    } else {
+                        memst_core::graph::SearchContext {
+                            result: graph.search_entities(&search)?,
+                            relationships: Vec::new(),
+                        }
+                    };
+                    let around: Vec<_> = context
+                        .relationships
+                        .iter()
+                        .map(|(r, s, o)| format!("{} --[{}]--> {}", s.name, r.predicate, o.name))
+                        .collect();
+                    let result = context.result;
                     let method = match result.method {
                         SearchMethod::Native => graph.backend_kind(),
                         SearchMethod::Fallback => "fallback",
@@ -1215,7 +1233,8 @@ fn main() -> Result<()> {
                         let output = json!({
                             "method": method,
                             "fallback_reason": result.fallback_reason,
-                            "hits": hits
+                            "hits": hits,
+                            "relationships": around
                         });
                         println!("{}", serde_json::to_string_pretty(&output)?);
                     } else {
@@ -1230,6 +1249,12 @@ fn main() -> Result<()> {
                                 "  {:.3}  {}  {} [{}]",
                                 hit.score, hit.entity.id, hit.entity.name, hit.entity.entity_type
                             );
+                        }
+                        if !around.is_empty() {
+                            println!("Around these:");
+                            for line in &around {
+                                println!("  {line}");
+                            }
                         }
                     }
                 }

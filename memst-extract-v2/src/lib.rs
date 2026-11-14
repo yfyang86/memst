@@ -27,6 +27,7 @@
 
 pub mod error;
 pub mod extraction;
+pub mod llm_extract;
 pub mod ontology;
 pub mod prompt;
 pub mod storage;

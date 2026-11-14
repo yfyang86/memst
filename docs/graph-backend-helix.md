@@ -140,6 +140,11 @@ and it only looks at names, not attributes.
 
 `result.method` and `result.fallback_reason` say which path answered and why.
 
+`search_with_context(query)` returns the entity hits together with the
+current relationships around them, fetched in one further round trip, and
+`to_text()` renders that as one fact per line for a prompt (CLI:
+`graph search ... --expand`).
+
 Relationships are searchable too. `search_relationships("alice uses rust", 10)`
 (CLI: `graph search <session> "..." --relationships`) matches the words of
 "subject predicate object": BM25 over an edge index in HelixDB, word matching
@@ -316,7 +321,8 @@ pass.
 
 ## Not done yet
 
-- **Ontology-guided extraction** (`memst-extract-v2`) is not connected to this
-  graph. Its extraction step is a keyword demo, not an LLM call.
+- **Ontology-guided extraction** (`memst-extract-v2`) can now call an LLM and
+  returns a result `kg_ingest` can write here, but only as a library call;
+  `graph ingest` uses the general extractor.
 - **Validity of entities.** Relationships carry validity in time; entities
   only have deprecation.

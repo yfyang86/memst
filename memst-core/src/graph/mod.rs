@@ -41,6 +41,35 @@ pub fn embedding_source(entity: &Entity, embedder_id: &str) -> String {
     format!("{embedder_id}#{}", &fingerprint[..16])
 }
 
+/// Search hits with the relationships around them.
+#[derive(Debug, Clone)]
+pub struct SearchContext {
+    /// The entity hits, as from [`KnowledgeGraph::search_entities`].
+    pub result: EntitySearchResult,
+    /// Current relationships with a hit at either end.
+    pub relationships: Vec<Triple>,
+}
+
+impl SearchContext {
+    /// The context as plain lines, one fact per line, ready for a prompt:
+    /// first each hit ("Alice (person)"), then each relationship
+    /// ("Alice lives_in Lyon").
+    pub fn to_text(&self) -> String {
+        let entities = self
+            .result
+            .hits
+            .iter()
+            .map(|hit| format!("{} ({})", hit.entity.name, hit.entity.entity_type));
+        let facts = self
+            .relationships
+            .iter()
+            .map(|(relationship, subject, object)| {
+                format!("{} {} {}", subject.name, relationship.predicate, object.name)
+            });
+        entities.chain(facts).collect::<Vec<_>>().join("\n")
+    }
+}
+
 /// Attribute, on a merged (deprecated) entity, holding the [`MergeRecord`].
 pub const MERGE_RECORD_ATTRIBUTE: &str = "_merge_record";
 
@@ -272,6 +301,27 @@ impl KnowledgeGraph {
     /// [`EntitySearchResult::method`] says which path answered.
     pub fn search_entities(&self, query: &EntitySearch) -> Result<EntitySearchResult> {
         search::run(self.backend.as_ref(), query)
+    }
+
+    /// Search entities and return, with the hits, the current relationships
+    /// around them: what a retriever needs to put "Alice" into context
+    /// ("Alice lives_in Lyon", "Alice uses Rust") without asking again.
+    ///
+    /// The relationships of all hits are fetched in one backend round trip.
+    /// Each is returned once, even when both of its ends are hits.
+    pub fn search_with_context(&self, query: &EntitySearch) -> Result<SearchContext> {
+        let result = self.search_entities(query)?;
+        let hit_ids: Vec<EntityId> = result.hits.iter().map(|hit| hit.entity.id).collect();
+        let mut relationships = if hit_ids.is_empty() {
+            Vec::new()
+        } else {
+            self.backend.expand(&hit_ids, Direction::Both)?
+        };
+        relationships.retain(Relationship::is_current);
+        Ok(SearchContext {
+            relationships: self.join_endpoints(relationships)?,
+            result,
+        })
     }
 
     /// Search relationships by keywords, matched against

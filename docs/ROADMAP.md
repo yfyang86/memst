@@ -19,11 +19,11 @@ evaluation, then the manuscript. Findings behind these choices are in
 
 | # | Sprint | Status | Done when |
 |---|--------|--------|-----------|
-| 1 | Green build and CI | **Done** | `cargo test --workspace` and the Python tests pass, and run in CI |
+| 1 | Green build and CI | **Done**, CI green | `cargo test --workspace` and the Python tests pass, and run in CI |
 | 2 | One graph per store | **Done** | Conformance suite passes on the store-level graph; old stores migrate; a query scoped to one owner never returns another's entities |
 | 3 | Extraction into HelixDB | **Done**, two items carried into sprint 4 | Extracting a conversation makes its entities searchable with no manual step; the server has no separate graph store |
-| 4 | Non-destructive, time-aware graph | Next | A corrected fact outranks and hides the stale one; an entity merge can be undone |
-| 5 | Evaluation harness | Planned | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
+| 4 | Non-destructive, time-aware graph | **Done**, one item moved to sprint 5 | A corrected fact outranks and hides the stale one; an entity merge can be undone |
+| 5 | Evaluation harness | Next (needs an LLM key) | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
 | 6 | Security and MCP | Planned | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
 
 The manuscript update follows sprint 5.
@@ -59,21 +59,24 @@ Carried into sprint 4:
   is the remaining work.
 - **BM25 search over relationships.** Done at the start of sprint 4.
 
-**4. Non-destructive, time-aware graph.** In progress.
-
-Done:
+**4. Non-destructive, time-aware graph.** Done:
 
 - Keyword search over relationships (carried from sprint 3).
 - Relationships carry validity in time. A new value of a single-valued
   predicate supersedes the old one, which leaves queries, traversal and search
   but stays in history and in point-in-time views. Ingestion applies this.
 - Entity merges are recorded and can be undone.
+- Ontology-guided extraction (`memst-extract-v2`) makes a real LLM call when a
+  model is configured (`ExtractionService::with_llm`, `extract_graph`) and
+  returns the common extraction result that `kg_ingest` writes to the graph.
+  It is a library function: the CLI, the Python `ExtractionService` wrapper
+  and the server's `/kg/extract` endpoints do not use it yet, and without a
+  model the keyword demo remains.
+- `search_with_context`: search hits together with the current relationships
+  around them.
 
-Still to do:
-
-- Ontology-guided extraction with a real LLM call (carried from sprint 3).
-- Search and graph expansion in one query.
-- Raw messages offered as a retrieval strategy.
+Moved to sprint 5: raw messages as a retrieval strategy. That is the
+raw-history baseline the evaluation needs, so it is built there.
 
 **5. Evaluation harness.** Full-context and raw-history retrieval baselines
 under the same reader. LongMemEval-S. Hardened LoCoMo runs. Cost and latency
@@ -85,6 +88,11 @@ Deletion design for a store that keeps history. One memory-poisoning test
 suite.
 
 ## Known gaps not yet scheduled
+
+- Ontology-guided extraction is not reachable from the CLI, Python or the
+  server (see sprint 4).
+- The server keeps its own memory tiers in `.jsonl` files instead of using the
+  engine's.
 
 - Three-way merge in `memst-repo` does not load memories from commits.
 - `memst-py` reports version 0.1.x while the workspace is 1.0.0.
