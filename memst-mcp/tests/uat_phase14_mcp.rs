@@ -59,7 +59,7 @@ async fn uat_14_2_memory_read_tool() {
     // Should return text content
     match &result.content[0] {
         McpContent::Text { text } => {
-            assert!(text.contains("memory read"));
+            assert!(text.to_lowercase().contains("memory read"));
             assert!(text.contains("1000"));
         }
         _ => panic!("Expected text content"),

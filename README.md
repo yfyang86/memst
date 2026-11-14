@@ -19,7 +19,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Knowledge Graph** for entity and relationship tracking, stored in embedded HelixDB with BM25 and vector entity search ([details](docs/graph-backend-helix.md))
 - **KG decay** - Temporal relevance decay for entities/relationships
 - **KG evolution** - Automatic entity merging and deprecation
-- **KG extraction v2** - Multi-backend storage (SQLite/DuckDB) with LLM-powered extraction
+- **KG extraction v2** - SQLite-backed, LLM-powered extraction with domain ontologies
 - **Procedural memory (Skills)** for learned workflows
 
 ## What's New in v1.0
@@ -29,7 +29,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Write-Ahead Log (WAL)** - Crash recovery for durability
 - **Memory lifecycle** - Automatic tier transitions with checkpoints
 - **A-MEM style evolution** - Retroactive memory network updates
-- **Three-way semantic merge** - Conflict detection and resolution
+- **Semantic merge** - Fast-forward merges and conflict detection between memories (loading memories from commits for a full three-way merge is not implemented yet)
 
 ### Multi-Agent Support
 - **Worktrees** - Isolated environments for concurrent agents
@@ -42,12 +42,11 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Progressive disclosure** - Selective memory inclusion
 
 ### MCP Integration
-- **Full MCP protocol support** for Claude Code, Cursor, and other MCP clients
+- **MCP tool definitions and request handling** for Claude Code, Cursor, and other MCP clients. The tool handlers are placeholders and are not yet connected to a store
 - **Tools**: memory_read, memory_write, memory_search, skill_lookup, context_build
 
 ### KG Extraction v2 (New)
-- **Multi-backend storage**: SQLite (default) or DuckDB for production
-- **Feature flags**: Choose backend at compile time
+- **SQLite storage** for ontologies, jobs and results
 - **Domain-specific ontologies**: 80+ intelligence domains
 - **LLM-powered extraction**: Chain-of-thought entity/relationship extraction
 - **Entity linking**: Automatic disambiguation and canonicalization
@@ -58,7 +57,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **memst-core**: Core library (store/search/vector/hybrid/context/memory)
 - **memst-repo**: Git-alike MemRepo backend (WAL, merge, worktrees)
 - **memst-sleep**: Async sleep-time consolidation pipeline
-- **memst-extract-v2**: Advanced KG extraction with multi-backend storage (SQLite/DuckDB)
+- **memst-extract-v2**: KG extraction with domain ontologies (SQLite storage)
 - **memst-mcp**: MCP (Model Context Protocol) adapter
 - **memst-cli**: `memst` CLI binary
 - **memst-py**: Python extension module (`import memst`)
@@ -284,8 +283,8 @@ maturin develop --release && python -m pytest memst-py/tests -v
 - Knowledge-graph backend (HelixDB): `docs/graph-backend-helix.md`
 - Research context (agent memory, 2025–2026): `docs/research/`
 - Latest project review: `CodeReview/CR-20261114.md`
+- Roadmap and sprint status: `docs/ROADMAP.md`
 - Web server and UI: `apps/README.md`
-- Architecture PRD: `SemanticTree/MemSt-PRD-v1.0.md`
 
 ## Feature Roadmap
 
@@ -295,12 +294,12 @@ maturin develop --release && python -m pytest memst-py/tests -v
 | P8 | Data Model (Blake3, WAL, lifecycle, frontmatter) | ✅ Complete |
 | P9 | Context Assembly (token-budget, multi-signal scoring) | ✅ Complete |
 | P10 | Sleep-Time (async consolidation, A-MEM evolution) | ✅ Complete |
-| P11 | Semantic Merge (3-way merge, conflict detection) | ✅ Complete |
+| P11 | Semantic Merge (fast-forward, conflict detection) | ⚠️ Partial: three-way merge does not load memories from commits |
 | P12 | Skills (procedural memory) | ✅ Complete |
 | P13 | Multi-Agent (worktrees, agent registry) | ✅ Complete |
-| P14 | MCP Adapter | ✅ Complete |
+| P14 | MCP Adapter | ⚠️ Partial: handlers are placeholders |
 | P15 | Memory Evolution, KG decay | ✅ Complete |
-| P16 | KG Extraction v2 (SQLite/DuckDB backends) | ✅ Complete |
+| P16 | KG Extraction v2 (SQLite) | ✅ Complete |
 
 ## KG Extraction v2 Quick Start
 
@@ -366,16 +365,11 @@ print(f"Entities: {job.entity_count}")
 print(f"Tokens: {job.tokens_used}")
 ```
 
-### Feature Flags
+### Storage
 
-```toml
-# Cargo.toml - Use SQLite (default)
-[dependencies]
-memst-extract-v2 = { path = "../memst-extract-v2" }
-
-# Use DuckDB for production analytics
-memst-extract-v2 = { path = "../memst-extract-v2", default-features = false, features = ["duckdb"] }
-```
+KG extraction stores ontologies, jobs and results in SQLite (the default
+`sqlite` feature). There is no other backend: the `duckdb` feature that used to
+be listed was a stub that never built, and has been removed.
 
 ## License
 

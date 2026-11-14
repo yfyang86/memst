@@ -54,7 +54,7 @@ unreviewed preprints and are marked there.
 
 | Area | MemSt today | Reading against the field |
 |------|-------------|---------------------------|
-| Versioned store (`memst-repo`) | Content-addressed objects, WAL, worktrees, three-way merge | The strongest differentiator, but it now has direct neighbours that must be cited and compared against. Nothing yet measures what versioning buys (rollback, audit, merge). |
+| Versioned store (`memst-repo`) | Content-addressed objects, WAL, worktrees, fast-forward merge and conflict detection. A full three-way merge is not there yet: memories are not loaded from commits | The strongest differentiator, but it now has direct neighbours that must be cited and compared against. Nothing yet measures what versioning buys (rollback, audit, merge). |
 | Evaluation (`benchmarks/`) | LoCoMo only. MemSt's own tables show full context at 80.7 F1 against 42.5–49.2 for MemSt strategies | This is exactly the pattern the field now treats as "memory not shown to be needed". No raw-history RAG baseline under the same reader, no cost-to-break-even, category 5 dropped. |
 | Query-adaptive routing | Rule-based classifier, 80% accuracy | A 2026 study finds per-query routing realises little of the oracle headroom; regime-level selection does better. The oracle bound and realised fraction should be reported. |
 | Knowledge graph | Entities and relationships with half-life decay, merging, deprecation; now on HelixDB | Decay-only. No valid-time / transaction-time, no supersession marking. Entity merge is not reversible. Graphs are per session, while the field has moved to user-level graphs. |
@@ -112,6 +112,6 @@ central claim, and that is the author's call. Candidate references are in
 `manuscript/memst/cite-2026-candidates.bib`. Their author lists are truncated
 and must be completed, and venues checked, before any are cited.
 
-One statement in the current text is also out of date with the code: the
-limitations section says conflict-aware three-way merge is not implemented, but
-`memst-repo` has one.
+The limitations section says conflict-aware three-way merge is not
+implemented. That is still accurate: `memst-repo` detects conflicts between
+memories and fast-forwards, but does not yet load memories from commits.

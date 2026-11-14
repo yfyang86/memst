@@ -3,22 +3,17 @@ name = "memst-extract-v2"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
-description = "Advanced Knowledge Graph extraction with DuckDB backend"
+description = "Knowledge Graph extraction with domain ontologies and LLM-powered extraction"
 
 [features]
-default = ["sqlite"]  # Use SQLite by default for easier development
-duckdb = ["dep:duckdb", "dep:libduckdb-sys"]
+default = ["sqlite"]
 sqlite = ["dep:rusqlite"]
 
 [dependencies]
 memst-core = { path = "../memst-core" }
 
-# Storage backends (choose one)
-# DuckDB - High-performance OLAP database (requires C++ build tools)
-duckdb = { version = "0.10", features = ["bundled"], optional = true }
-libduckdb-sys = { version = "0.10", optional = true }
-
-# SQLite - Lightweight alternative for development
+# Storage backend
+# SQLite
 rusqlite = { version = "0.30", features = ["bundled", "chrono", "uuid", "serde_json"], optional = true }
 
 # Async runtime

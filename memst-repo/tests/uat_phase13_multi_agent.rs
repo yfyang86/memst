@@ -20,7 +20,7 @@ fn uat_13_1_worktree_creation() {
     let head = ObjectId::from_content(b"commit");
     
     // Create worktree
-    let worktree = manager.create("Subagent A", "main", head).unwrap();
+    let worktree = manager.create("Subagent A", "main", head).unwrap().clone();
     
     assert!(worktree.id.starts_with("wt-"));
     assert_eq!(worktree.name, "Subagent A");
@@ -43,7 +43,7 @@ fn uat_13_2_agent_attachment() {
     let mut manager = WorktreeManager::new(temp_dir.path()).unwrap();
 
     let head = ObjectId::from_content(b"commit");
-    let worktree = manager.create("Worktree 1", "main", head).unwrap();
+    let worktree = manager.create("Worktree 1", "main", head).unwrap().clone();
     let id = worktree.id.clone();
 
     // Attach agent
@@ -73,8 +73,8 @@ fn uat_13_3_worktree_isolation() {
     let head = ObjectId::from_content(b"commit");
 
     // Create two worktrees from same base
-    let wt1 = manager.create("Agent 1", "main", head).unwrap();
-    let wt2 = manager.create("Agent 2", "main", head).unwrap();
+    let wt1 = manager.create("Agent 1", "main", head).unwrap().clone();
+    let wt2 = manager.create("Agent 2", "main", head).unwrap().clone();
 
     let id1 = wt1.id.clone();
     let id2 = wt2.id.clone();
@@ -102,9 +102,9 @@ fn uat_13_4_worktree_listing() {
     let head = ObjectId::from_content(b"commit");
 
     // Create worktrees with different statuses
-    let wt1 = manager.create("Active 1", "main", head).unwrap();
-    let wt2 = manager.create("Active 2", "main", head).unwrap();
-    let wt3 = manager.create("Merging", "main", head).unwrap();
+    let wt1 = manager.create("Active 1", "main", head).unwrap().clone();
+    let wt2 = manager.create("Active 2", "main", head).unwrap().clone();
+    let wt3 = manager.create("Merging", "main", head).unwrap().clone();
 
     manager.mark_merging(&wt3.id).unwrap();
 
@@ -130,7 +130,7 @@ fn uat_13_5_worktree_pruning() {
     let mut manager = WorktreeManager::new(temp_dir.path()).unwrap();
 
     let head = ObjectId::from_content(b"commit");
-    let worktree = manager.create("Temporary", "main", head).unwrap();
+    let worktree = manager.create("Temporary", "main", head).unwrap().clone();
     let id = worktree.id.clone();
     let path = worktree.path.clone();
 
@@ -155,7 +155,7 @@ fn uat_13_6_worktree_merge() {
     let mut manager = WorktreeManager::new(temp_dir.path()).unwrap();
 
     let head = ObjectId::from_content(b"original");
-    let worktree = manager.create("Feature", "main", head).unwrap();
+    let worktree = manager.create("Feature", "main", head).unwrap().clone();
     let id = worktree.id.clone();
 
     // Agent does work, advances head
@@ -184,7 +184,7 @@ fn uat_13_7_activity_tracking() {
     let mut manager = WorktreeManager::new(temp_dir.path()).unwrap();
 
     let head = ObjectId::from_content(b"commit");
-    let worktree = manager.create("Agent", "main", head).unwrap();
+    let worktree = manager.create("Agent", "main", head).unwrap().clone();
     let id = worktree.id.clone();
 
     let last_activity_before = worktree.last_activity;
@@ -213,7 +213,7 @@ fn uat_13_8_auto_prune_idle() {
     manager.set_auto_prune_threshold(Some(chrono::Duration::milliseconds(1)));
 
     let head = ObjectId::from_content(b"commit");
-    let worktree = manager.create("Idle Agent", "main", head).unwrap();
+    let worktree = manager.create("Idle Agent", "main", head).unwrap().clone();
     let id = worktree.id.clone();
 
     // Wait a bit
@@ -234,7 +234,7 @@ fn uat_13_9_worktree_path_management() {
     let mut manager = WorktreeManager::new(temp_dir.path()).unwrap();
 
     let head = ObjectId::from_content(b"commit");
-    let worktree = manager.create("Test", "main", head).unwrap();
+    let worktree = manager.create("Test", "main", head).unwrap().clone();
 
     // Path should be under base/worktrees/
     assert!(worktree.path.starts_with(temp_dir.path()));
@@ -262,7 +262,7 @@ fn uat_13_10_concurrent_agent_simulation() {
                 &format!("Agent {}", i),
                 "main",
                 base_head
-            ).unwrap();
+            ).unwrap().clone();
             
             manager.attach_agent(&worktree.id, &format!("agent-{}", i))
                 .unwrap();

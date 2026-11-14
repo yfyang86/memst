@@ -183,14 +183,20 @@ impl KgEvolutionEngine {
         }
         weights += 0.2;
 
-        // Attribute overlap (if both have attributes)
+        // Attribute overlap, only when the two entities have an attribute in
+        // common to compare. Counting the term without one (every entity
+        // has at least an empty attribute map) capped the score of two
+        // attribute-less entities at 0.7, below the default merge threshold,
+        // so even identically named entities were never proposed for merging.
         if let (Some(a1), Some(a2)) = (
             e1.attributes.as_object(),
             e2.attributes.as_object(),
         ) {
-            let attr_sim = self.attribute_similarity(a1, a2);
-            score += attr_sim * 0.3;
-            weights += 0.3;
+            if a1.keys().any(|key| a2.contains_key(key)) {
+                let attr_sim = self.attribute_similarity(a1, a2);
+                score += attr_sim * 0.3;
+                weights += 0.3;
+            }
         }
 
         if weights > 0.0 {
@@ -202,26 +208,7 @@ impl KgEvolutionEngine {
 
     /// Calculate text similarity using Jaccard coefficient.
     fn text_similarity(&self, a: &str, b: &str) -> f32 {
-        let a_words: std::collections::HashSet<String> = a
-            .to_lowercase()
-            .split_whitespace()
-            .map(|s| s.to_string())
-            .collect();
-        let b_words: std::collections::HashSet<String> = b
-            .to_lowercase()
-            .split_whitespace()
-            .map(|s| s.to_string())
-            .collect();
-
-        if a_words.is_empty() || b_words.is_empty() {
-            return 0.0;
-        }
-
-        let intersection: std::collections::HashSet<_> =
-            a_words.intersection(&b_words).collect();
-        let union: std::collections::HashSet<_> = a_words.union(&b_words).collect();
-
-        intersection.len() as f32 / union.len() as f32
+        memst_core::text::jaccard(a, b)
     }
 
     /// Calculate attribute similarity.
@@ -864,7 +851,12 @@ mod tests {
 
     #[test]
     fn test_detect_merge_candidates() {
-        let engine = KgEvolutionEngine::new();
+        let engine = KgEvolutionEngine::with_config(KgEvolutionConfig {
+            // The default threshold (0.85) only merges near-identical names.
+            merge_threshold: 0.4,
+            min_auto_apply_confidence: 0.4,
+            ..KgEvolutionConfig::default()
+        });
         let mut graph = create_test_graph();
         let session_id = uuid::Uuid::new_v4();
 
@@ -933,8 +925,29 @@ mod tests {
     }
 
     #[test]
-    fn test_evolve_cycle() {
+    fn test_default_threshold_merges_same_name_only() {
         let engine = KgEvolutionEngine::new();
+        let mut graph = create_test_graph();
+        let session_id = uuid::Uuid::new_v4();
+        let a = graph.add_entity(Entity::new("Rust", "technology", session_id)).unwrap();
+        let b = graph.add_entity(Entity::new("rust", "technology", session_id)).unwrap();
+        graph.add_entity(Entity::new("Rust Lang", "technology", session_id)).unwrap();
+        graph.add_entity(Entity::new("Rust", "material", session_id)).unwrap();
+
+        let candidates = engine.detect_merge_candidates(&graph).unwrap();
+        assert_eq!(candidates.len(), 1);
+        let (first, second, _) = candidates[0];
+        assert!([first, second].contains(&a.id) && [first, second].contains(&b.id));
+    }
+
+    #[test]
+    fn test_evolve_cycle() {
+        let engine = KgEvolutionEngine::with_config(KgEvolutionConfig {
+            // The default threshold (0.85) only merges near-identical names.
+            merge_threshold: 0.4,
+            min_auto_apply_confidence: 0.4,
+            ..KgEvolutionConfig::default()
+        });
         let mut graph = create_test_graph();
         let session_id = uuid::Uuid::new_v4();
 

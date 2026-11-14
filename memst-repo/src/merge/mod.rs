@@ -130,7 +130,9 @@ impl SemanticMerger {
         let merge_base = self.find_merge_base(object_store, source_oid, target_oid)?;
 
         // Check for fast-forward
-        if self.is_ancestor(object_store, target_oid, source_oid)? {
+        // (The arguments were previously swapped, so a fast-forward was never
+        // detected and an already-merged branch was treated as one.)
+        if source_oid != target_oid && self.is_ancestor(object_store, source_oid, target_oid)? {
             // Fast-forward: source is descendant of target
             ref_store.set_ref(target_branch, memst_core::objects::RefType::Branch, source_oid)?;
             
@@ -318,8 +320,11 @@ impl SemanticMerger {
             });
         }
 
-        // Check for semantic contradiction (simplified)
-        if similarity > self.contradiction_threshold {
+        // Check for semantic contradiction (simplified): the two say the
+        // same thing once negations are set aside, and exactly one is negated.
+        // Plain similarity cannot be used here, because the negation itself
+        // ("does not") lowers it below the threshold.
+        if memst_core::text::core_similarity(&ours.content, &theirs.content) > self.contradiction_threshold {
             // Check for negation patterns
             if self.has_contradiction_marker(&ours.content) != self.has_contradiction_marker(&theirs.content) {
                 return Some(Conflict {
@@ -362,24 +367,14 @@ impl SemanticMerger {
     /// Calculate similarity between two texts
     #[allow(dead_code)]
     pub fn calculate_similarity(&self, a: &str, b: &str) -> f32 {
-        let a_words: std::collections::HashSet<&str> = a.split_whitespace().collect();
-        let b_words: std::collections::HashSet<&str> = b.split_whitespace().collect();
-
-        if a_words.is_empty() || b_words.is_empty() {
-            return 0.0;
-        }
-
-        let intersection: std::collections::HashSet<_> = a_words.intersection(&b_words).collect();
-        let union: std::collections::HashSet<_> = a_words.union(&b_words).collect();
-
-        intersection.len() as f32 / union.len() as f32
+        memst_core::text::jaccard(a, b)
     }
 
     /// Check if text has contradiction markers
     pub fn has_contradiction_marker(&self, text: &str) -> bool {
-        let markers = ["not ", "no ", "never ", "false", "wrong", "instead", "switched", "changed"];
+        let reversals = ["false", "wrong", "instead", "switched", "changed"];
         let lower = text.to_lowercase();
-        markers.iter().any(|m| lower.contains(m))
+        memst_core::text::is_negated(text) || reversals.iter().any(|m| lower.contains(m))
     }
 
     /// Create a tree from memories
@@ -460,8 +455,8 @@ mod tests {
         let merger = SemanticMerger::new();
 
         let sim_high = merger.calculate_similarity(
-            "hello world test",
-            "hello world example"
+            "hello world test case",
+            "hello world test run"
         );
         let sim_low = merger.calculate_similarity(
             "completely different",

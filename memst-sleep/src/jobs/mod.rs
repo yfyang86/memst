@@ -128,7 +128,14 @@ impl ConsolidationJob {
         trigger: ConsolidationTrigger,
     ) -> Self {
         Self {
-            id: format!("job-{}", Utc::now().timestamp_millis()),
+            // Timestamp for ordering, random suffix for uniqueness: two jobs
+            // created in the same millisecond used to share an id, and the
+            // scheduler kept only the second.
+            id: format!(
+                "job-{}-{}",
+                Utc::now().timestamp_millis(),
+                &uuid::Uuid::new_v4().simple().to_string()[..8]
+            ),
             scope,
             source_branch: source_branch.to_string(),
             target_branch: target_branch.to_string(),
@@ -208,7 +215,11 @@ impl JobScheduler {
     /// Schedule a new job
     pub fn schedule(&mut self, job: ConsolidationJob) -> JobId {
         let id = job.id.clone();
-        self.queue.push(id.clone());
+        // Only jobs that still have to run wait in the queue; a job
+        // registered in a finished state is just recorded.
+        if job.status == JobStatus::Queued {
+            self.queue.push(id.clone());
+        }
         self.jobs.insert(id.clone(), job);
         id
     }
@@ -309,7 +320,7 @@ impl JobScheduler {
     pub fn stats(&self) -> SchedulerStats {
         SchedulerStats {
             total_jobs: self.jobs.len(),
-            queued: self.queue.len(),
+            queued: self.list_jobs_by_status(JobStatus::Queued).len(),
             running: self.running.len(),
             completed: self.list_jobs_by_status(JobStatus::Completed).len(),
             failed: self.list_jobs_by_status(JobStatus::Failed).len(),

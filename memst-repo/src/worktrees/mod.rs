@@ -111,7 +111,15 @@ impl WorktreeManager {
         parent_branch: &str,
         head: ObjectId,
     ) -> Result<&Worktree> {
-        let id = format!("wt-{}", Utc::now().timestamp_millis());
+        // The timestamp keeps ids sortable; the random suffix keeps them
+        // unique. A bare millisecond timestamp collided whenever two
+        // worktrees were created in the same millisecond, and the second
+        // silently replaced the first.
+        let id = format!(
+            "wt-{}-{}",
+            Utc::now().timestamp_millis(),
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
         let worktree = Worktree::new(&id, name, parent_branch, head, &self.base_path);
 
         // Create worktree directory structure

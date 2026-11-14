@@ -1240,7 +1240,7 @@ The new KG extraction service provides multi-backend storage and LLM-powered ext
 
 | Feature | Description |
 |---------|-------------|
-| **Multi-backend** | SQLite (default) or DuckDB for production |
+| **Storage** | SQLite |
 | **Feature flags** | Choose backend at compile time |
 | **Ontology support** | 80+ intelligence domains |
 | **LLM extraction** | Chain-of-thought entity/relationship extraction |
@@ -1253,8 +1253,6 @@ The new KG extraction service provides multi-backend storage and LLM-powered ext
 [dependencies]
 memst-extract-v2 = { path = "../memst-extract-v2" }
 
-# DuckDB backend (for production analytics)
-memst-extract-v2 = { path = "../memst-extract-v2", default-features = false, features = ["duckdb"] }
 ```
 
 #### Basic Usage

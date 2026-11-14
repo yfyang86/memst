@@ -79,20 +79,6 @@ impl ExtractError {
 }
 
 // Database error conversions
-#[cfg(feature = "duckdb")]
-impl From<duckdb::Error> for ExtractError {
-    fn from(e: duckdb::Error) -> Self {
-        Self::Database(e.to_string())
-    }
-}
-
-#[cfg(feature = "duckdb")]
-impl From<libduckdb_sys::Error> for ExtractError {
-    fn from(e: libduckdb_sys::Error) -> Self {
-        Self::Database(e.to_string())
-    }
-}
-
 #[cfg(feature = "sqlite")]
 impl From<rusqlite::Error> for ExtractError {
     fn from(e: rusqlite::Error) -> Self {

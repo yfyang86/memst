@@ -6,6 +6,11 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+// A search backend is required; fail with a clear message rather than with
+// dozens of type errors inside the search module.
+#[cfg(not(any(feature = "native-backend", feature = "tantivy-backend")))]
+compile_error!("memst-core needs a search backend: enable the `native-backend` or `tantivy-backend` feature");
+
 pub mod config;
 pub mod context;
 pub mod error;
@@ -17,5 +22,6 @@ pub mod memory;
 pub mod objects;
 pub mod search;
 pub mod store;
+pub mod text;
 pub mod types;
 pub mod vector;

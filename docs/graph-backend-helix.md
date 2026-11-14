@@ -175,9 +175,7 @@ pass.
 - **Pinned revision.** `memst-graph-helix/Cargo.toml` pins the fork to an exact
   commit. The crates.io `helix-db` release is the HTTP client only and has no
   embedded engine. Adding HelixDB raised two shared dependencies in
-  `Cargo.lock` (`chrono` 0.4.31 to 0.4.45, `arrayvec` 0.7.6 to 0.7.8). The
-  `duckdb` feature of `memst-extract-v2` was documented as needing the older
-  `chrono`; it has not been rebuilt against the new one.
+  `Cargo.lock` (`chrono` 0.4.31 to 0.4.45, `arrayvec` 0.7.6 to 0.7.8).
 - **Query shape matters.** Batched updates use
   `UNWIND $rows AS row WITH row.uid AS k ... MATCH (e:Entity {uid: k})`.
   Without the `WITH`, HelixDB's planner scans the label once per row instead of
@@ -197,8 +195,8 @@ pass.
 - **One graph per user.** Graphs are still per session, as before. A single
   database per store, with `session_id` as an indexed property, would allow
   cross-session entities.
-- **KG extraction v2** (`memst-extract-v2`) still writes to its own SQLite or
-  DuckDB tables and does not feed this graph.
+- **KG extraction v2** (`memst-extract-v2`) still writes to its own SQLite
+  tables and does not feed this graph.
 - **Bi-temporal edges.** See `docs/research/memst-and-the-field.md`.
 - **Server and Python bindings.** `memst-py` and `apps/memst-server` do not
   expose the graph, so they are unaffected.

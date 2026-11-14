@@ -5,7 +5,7 @@
 //! can be replayed to restore the store to a consistent state.
 //!
 //! Format:
-//! ```
+//! ```text
 //! wal/
 //! - current.wal      # Active WAL file
 //! - archive/         # Completed WAL segments
@@ -361,9 +361,14 @@ impl WriteAheadLog {
     pub fn archive(&mut self) -> Result<PathBuf> {
         // Flush current file
         self.current_file.sync_all()?;
-        drop(std::mem::replace(&mut self.current_file, unsafe { 
-            std::mem::zeroed() 
-        }));
+
+        // Close the current file before renaming it (required on Windows).
+        // The handle is swapped for a throwaway one; the previous code
+        // swapped in a zeroed `File`, which is file descriptor 0, so the
+        // assignment below closed stdin and aborted the process.
+        let placeholder_path = self.base_path.join(".rotating");
+        let placeholder = File::create(&placeholder_path)?;
+        drop(std::mem::replace(&mut self.current_file, placeholder));
 
         // Generate archive name
         let timestamp = Utc::now().timestamp_millis();
@@ -380,6 +385,7 @@ impl WriteAheadLog {
             .append(true)
             .read(true)
             .open(&current_path)?;
+        let _ = std::fs::remove_file(&placeholder_path);
 
         Ok(archive_path)
     }

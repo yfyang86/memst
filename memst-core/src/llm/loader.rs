@@ -111,6 +111,7 @@ impl LlmProviderConfig {
     /// 
     /// # Example
     /// ```
+    /// use memst_core::llm::loader::LlmProviderConfig;
     /// let config = LlmProviderConfig::local("http://localhost:8080/v1", "gpt-4");
     /// ```
     pub fn local(api_url: impl Into<String>, model: impl Into<String>) -> Self {

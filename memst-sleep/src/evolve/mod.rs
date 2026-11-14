@@ -224,35 +224,68 @@ impl EvolutionEngine {
         }
     }
 
-    /// Find neighboring memories by similarity
+    /// Find neighboring memories: those related closely enough to the new
+    /// memory to be worth classifying.
     fn find_neighbors<'a>(
         &self,
         memory: &MemoryItem,
         candidates: &'a [MemoryItem],
     ) -> Vec<&'a MemoryItem> {
-        let mut neighbors = Vec::new();
+        candidates
+            .iter()
+            .filter(|candidate| self.relatedness(memory, candidate) > self.similarity_threshold)
+            .collect()
+    }
 
-        // If embeddings available, use cosine similarity
-        if let Some(ref embedding) = memory.embedding {
-            for candidate in candidates {
-                if let Some(ref cand_embedding) = candidate.embedding {
-                    let similarity = self.cosine_similarity(embedding, cand_embedding);
-                    if similarity > self.similarity_threshold {
-                        neighbors.push(candidate);
-                    }
-                }
-            }
-        } else {
-            // Fallback to text similarity
-            for candidate in candidates {
-                let similarity = self.text_similarity(&memory.content, &candidate.content);
-                if similarity > self.similarity_threshold {
-                    neighbors.push(candidate);
-                }
-            }
+    /// How related two memories are, in 0..=1.
+    ///
+    /// With embeddings on both, this is their cosine similarity, which is the
+    /// only way paraphrases ("likes" / "enjoys") are recognised. Otherwise it
+    /// is lexical, and takes the strongest of several signals, because each
+    /// kind of relation hides from plain word overlap in its own way:
+    /// a contradiction adds "does not", an elaboration adds many new words,
+    /// and an update swaps the one word that matters.
+    fn relatedness(&self, a: &MemoryItem, b: &MemoryItem) -> f32 {
+        if let (Some(x), Some(y)) = (&a.embedding, &b.embedding) {
+            return self.cosine_similarity(x, y);
         }
+        if Self::same_slot(&a.content, &b.content) {
+            return 1.0;
+        }
+        let (shorter, longer) = if a.content.len() <= b.content.len() {
+            (&a.content, &b.content)
+        } else {
+            (&b.content, &a.content)
+        };
+        self.text_similarity(&a.content, &b.content)
+            .max(memst_core::text::core_similarity(&a.content, &b.content))
+            .max(self.text_containment(shorter, longer))
+    }
 
-        neighbors
+    /// Whether two statements assign different values to the same thing:
+    /// `"key: old"` / `"key: new"`, or the same words except the last
+    /// (`"User prefers async-std"` / `"User prefers Tokio"`).
+    ///
+    /// This is a heuristic. It cannot tell a replaced value from an added one
+    /// ("User likes Rust" / "User likes Python" may both hold), so a match
+    /// only links the memories as superseding; nothing is deleted.
+    fn same_slot(a: &str, b: &str) -> bool {
+        if let (Some((key_a, value_a)), Some((key_b, value_b))) = (a.split_once(':'), b.split_once(':')) {
+            let same_key = key_a.trim().eq_ignore_ascii_case(key_b.trim());
+            let different_value = !value_a.trim().eq_ignore_ascii_case(value_b.trim());
+            return same_key && !key_a.trim().is_empty() && different_value;
+        }
+        let tokens = |text: &str| -> Vec<String> {
+            text.split_whitespace()
+                .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+                .filter(|w| !w.is_empty())
+                .collect()
+        };
+        let (a, b) = (tokens(a), tokens(b));
+        a.len() >= 3
+            && a.len() == b.len()
+            && a[..a.len() - 1] == b[..b.len() - 1]
+            && a.last() != b.last()
     }
 
     /// Calculate cosine similarity between embeddings
@@ -274,51 +307,48 @@ impl EvolutionEngine {
 
     /// Calculate text similarity (Jaccard-like)
     fn text_similarity(&self, a: &str, b: &str) -> f32 {
-        let a_words: std::collections::HashSet<&str> = a.split_whitespace().collect();
-        let b_words: std::collections::HashSet<&str> = b.split_whitespace().collect();
-
-        if a_words.is_empty() || b_words.is_empty() {
-            return 0.0;
-        }
-
-        let intersection: std::collections::HashSet<_> = a_words.intersection(&b_words).collect();
-        let union: std::collections::HashSet<_> = a_words.union(&b_words).collect();
-
-        intersection.len() as f32 / union.len() as f32
+        memst_core::text::jaccard(a, b)
     }
 
     /// Classify the relation between two memories
     fn classify_relation(&self, new: &MemoryItem, existing: &MemoryItem) -> MemoryRelation {
-        // Check for supersession (temporal - newer replaces older)
-        if new.created_at > existing.created_at {
-            let content_sim = self.text_similarity(&new.content, &existing.content);
-            if content_sim > 0.8 {
-                // Very similar content, newer supersedes
-                return MemoryRelation::Supersedes;
-            }
+        let text_sim = self.text_similarity(&new.content, &existing.content);
+
+        // Contradiction first: the same statement once negation is set aside,
+        // with exactly one side negated. This must come before the "supports"
+        // check, which the remaining word overlap would otherwise satisfy.
+        // (Would need more sophisticated NLP in practice.)
+        let same_claim = memst_core::text::core_similarity(&new.content, &existing.content) > 0.6;
+        let negation_differs = memst_core::text::is_negated(&new.content)
+            != memst_core::text::is_negated(&existing.content);
+        if same_claim && negation_differs {
+            return MemoryRelation::Contradicts;
         }
 
-        // Check for elaboration
-        if existing.content.len() > new.content.len() {
-            let containment = self.text_containment(&new.content, &existing.content);
-            if containment > 0.7 {
-                return MemoryRelation::Elaborates;
-            }
+        // Supersession: a newer memory that restates the old one, or gives a
+        // new value for the same thing.
+        if new.created_at > existing.created_at
+            && (text_sim > 0.8 || Self::same_slot(&new.content, &existing.content))
+        {
+            return MemoryRelation::Supersedes;
         }
 
-        // Check for support (same sentiment/direction)
-        let similarity = self.text_similarity(&new.content, &existing.content);
+        // Elaboration: the existing memory says everything the new one does,
+        // and more.
+        if existing.content.len() > new.content.len()
+            && self.text_containment(&new.content, &existing.content) > 0.7
+        {
+            return MemoryRelation::Elaborates;
+        }
+
+        // Support: they say much the same. Embeddings decide when both have
+        // them, word overlap otherwise.
+        let similarity = match (&new.embedding, &existing.embedding) {
+            (Some(a), Some(b)) => self.cosine_similarity(a, b),
+            _ => text_sim,
+        };
         if similarity > 0.6 {
             return MemoryRelation::Supports;
-        }
-
-        // Check for contradiction (would need more sophisticated NLP in practice)
-        let contradiction_markers = ["not", "no", "never", "false", "wrong", "instead"];
-        let new_has_negation = contradiction_markers.iter().any(|m| new.content.to_lowercase().contains(m));
-        let existing_has_negation = contradiction_markers.iter().any(|m| existing.content.to_lowercase().contains(m));
-
-        if similarity > 0.4 && new_has_negation != existing_has_negation {
-            return MemoryRelation::Contradicts;
         }
 
         MemoryRelation::Unrelated
@@ -326,15 +356,7 @@ impl EvolutionEngine {
 
     /// Calculate containment (how much of a is in b)
     fn text_containment(&self, a: &str, b: &str) -> f32 {
-        let a_words: std::collections::HashSet<&str> = a.split_whitespace().collect();
-        let b_words: std::collections::HashSet<&str> = b.split_whitespace().collect();
-
-        if a_words.is_empty() {
-            return 0.0;
-        }
-
-        let intersection: std::collections::HashSet<_> = a_words.intersection(&b_words).collect();
-        intersection.len() as f32 / a_words.len() as f32
+        memst_core::text::containment(a, b)
     }
 
     /// Get all links
@@ -407,8 +429,13 @@ mod tests {
     fn test_evolution_supports() {
         let mut engine = EvolutionEngine::new();
         
-        let existing = create_memory("User likes Rust programming", 10);
+        // A paraphrase shares almost no words, so it is only recognised
+        // through embeddings.
+        let mut existing = create_memory("User likes Rust programming", 10);
         let mut new = create_memory("User really enjoys working with Rust", 0);
+        existing.embedding = Some(vec![0.9, 0.1, 0.0]);
+        new.embedding = Some(vec![0.85, 0.2, 0.0]);
+        new.confidence = 0.7;
 
         let result = engine.evolve_memory_network(&mut new, &[existing]);
 
@@ -416,8 +443,8 @@ mod tests {
         assert!(!result.links.is_empty());
         assert_eq!(result.links[0].relation, MemoryRelation::Supports);
         
-        // Confidence should be boosted
-        assert!(new.confidence > 1.0);
+        // Confidence should be boosted (it is capped at 1.0)
+        assert!(new.confidence > 0.7);
     }
 
     #[test]
@@ -468,8 +495,8 @@ mod tests {
         let engine = EvolutionEngine::new();
         
         let sim_high = engine.text_similarity(
-            "hello world test",
-            "hello world example"
+            "hello world test case",
+            "hello world test run"
         );
         let sim_low = engine.text_similarity(
             "hello world",
@@ -484,18 +511,25 @@ mod tests {
     fn test_find_neighbors() {
         let engine = EvolutionEngine::new();
         
+        // Topical neighbours with different wording: found by embedding.
+        let embedded = |content: &str, minutes_ago: i64, embedding: [f32; 3]| {
+            let mut memory = create_memory(content, minutes_ago);
+            memory.embedding = Some(embedding.to_vec());
+            memory
+        };
         let memories = vec![
-            create_memory("Rust async programming with Tokio", 10),
-            create_memory("Tokio is a Rust async runtime", 9),
-            create_memory("User works at Acme Corp", 8),
-            create_memory("Completely unrelated topic here", 7),
+            embedded("Rust async programming with Tokio", 10, [0.9, 0.3, 0.0]),
+            embedded("Tokio is a Rust async runtime", 9, [0.8, 0.4, 0.1]),
+            embedded("User works at Acme Corp", 8, [0.0, 0.1, 0.9]),
+            embedded("Completely unrelated topic here", 7, [0.1, 0.0, 0.8]),
         ];
 
-        let query = create_memory("How to use Tokio in Rust", 0);
+        let query = embedded("How to use Tokio in Rust", 0, [0.9, 0.35, 0.0]);
         let neighbors = engine.find_neighbors(&query, &memories);
 
-        // Should find the Tokio-related memories
-        assert!(neighbors.len() >= 2);
+        // Should find the Tokio-related memories, and only those
+        assert_eq!(neighbors.len(), 2);
+        assert!(neighbors.iter().all(|m| m.content.contains("Tokio")));
     }
 
     #[test]

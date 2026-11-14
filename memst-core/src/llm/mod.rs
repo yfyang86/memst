@@ -292,8 +292,9 @@ mod tests {
 
     #[test]
     fn test_llm_config_default() {
+        // The API URL has no built-in default: it comes from the config
+        // file or MEMST_LLM_API_URL, and is empty when neither is set.
         let config = LlmConfig::default();
-        assert!(!config.api_url.is_empty());
         assert!(!config.model.is_empty());
         assert!(config.timeout > 0);
     }
