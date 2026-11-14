@@ -351,4 +351,4 @@ if __name__ == "__main__":
         else:
             print("MemSt server not responding correctly")
     except requests.exceptions.ConnectionError:
-        print("MemSt server not running. Start it with: ./server.sh --start")
+        print("MemSt server not running. Start it with: ./apps/server.sh --start")

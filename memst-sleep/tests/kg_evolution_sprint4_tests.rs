@@ -272,7 +272,7 @@ fn test_parallel_detection_falls_back_to_sequential() {
     let engine = KgEvolutionEngine::with_config(config);
     
     // Without the "parallel" feature, should use regular detection
-    let candidates = engine.detect_merge_candidates(&graph);
+    let candidates = engine.detect_merge_candidates(&graph).unwrap();
     
     // Should still work (just single-threaded)
     // Note: May or may not find candidates depending on text similarity

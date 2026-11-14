@@ -26,6 +26,21 @@ pub enum JobStatus {
     Cancelled,
 }
 
+/// `chrono::Duration` has no serde support in the chrono version this
+/// workspace pins (0.4.31), so idle durations are stored as whole seconds.
+mod duration_seconds {
+    use chrono::Duration;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_i64(duration.num_seconds())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
+        i64::deserialize(deserializer).map(Duration::seconds)
+    }
+}
+
 /// Trigger for consolidation jobs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConsolidationTrigger {
@@ -33,8 +48,8 @@ pub enum ConsolidationTrigger {
     Scheduled(DateTime<Utc>),
     /// Token budget exceeded
     TokenBudgetExceeded,
-    /// Session idle for duration
-    SessionIdle(Duration),
+    /// Session idle for duration (serialized as whole seconds)
+    SessionIdle(#[serde(with = "duration_seconds")] Duration),
     /// Explicit API call
     ExplicitAPI,
 }

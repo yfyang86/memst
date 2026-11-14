@@ -75,9 +75,10 @@ impl KgEvolutionEngine {
     }
 
     /// Detect potential entity merges based on name similarity.
-    pub fn detect_merge_candidates(&self, graph: &KnowledgeGraph) -> Vec<(EntityId, EntityId, f32)> {
+    pub fn detect_merge_candidates(&self, graph: &KnowledgeGraph) -> Result<Vec<(EntityId, EntityId, f32)>> {
         let mut candidates = Vec::new();
-        let entities: Vec<&Entity> = graph.all_entities();
+        let owned = graph.all_entities()?;
+        let entities: Vec<&Entity> = owned.iter().collect();
 
         // Compare all pairs (limit to avoid O(n²) explosion)
         let limit = self.config.max_comparison_batch.min(entities.len());
@@ -106,8 +107,8 @@ impl KgEvolutionEngine {
         }
 
         // Sort by similarity (highest first)
-        candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
-        candidates
+        candidates.sort_by(|a, b| b.2.total_cmp(&a.2));
+        Ok(candidates)
     }
 
     /// Detect merge candidates using parallel processing.
@@ -121,10 +122,11 @@ impl KgEvolutionEngine {
     /// # Returns
     /// A vector of (entity1_id, entity2_id, similarity_score) tuples, sorted by similarity.
     #[cfg(feature = "parallel")]
-    pub fn detect_merge_candidates_par(&self, graph: &KnowledgeGraph) -> Vec<(EntityId, EntityId, f32)> {
+    pub fn detect_merge_candidates_par(&self, graph: &KnowledgeGraph) -> Result<Vec<(EntityId, EntityId, f32)>> {
         use rayon::prelude::*;
         
-        let entities: Vec<&Entity> = graph.all_entities();
+        let owned = graph.all_entities()?;
+        let entities: Vec<&Entity> = owned.iter().collect();
         let limit = self.config.max_comparison_batch.min(entities.len());
         
         // Generate all pairs to compare
@@ -161,8 +163,8 @@ impl KgEvolutionEngine {
         
         // Sort by similarity (highest first) - single threaded
         let mut candidates = candidates;
-        candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
-        candidates
+        candidates.sort_by(|a, b| b.2.total_cmp(&a.2));
+        Ok(candidates)
     }
 
     /// Calculate similarity between two entities.
@@ -268,7 +270,8 @@ impl KgEvolutionEngine {
             .ok_or_else(|| KgError::llm_error("Embedding client not configured"))?
             .clone();
         
-        let entities: Vec<&Entity> = graph.all_entities();
+        let owned = graph.all_entities()?;
+        let entities: Vec<&Entity> = owned.iter().collect();
         let limit = self.config.max_comparison_batch.min(entities.len());
         
         // Prepare entity descriptions for embedding
@@ -335,9 +338,10 @@ impl KgEvolutionEngine {
         graph: &KnowledgeGraph,
         keep_id: EntityId,
         merge_id: EntityId,
-    ) -> Option<KgEvolutionAction> {
-        let keep = graph.get_entity(keep_id)?;
-        let merge = graph.get_entity(merge_id)?;
+    ) -> Result<Option<KgEvolutionAction>> {
+        let (Some(keep), Some(merge)) = (graph.get_entity(keep_id)?, graph.get_entity(merge_id)?) else {
+            return Ok(None);
+        };
 
         // Prefer to keep the entity with higher relevance/access count
         let (final_keep, final_merge) = if keep.effective_importance() >= merge.effective_importance() {
@@ -346,14 +350,14 @@ impl KgEvolutionEngine {
             (merge_id, keep_id)
         };
 
-        Some(KgEvolutionAction::MergeEntities {
+        Ok(Some(KgEvolutionAction::MergeEntities {
             keep: final_keep,
             merge: final_merge,
             reason: format!(
                 "Similar names ('{}' and '{}'), same type '{}'",
                 keep.name, merge.name, keep.entity_type
             ),
-        })
+        }))
     }
 
     /// Detect entities that should be deprecated based on memory evolution.
@@ -361,7 +365,7 @@ impl KgEvolutionEngine {
         &self,
         graph: &KnowledgeGraph,
         memory_evolutions: &[(MemoryItem, MemoryRelation, MemoryItem)],
-    ) -> Vec<KgEvolutionAction> {
+    ) -> Result<Vec<KgEvolutionAction>> {
         let mut actions = Vec::new();
 
         for (_old_memory, relation, _new_memory) in memory_evolutions {
@@ -378,7 +382,7 @@ impl KgEvolutionEngine {
         }
 
         // Find entities with very low relevance
-        for entity in graph.all_entities() {
+        for entity in graph.all_entities()? {
             if !entity.is_deprecated && entity.relevance < 0.05 {
                 actions.push(KgEvolutionAction::DeprecateEntity {
                     entity_id: entity.id,
@@ -388,7 +392,7 @@ impl KgEvolutionEngine {
             }
         }
 
-        actions
+        Ok(actions)
     }
 
     /// Apply an evolution action to the knowledge graph.
@@ -415,21 +419,17 @@ impl KgEvolutionEngine {
                 relationship_id,
                 reason: _,
             } => {
-                graph
-                    .delete_relationship(*relationship_id)
-                    .map_err(|e| KgError::GraphError(e.to_string()))
+                Ok(graph.delete_relationship(*relationship_id)?)
             }
             KgEvolutionAction::AddRelationship { relationship } => {
                 // Verify both entities exist before adding
-                if graph.get_entity(relationship.subject_id).is_none() {
+                if graph.get_entity(relationship.subject_id)?.is_none() {
                     return Err(KgError::EntityNotFound(relationship.subject_id));
                 }
-                if graph.get_entity(relationship.object_id).is_none() {
+                if graph.get_entity(relationship.object_id)?.is_none() {
                     return Err(KgError::EntityNotFound(relationship.object_id));
                 }
-                graph
-                    .add_relationship(relationship.clone())
-                    .map_err(|e| KgError::GraphError(e.to_string()))?;
+                graph.add_relationship(relationship.clone())?;
                 Ok(true)
             }
             KgEvolutionAction::UpdateRelationship {
@@ -453,54 +453,39 @@ impl KgEvolutionEngine {
         keep_id: EntityId,
         merge_id: EntityId,
     ) -> Result<bool> {
-        // Get the entity to merge
         let merge_entity = graph
-            .get_entity(merge_id)
-            .ok_or(KgError::EntityNotFound(merge_id))?
-            .clone();
+            .get_entity(merge_id)?
+            .ok_or(KgError::EntityNotFound(merge_id))?;
 
-        // Get the keep entity
-        let keep_entity = graph
-            .get_entity_mut(keep_id)
-            .ok_or(KgError::EntityNotFound(keep_id))?;
-
-        // Merge attributes
-        if let (Some(keep_attrs), Some(merge_attrs)) = (
-            keep_entity.attributes.as_object_mut(),
-            merge_entity.attributes.as_object(),
-        ) {
-            for (key, value) in merge_attrs {
-                if !keep_attrs.contains_key(key) {
-                    keep_attrs.insert(key.clone(), value.clone());
+        let kept = graph.update_entity(keep_id, |keep_entity| {
+            // Merge attributes (existing keys on the kept entity win)
+            if let (Some(keep_attrs), Some(merge_attrs)) = (
+                keep_entity.attributes.as_object_mut(),
+                merge_entity.attributes.as_object(),
+            ) {
+                for (key, value) in merge_attrs {
+                    if !keep_attrs.contains_key(key) {
+                        keep_attrs.insert(key.clone(), value.clone());
+                    }
                 }
             }
+
+            // Update confidence (boost for merged entity)
+            keep_entity.confidence =
+                (keep_entity.confidence + merge_entity.confidence * 0.5).min(1.0);
+
+            // Combine access counts
+            keep_entity.access_count += merge_entity.access_count;
+        })?;
+        if !kept {
+            return Err(KgError::EntityNotFound(keep_id));
         }
 
-        // Update confidence (boost for merged entity)
-        keep_entity.confidence = (keep_entity.confidence + merge_entity.confidence * 0.5).min(1.0);
-        
-        // Combine access counts
-        keep_entity.access_count += merge_entity.access_count;
-
-        // Mark merged entity as deprecated
-        // (keep_entity borrow ends here implicitly)
-        if let Some(merge_ent) = graph.get_entity_mut(merge_id) {
-            merge_ent.deprecate(format!("Merged into {}", keep_id));
-            // Note: The deprecation_reason already indicates the replacement
-        }
+        // Mark merged entity as deprecated; the reason names the replacement
+        graph.update_entity(merge_id, |e| e.deprecate(format!("Merged into {}", keep_id)))?;
 
         // Transfer relationships from merge to keep
-        match graph.migrate_relationships(merge_id, keep_id) {
-            Ok(count) => {
-                if count > 0 {
-                    eprintln!("Migrated {} relationships from {:?} to {:?}", count, merge_id, keep_id);
-                }
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to migrate relationships: {}", e);
-                // Continue with merge even if relationship migration fails
-            }
-        }
+        graph.migrate_relationships(merge_id, keep_id)?;
 
         Ok(true)
     }
@@ -513,11 +498,13 @@ impl KgEvolutionEngine {
         reason: String,
         replacement: Option<EntityId>,
     ) -> Result<bool> {
-        if let Some(entity) = graph.get_entity_mut(entity_id) {
+        // Note: replacement tracking would need an additional field
+        let _ = replacement;
+        let found = graph.update_entity(entity_id, |entity| {
             entity.is_deprecated = true;
             entity.deprecation_reason = Some(reason);
-            // Note: replacement tracking would need additional field
-            let _ = replacement; // Silence warning for now
+        })?;
+        if found {
             Ok(true)
         } else {
             Err(KgError::EntityNotFound(entity_id))
@@ -525,13 +512,13 @@ impl KgEvolutionEngine {
     }
 
     /// Run full evolution cycle: detect and propose actions.
-    pub fn evolve(&self, graph: &KnowledgeGraph) -> Vec<KgEvolutionAction> {
+    pub fn evolve(&self, graph: &KnowledgeGraph) -> Result<Vec<KgEvolutionAction>> {
         let mut actions = Vec::new();
 
         // Detect merge candidates
-        let merge_candidates = self.detect_merge_candidates(graph);
+        let merge_candidates = self.detect_merge_candidates(graph)?;
         for (e1, e2, similarity) in merge_candidates {
-            if let Some(action) = self.propose_merge(graph, e1, e2) {
+            if let Some(action) = self.propose_merge(graph, e1, e2)? {
                 // Only auto-apply if confidence is high enough
                 if similarity >= self.config.min_auto_apply_confidence {
                     actions.push(action);
@@ -540,10 +527,10 @@ impl KgEvolutionEngine {
         }
 
         // Detect stale entities
-        let stale_actions = self.detect_stale_entities(graph, &[]);
+        let stale_actions = self.detect_stale_entities(graph, &[])?;
         actions.extend(stale_actions);
 
-        actions
+        Ok(actions)
     }
 
     /// Apply evolution actions to the knowledge graph.
@@ -614,7 +601,7 @@ impl KgEvolutionEngine {
         new_type: Option<String>,
         attribute_changes: serde_json::Value,
     ) -> Result<bool> {
-        if let Some(entity) = graph.get_entity_mut(entity_id) {
+        let found = graph.update_entity(entity_id, |entity| {
             if let Some(name) = new_name {
                 entity.name = name;
             }
@@ -630,6 +617,8 @@ impl KgEvolutionEngine {
                     existing.insert(key.clone(), value.clone());
                 }
             }
+        })?;
+        if found {
             Ok(true)
         } else {
             Err(KgError::EntityNotFound(entity_id))
@@ -642,18 +631,20 @@ impl KgEvolutionEngine {
         graph: &mut KnowledgeGraph,
         relationship_id: RelationshipId,
         confidence: Option<f32>,
-        _relevance: Option<f32>,
+        relevance: Option<f32>,
     ) -> Result<bool> {
         // Check if relationship exists
-        if graph.get_relationship(relationship_id).is_none() {
+        let updated = graph.update_relationship_with(relationship_id, |r| {
+            if let Some(confidence) = confidence {
+                r.confidence = confidence;
+            }
+            if let Some(relevance) = relevance {
+                r.relevance = relevance;
+            }
+        })?;
+        if !updated {
             return Err(KgError::RelationshipNotFound(relationship_id));
         }
-        
-        // Update the relationship
-        graph
-            .update_relationship(relationship_id, confidence)
-            .map_err(|e| KgError::GraphError(e.to_string()))?;
-        
         Ok(true)
     }
 
@@ -664,45 +655,35 @@ impl KgEvolutionEngine {
         original_id: EntityId,
         new_entities: &[memst_core::types::Entity],
     ) -> Result<bool> {
-        // Verify original entity exists
-        let original = graph
-            .get_entity(original_id)
-            .ok_or(KgError::EntityNotFound(original_id))?
-            .clone();
-        
+        if graph.get_entity(original_id)?.is_none() {
+            return Err(KgError::EntityNotFound(original_id));
+        }
+
         if new_entities.is_empty() {
             return Err(KgError::invalid_action("No new entities provided for split"));
         }
-        
-        // Add all new entities to the graph
+
+        // Reject ID conflicts before writing anything
         for entity in new_entities {
-            // Check for ID conflicts
-            if graph.get_entity(entity.id).is_some() {
+            if graph.get_entity(entity.id)?.is_some() {
                 return Err(KgError::invalid_action(
                     format!("Entity with ID {:?} already exists", entity.id)
                 ));
             }
-            let _ = graph.add_entity(entity.clone());
         }
-        
-        // Get relationships of original entity to potentially redistribute
-        let _original_relationships = graph.get_relationships(original_id);
-        
+        graph.add_entities(new_entities)?;
+
         // For now, migrate all relationships to the first new entity
         // A smarter implementation would distribute based on semantic similarity
         if let Some(first_new) = new_entities.first() {
-            graph.migrate_relationships(original_id, first_new.id)
-                .map_err(|e| KgError::GraphError(e.to_string()))?;
+            graph.migrate_relationships(original_id, first_new.id)?;
         }
-        
+
         // Deprecate the original entity
-        if let Some(entity) = graph.get_entity_mut(original_id) {
-            entity.deprecate(format!("Split into {} new entities", new_entities.len()));
-        }
-        
-        // Store original entity info for reference
-        let _ = original;
-        
+        graph.update_entity(original_id, |entity| {
+            entity.deprecate(format!("Split into {} new entities", new_entities.len()))
+        })?;
+
         Ok(true)
     }
 
@@ -875,7 +856,9 @@ mod tests {
     use super::*;
 
     fn create_test_graph() -> KnowledgeGraph {
-        let temp_dir = tempfile::tempdir().unwrap();
+        // Leaked on purpose: the graph writes to this directory for the
+        // whole test, so it must outlive this helper.
+        let temp_dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
         KnowledgeGraph::new(temp_dir.path()).unwrap()
     }
 
@@ -896,15 +879,15 @@ mod tests {
             .add_entity(Entity::new("Python", "technology", session_id))
             .unwrap();
 
-        let candidates = engine.detect_merge_candidates(&graph);
+        let candidates = engine.detect_merge_candidates(&graph).unwrap();
 
         // Should detect Rust Programming and Rust Lang as similar
         assert!(!candidates.is_empty());
         
         // Check that Python is not similar to Rust entities
         let has_python_merge = candidates.iter().any(|(e1, e2, _)| {
-            let ent1 = graph.get_entity(*e1).unwrap();
-            let ent2 = graph.get_entity(*e2).unwrap();
+            let ent1 = graph.get_entity(*e1).unwrap().unwrap();
+            let ent2 = graph.get_entity(*e2).unwrap().unwrap();
             ent1.name == "Python" || ent2.name == "Python"
         });
         assert!(!has_python_merge);
@@ -934,7 +917,7 @@ mod tests {
             .add_entity(Entity::new("Rust Lang", "technology", session_id))
             .unwrap();
 
-        let action = engine.propose_merge(&graph, e1.id, e2.id);
+        let action = engine.propose_merge(&graph, e1.id, e2.id).unwrap();
 
         assert!(action.is_some());
         match action.unwrap() {
@@ -966,7 +949,7 @@ mod tests {
             .add_entity(Entity::new("Alice Smith", "person", session_id))
             .unwrap();
 
-        let actions = engine.evolve(&graph);
+        let actions = engine.evolve(&graph).unwrap();
 
         // Should propose some actions
         assert!(!actions.is_empty());

@@ -32,12 +32,12 @@ fn test_kg_decay_basic_calculation() {
     graph.add_entity(entity).unwrap();
 
     // Verify initial state
-    let retrieved = graph.get_entity(entity_id).unwrap();
+    let retrieved = graph.get_entity(entity_id).unwrap().unwrap();
     assert!((retrieved.relevance - 1.0).abs() < 0.001);
     assert!(!retrieved.is_stable);
 
     // Apply decay (should be minimal since just created)
-    let result = engine.apply_decay(&mut graph);
+    let result = engine.apply_decay(&mut graph).unwrap();
     assert_eq!(result.entities_processed, 1);
 
     println!("✓ KG decay basic calculation works");
@@ -78,10 +78,10 @@ fn test_kg_stable_entities_no_decay() {
     graph.add_entity(entity).unwrap();
 
     // Apply decay
-    engine.apply_decay(&mut graph);
+    engine.apply_decay(&mut graph).unwrap();
 
     // Stable entity should not decay
-    let retrieved = graph.get_entity(entity_id).unwrap();
+    let retrieved = graph.get_entity(entity_id).unwrap().unwrap();
     assert!((retrieved.relevance - 1.0).abs() < 0.001);
     assert!(retrieved.is_stable);
 
@@ -109,11 +109,11 @@ fn test_kg_decay_relevance_boost_on_access() {
 
     // Boost relevance manually (as decay engine would do)
     // This also records an access
-    if let Some(ent) = graph.get_entity_mut(entity_id) {
+    graph.update_entity(entity_id, |ent| {
         engine.boost_relevance(ent);
-    }
+    }).unwrap();
 
-    let retrieved = graph.get_entity(entity_id).unwrap();
+    let retrieved = graph.get_entity(entity_id).unwrap().unwrap();
     assert!(retrieved.relevance > 0.5, 
         "Relevance should increase after access");
     assert_eq!(retrieved.access_count, 1);
@@ -144,7 +144,7 @@ fn test_kg_decay_stale_entity_detection() {
     graph.add_entity(stale).unwrap();
 
     // Find stale entities
-    let stale_entities = engine.find_stale_entities(&graph);
+    let stale_entities = engine.find_stale_entities(&graph).unwrap();
     assert_eq!(stale_entities.len(), 1);
     assert!(stale_entities[0].1 < 0.2);
 
@@ -195,7 +195,7 @@ fn test_kg_evolution_merge_detection() {
     graph.add_entity(Entity::new("Python Language", "technology", session_id)).unwrap();
 
     // Detect merge candidates
-    let candidates = engine.detect_merge_candidates(&graph);
+    let candidates = engine.detect_merge_candidates(&graph).unwrap();
     
     // Should find at least one pair of similar entities
     assert!(!candidates.is_empty(), "Should detect similar entities");
@@ -221,7 +221,7 @@ fn test_kg_evolution_propose_merge() {
     let e2 = graph.add_entity(Entity::new("Alice Smith", "person", session_id)).unwrap();
 
     // Propose merge
-    let action = engine.propose_merge(&graph, e1.id, e2.id);
+    let action = engine.propose_merge(&graph, e1.id, e2.id).unwrap();
     assert!(action.is_some());
 
     match action.unwrap() {
@@ -261,7 +261,7 @@ fn test_kg_evolution_deprecation() {
     assert!(result.unwrap());
 
     // Verify deprecation
-    let retrieved = graph.get_entity(entity.id).unwrap();
+    let retrieved = graph.get_entity(entity.id).unwrap().unwrap();
     assert!(retrieved.is_deprecated);
     assert!(retrieved.deprecation_reason.as_ref().unwrap().contains("completed"));
 
@@ -293,7 +293,7 @@ fn test_kg_evolution_full_cycle() {
     graph.add_entity(stale).unwrap();
 
     // Run evolution cycle
-    let actions = engine.evolve(&graph);
+    let actions = engine.evolve(&graph).unwrap();
 
     // Should generate some actions (merge candidate or deprecation)
     assert!(!actions.is_empty(), "Evolution should generate actions, got none");
@@ -399,11 +399,11 @@ fn test_kg_decay_and_evolution_integration() {
     graph.add_entity(Entity::new("Rust Language", "technology", session_id)).unwrap();
 
     // Run decay
-    let decay_result = decay_engine.apply_decay(&mut graph);
+    let decay_result = decay_engine.apply_decay(&mut graph).unwrap();
     assert!(decay_result.entities_processed >= 3);
 
     // Run evolution - should find the stale entity
-    let actions = evolution_engine.evolve(&graph);
+    let actions = evolution_engine.evolve(&graph).unwrap();
     assert!(!actions.is_empty(), "Evolution should generate at least deprecation action");
 
     println!("✓ Decay and evolution integration works");
@@ -452,21 +452,21 @@ fn test_knowledge_graph_decay_methods() {
     graph.add_entity(e3).unwrap();
 
     // Test methods
-    let by_relevance = graph.entities_by_relevance();
+    let by_relevance = graph.entities_by_relevance().unwrap();
     assert_eq!(by_relevance[0].name, "High Rel");
     assert_eq!(by_relevance[1].name, "Low Rel");
 
-    let stale = graph.stale_entities(0.5);
+    let stale = graph.stale_entities(0.5).unwrap();
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].name, "Low Rel");
 
-    let deprecated = graph.deprecated_entities();
+    let deprecated = graph.deprecated_entities().unwrap();
     assert_eq!(deprecated.len(), 1);
 
-    let active_count = graph.active_entity_count();
+    let active_count = graph.active_entity_count().unwrap();
     assert_eq!(active_count, 2);
 
-    let avg_rel = graph.average_relevance();
+    let avg_rel = graph.average_relevance().unwrap();
     assert!(avg_rel > 0.4 && avg_rel < 0.5);
 
     println!("✓ KnowledgeGraph decay methods work");

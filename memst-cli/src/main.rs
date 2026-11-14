@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use memst_core::graph::KnowledgeGraph;
+use memst_core::graph::{Direction, KnowledgeGraph};
 use memst_core::search::SearchQuery;
 use memst_core::store::SessionStore;
 use memst_core::types::{
@@ -85,6 +85,13 @@ enum Command {
 
     #[command(about = "Knowledge graph operations")]
     Graph {
+        /// Storage backend: auto, json or helix.
+        ///
+        /// `auto` uses whatever the session already has (HelixDB, else
+        /// graph.json) and creates new graphs in HelixDB.
+        #[arg(long, global = true, default_value = "auto")]
+        backend: String,
+
         #[command(subcommand)]
         command: GraphCommand,
     },
@@ -295,6 +302,51 @@ enum GraphCommand {
         /// Session ID
         session_id: Uuid,
     },
+
+    #[command(about = "List entities within N hops of an entity")]
+    Neighbors {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Entity to start from
+        entity: Uuid,
+
+        /// Maximum number of hops
+        #[arg(long, default_value = "2")]
+        hops: usize,
+
+        /// Edges to follow: out, in or both
+        #[arg(long, default_value = "both")]
+        direction: String,
+
+        /// JSON output
+        #[arg(long)]
+        json: bool,
+    },
+
+    #[command(about = "Copy a session's graph.json into HelixDB")]
+    Migrate {
+        /// Session ID
+        session_id: Uuid,
+    },
+}
+
+/// Open a session's knowledge graph with the requested backend.
+#[cfg(feature = "helix")]
+fn open_graph(dir: &std::path::Path, backend: &str) -> Result<KnowledgeGraph> {
+    let choice: memst_graph_helix::BackendChoice = backend.parse().map_err(anyhow::Error::msg)?;
+    Ok(memst_graph_helix::open(dir, choice)?)
+}
+
+/// Open a session's knowledge graph (built without HelixDB: JSON only).
+#[cfg(not(feature = "helix"))]
+fn open_graph(dir: &std::path::Path, backend: &str) -> Result<KnowledgeGraph> {
+    match backend {
+        "auto" | "json" => Ok(KnowledgeGraph::new(dir)?),
+        other => anyhow::bail!(
+            "graph backend '{other}' is not available: this memst was built without the 'helix' feature"
+        ),
+    }
 }
 
 fn main() -> Result<()> {
@@ -724,7 +776,7 @@ fn main() -> Result<()> {
             println!("  Long-term: {}", long_term);
         }
 
-        Command::Graph { command } => {
+        Command::Graph { backend, command } => {
             let store = SessionStore::open(&args.store)?;
             
             // Extract session_id from the command
@@ -733,10 +785,31 @@ fn main() -> Result<()> {
                 GraphCommand::AddRel { session_id, .. } => *session_id,
                 GraphCommand::Query { session_id, .. } => *session_id,
                 GraphCommand::Stats { session_id } => *session_id,
+                GraphCommand::Neighbors { session_id, .. } => *session_id,
+                GraphCommand::Migrate { session_id } => *session_id,
             };
-            
+
             let session_path = store.session_path(session_id);
-            let mut graph = KnowledgeGraph::new(&session_path)?;
+
+            if let GraphCommand::Migrate { .. } = command {
+                #[cfg(feature = "helix")]
+                {
+                    let (entities, relationships) =
+                        memst_graph_helix::migrate_json_to_helix(&session_path)?;
+                    println!(
+                        "Migrated {} entities and {} relationships to HelixDB ({})",
+                        entities,
+                        relationships,
+                        session_path.join(memst_graph_helix::HELIX_DIR).display()
+                    );
+                    println!("graph.json was kept as a backup.");
+                    return Ok(());
+                }
+                #[cfg(not(feature = "helix"))]
+                anyhow::bail!("this memst was built without the 'helix' feature");
+            }
+
+            let mut graph = open_graph(&session_path, backend)?;
 
             match command {
                 GraphCommand::AddEntity {
@@ -789,17 +862,14 @@ fn main() -> Result<()> {
                     limit,
                     json,
                 } => {
-                    let query = EntityQuery::new().with_limit(*limit);
-                    let entities = graph.find_entities(query);
-
-                    let filtered: Vec<_> = if let Some(et) = entity_type {
-                        entities
-                            .into_iter()
-                            .filter(|e| e.entity_type == *et)
-                            .collect()
-                    } else {
-                        entities
-                    };
+                    // The type filter is part of the query, so the limit
+                    // applies to matching entities (it used to be applied
+                    // before filtering, which could return too few).
+                    let mut query = EntityQuery::new().with_limit(*limit);
+                    if let Some(et) = entity_type {
+                        query = query.with_type(et.clone());
+                    }
+                    let filtered = graph.find_entities(query)?;
 
                     if *json {
                         let output: Vec<_> = filtered
@@ -834,13 +904,52 @@ fn main() -> Result<()> {
                 }
 
                 GraphCommand::Stats { session_id: _ } => {
-                    let stats = graph.stats();
+                    let stats = graph.stats()?;
                     println!("Graph Statistics for Session");
                     println!("==============================");
+                    println!("Backend: {}", graph.backend_kind());
                     println!("Total Entities: {}", stats.entity_count);
                     println!("Total Relationships: {}", stats.relationship_count);
                     println!("Entity Types: {}", stats.entity_types.len());
                 }
+
+                GraphCommand::Neighbors {
+                    session_id: _,
+                    entity,
+                    hops,
+                    direction,
+                    json,
+                } => {
+                    let direction = match direction.as_str() {
+                        "out" => Direction::Outgoing,
+                        "in" => Direction::Incoming,
+                        "both" => Direction::Both,
+                        other => anyhow::bail!("unknown direction '{other}' (expected out, in or both)"),
+                    };
+                    let hits = graph.neighborhood(*entity, *hops, direction)?;
+                    if *json {
+                        let output: Vec<_> = hits
+                            .iter()
+                            .map(|(e, distance)| {
+                                json!({
+                                    "id": e.id.to_string(),
+                                    "name": e.name,
+                                    "entity_type": e.entity_type,
+                                    "hops": distance
+                                })
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&output)?);
+                    } else if hits.is_empty() {
+                        println!("No entities within {} hops.", hops);
+                    } else {
+                        for (e, distance) in &hits {
+                            println!("  {} hop(s)  {}  {} [{}]", distance, e.id, e.name, e.entity_type);
+                        }
+                    }
+                }
+
+                GraphCommand::Migrate { .. } => unreachable!("handled before the graph is opened"),
             }
         }
     }

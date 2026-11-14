@@ -81,7 +81,7 @@ fn benchmark_detect_merge_candidates_small() {
     let (graph, _ids, _temp) = create_graph_with_n_entities(10);
     let engine = KgEvolutionEngine::new();
     
-    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph));
+    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph).unwrap());
     
     eprintln!("\n=== Benchmark: detect_merge_candidates (10 entities) ===");
     eprintln!("  Time: {:?}", elapsed);
@@ -99,7 +99,7 @@ fn benchmark_detect_merge_candidates_medium() {
     let (graph, _ids, _temp) = create_graph_with_n_entities(100);
     let engine = KgEvolutionEngine::new();
     
-    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph));
+    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph).unwrap());
     
     eprintln!("\n=== Benchmark: detect_merge_candidates (100 entities) ===");
     eprintln!("  Time: {:?}", elapsed);
@@ -117,12 +117,12 @@ fn benchmark_detect_merge_candidates_large() {
     let (graph, _ids, _temp) = create_graph_with_n_entities(500);
     let engine = KgEvolutionEngine::new();
     
-    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph));
+    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph).unwrap());
     
     eprintln!("\n=== Benchmark: detect_merge_candidates (500 entities) ===");
     eprintln!("  Time: {:?}", elapsed);
     eprintln!("  Candidates found: {}", candidates.len());
-    eprintln!("  Entities examined: {}", graph.all_entities().len());
+    eprintln!("  Entities examined: {}", graph.all_entities().unwrap().len());
     eprintln!("  Time per entity: {:?}", elapsed / 500);
     
     // Note: Limited by max_comparison_batch (default 100)
@@ -160,7 +160,7 @@ fn benchmark_full_evolution_cycle() {
     let engine = KgEvolutionEngine::new();
     
     // Detect
-    let (actions, elapsed_detect) = measure(|| engine.evolve(&graph));
+    let (actions, elapsed_detect) = measure(|| engine.evolve(&graph).unwrap());
     eprintln!("\n=== Benchmark: full_evolution_cycle (50 entities) ===");
     eprintln!("  Detect phase: {:?}", elapsed_detect);
     eprintln!("  Actions proposed: {}", actions.len());
@@ -298,7 +298,7 @@ fn benchmark_config_impact() {
     };
     let strict_engine = KgEvolutionEngine::with_config(strict_config);
     
-    let (candidates_strict, elapsed_strict) = measure(|| strict_engine.detect_merge_candidates(&graph));
+    let (candidates_strict, elapsed_strict) = measure(|| strict_engine.detect_merge_candidates(&graph).unwrap());
     
     // Test with lenient config
     let lenient_config = KgEvolutionConfig {
@@ -310,7 +310,7 @@ fn benchmark_config_impact() {
     };
     let lenient_engine = KgEvolutionEngine::with_config(lenient_config);
     
-    let (candidates_lenient, elapsed_lenient) = measure(|| lenient_engine.detect_merge_candidates(&graph));
+    let (candidates_lenient, elapsed_lenient) = measure(|| lenient_engine.detect_merge_candidates(&graph).unwrap());
     
     eprintln!("\n=== Benchmark: config impact ===");
     eprintln!("  Strict config (threshold 0.9):");

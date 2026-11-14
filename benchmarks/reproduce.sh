@@ -23,7 +23,7 @@ fi
 echo "Checking MemSt server..."
 if ! curl -s http://127.0.0.1:8193/api/v1/health > /dev/null; then
     echo "Error: MemSt server not running on http://127.0.0.1:8193"
-    echo "Please start it with: cd ../memst-server && ./server.sh --start"
+    echo "Please start it with: cd ../apps && ./server.sh --start"
     exit 1
 fi
 echo "MemSt server is running"

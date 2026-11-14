@@ -8,9 +8,12 @@ members = [
     "memst-sleep",
     "memst-mcp",
     "memst-extract-v2",
+    "memst-graph-helix",
 ]
+# Everything under apps/ (web server, React UI, Tauri desktop shell) is
+# deliberately outside the Rust workspace. See apps/README.md.
 exclude = [
-    "memst-ui/src-tauri",
+    "apps",
 ]
 resolver = "2"
 

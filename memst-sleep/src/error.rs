@@ -78,3 +78,9 @@ impl KgError {
         Self::LlmError(msg.into())
     }
 }
+
+impl From<memst_core::error::Error> for KgError {
+    fn from(error: memst_core::error::Error) -> Self {
+        Self::GraphError(error.to_string())
+    }
+}

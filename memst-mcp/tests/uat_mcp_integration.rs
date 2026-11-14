@@ -397,7 +397,7 @@ fn test_mcp_context_build_with_skills() {
 fn test_mcp_adapter_manifest() {
     common::setup();
 
-    let manifest = McpAdapter::manifest();
+    let manifest = McpAdapter::new().manifest();
     
     // Verify all tools are present
     let tool_names: Vec<_> = manifest.tools.iter()
@@ -482,7 +482,7 @@ fn test_mcp_concurrent_tool_calls() {
     let calls = vec![
         ("memory_search", "preference"),
         ("skill_lookup", "deploy"),
-        ("context_build", "help", 2000),
+        ("context_build", "help"),
     ];
 
     let mut results = Vec::new();

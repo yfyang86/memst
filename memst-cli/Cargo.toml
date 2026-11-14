@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 memst-core = { path = "../memst-core" }
+memst-graph-helix = { path = "../memst-graph-helix", optional = true }
 clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
@@ -13,6 +14,18 @@ uuid = { version = "1.6", features = ["v4"] }
 serde_json = "1.0"
 chrono = "0.4"
 
+[features]
+# `helix` compiles the embedded HelixDB engine into the CLI and makes it the
+# default graph backend. Build with `--no-default-features` for a small binary
+# that only knows graph.json.
+default = ["helix"]
+helix = ["dep:memst-graph-helix"]
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0"
+
+# The README and manual call the binary `memst`.
+[[bin]]
+name = "memst"
+path = "src/main.rs"

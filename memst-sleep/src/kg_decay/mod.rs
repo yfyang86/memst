@@ -5,6 +5,7 @@
 //! natural forgetting of less-used knowledge.
 
 use chrono::{DateTime, Duration, Utc};
+use crate::error::Result;
 use memst_core::graph::KnowledgeGraph;
 use memst_core::types::{Entity, EntityId, KgDecayConfig, Relationship};
 
@@ -86,58 +87,46 @@ impl KgDecayEngine {
         }
     }
 
-    /// Apply decay to all entities and relationships in the graph.
+    /// Apply decay to all entities and relationships in the graph and
+    /// persist the result.
     ///
     /// Returns statistics about the decay operation.
-    pub fn apply_decay(&self, graph: &mut KnowledgeGraph) -> DecayResult {
+    pub fn apply_decay(&self, graph: &mut KnowledgeGraph) -> Result<DecayResult> {
         let now = Utc::now();
         let mut stats = DecayResult::default();
+        let threshold = self.config.min_relevance_threshold;
 
-        // Get all entities and apply decay
-        let entity_ids: Vec<EntityId> = graph
-            .all_entities()
-            .iter()
-            .map(|e| e.id)
-            .collect();
+        graph.update_all_entities(|entity| {
+            let old_relevance = entity.relevance;
+            self.decay_entity(entity, now);
 
-        for entity_id in entity_ids {
-            if let Some(entity) = graph.get_entity_mut(entity_id) {
-                let old_relevance = entity.relevance;
-                self.decay_entity(entity, now);
-
-                stats.entities_processed += 1;
-                
-                if entity.relevance < old_relevance {
-                    stats.entities_decayed += 1;
-                }
-
-                if entity.relevance < self.config.min_relevance_threshold {
-                    stats.entities_below_threshold += 1;
-                }
+            stats.entities_processed += 1;
+            if entity.relevance < old_relevance {
+                stats.entities_decayed += 1;
             }
-        }
+            if entity.relevance < threshold {
+                stats.entities_below_threshold += 1;
+            }
+        })?;
 
-        // Apply decay to relationships
-        // Note: We need to rebuild edges since KnowledgeGraph stores SerializableEdge
-        // For now, we track that relationships would be decayed
-        stats.relationships_processed = graph.stats().relationship_count;
+        stats.relationships_processed =
+            graph.update_all_relationships(|relationship| self.decay_relationship(relationship, now))?;
 
-        stats
+        Ok(stats)
     }
 
     /// Get entities that are candidates for removal due to low relevance.
-    pub fn find_stale_entities(&self, graph: &KnowledgeGraph) -> Vec<(EntityId, f32)> {
-        let mut stale = Vec::new();
-
-        for entity in graph.all_entities() {
-            if entity.relevance < self.config.min_relevance_threshold && !entity.is_stable {
-                stale.push((entity.id, entity.relevance));
-            }
-        }
+    pub fn find_stale_entities(&self, graph: &KnowledgeGraph) -> Result<Vec<(EntityId, f32)>> {
+        let mut stale: Vec<(EntityId, f32)> = graph
+            .all_entities()?
+            .into_iter()
+            .filter(|e| e.relevance < self.config.min_relevance_threshold && !e.is_stable)
+            .map(|e| (e.id, e.relevance))
+            .collect();
 
         // Sort by relevance (lowest first)
-        stale.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        stale
+        stale.sort_by(|a, b| a.1.total_cmp(&b.1));
+        Ok(stale)
     }
 
     /// Calculate time until entity reaches minimum relevance.
@@ -246,7 +235,9 @@ mod tests {
     use std::path::PathBuf;
 
     fn create_test_graph() -> KnowledgeGraph {
-        let temp_dir = tempfile::tempdir().unwrap();
+        // Leaked on purpose: the graph writes to this directory for the
+        // whole test, so it must outlive this helper.
+        let temp_dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
         KnowledgeGraph::new(temp_dir.path()).unwrap()
     }
 

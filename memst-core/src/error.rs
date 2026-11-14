@@ -59,6 +59,10 @@ pub enum Error {
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
 
+    /// Failure reported by a knowledge-graph storage backend
+    #[error("Graph backend error: {0}")]
+    GraphBackend(String),
+
     /// UUID parsing error
     #[error(transparent)]
     UuidParse(#[from] uuid::Error),

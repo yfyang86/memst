@@ -1,3 +1,3 @@
-[submodule "third/nanobot"]
-	path = third/nanobot
+[submodule "apps/third/nanobot"]
+	path = apps/third/nanobot
 	url = https://github.com/HKUDS/nanobot

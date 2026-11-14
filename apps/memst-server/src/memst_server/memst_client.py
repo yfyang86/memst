@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 # Add memst-py to path
-memst_py_path = Path(__file__).parent.parent.parent / "memst-py" / "target" / "python"
+# apps/memst-server/src/memst_server/memst_client.py -> parents[4] == repo root
+memst_py_path = Path(__file__).resolve().parents[4] / "memst-py" / "target" / "python"
 if memst_py_path.exists():
     sys.path.insert(0, str(memst_py_path))
 

@@ -1661,7 +1661,7 @@ memst mcp manifest
 
 ## 20. API Reference
 
-See [memst-server-api.md](memst-server-api.md) for detailed REST API documentation.
+See [apps/memst-server-api.md](apps/memst-server-api.md) for detailed REST API documentation.
 
 ### Quick Reference
 

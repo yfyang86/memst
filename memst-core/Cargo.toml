@@ -29,8 +29,6 @@ dirs = "5"
 # Collections
 indexmap = { version = "2.2", features = ["serde"] }
 
-# Graph storage
-petgraph = "0.6"
 
 # HTTP client for LLM/Embedding APIs
 reqwest = { version = "0.11", features = ["json"] }

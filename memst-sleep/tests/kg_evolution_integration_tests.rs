@@ -59,12 +59,12 @@ fn test_evolution_detect_merge_candidates() {
     };
     let engine = KgEvolutionEngine::with_config(config);
     
-    let candidates = engine.detect_merge_candidates(&graph);
+    let candidates = engine.detect_merge_candidates(&graph).unwrap();
     
     eprintln!("Found {} merge candidates", candidates.len());
     for (e1, e2, sim) in &candidates {
-        let ent1 = graph.get_entity(*e1).unwrap();
-        let ent2 = graph.get_entity(*e2).unwrap();
+        let ent1 = graph.get_entity(*e1).unwrap().unwrap();
+        let ent2 = graph.get_entity(*e2).unwrap().unwrap();
         eprintln!("  Candidate: '{}' vs '{}' = {:.2}", ent1.name, ent2.name, sim);
     }
     
@@ -102,12 +102,12 @@ fn test_evolution_apply_merge() {
     assert!(result.unwrap(), "Merge should make changes");
     
     // Verify the merged entity is deprecated
-    let merged = graph.get_entity(rust_lang).expect("Merged entity should exist");
+    let merged = graph.get_entity(rust_lang).unwrap().expect("Merged entity should exist");
     assert!(merged.is_deprecated, "Merged entity should be deprecated");
     assert!(merged.deprecation_reason.as_ref().unwrap().contains("Merged"));
     
     // Verify the keep entity has updated attributes
-    let keep = graph.get_entity(rust_programming).expect("Keep entity should exist");
+    let keep = graph.get_entity(rust_programming).unwrap().expect("Keep entity should exist");
     assert!(!keep.is_deprecated, "Keep entity should not be deprecated");
     
     eprintln!("✓ Merge application test passed");
@@ -141,7 +141,7 @@ fn test_evolution_merge_with_relationships() {
     let rust_lang = entity_ids[1];
     
     // Count relationships before merge
-    let rels_before = graph.get_relationships(rust_programming).len();
+    let rels_before = graph.get_relationships(rust_programming).unwrap().len();
     eprintln!("Relationships before merge: {}", rels_before);
     
     // Apply merge
@@ -155,14 +155,14 @@ fn test_evolution_merge_with_relationships() {
     assert!(result.is_ok(), "Merge should succeed");
     
     // Verify relationships were migrated
-    let rels_after = graph.get_relationships(rust_programming).len();
+    let rels_after = graph.get_relationships(rust_programming).unwrap().len();
     eprintln!("Relationships after merge: {}", rels_after);
     
     // Should have more relationships now (the created_by from rust_lang)
     assert!(rels_after >= rels_before, "Relationships should be migrated to keep entity");
     
     // Verify the deprecated entity has no more relationships as subject
-    let deprecated_rels = graph.get_relationships(rust_lang);
+    let deprecated_rels = graph.get_relationships(rust_lang).unwrap();
     assert!(deprecated_rels.is_empty() || 
             deprecated_rels.iter().all(|(r, _, _)| r.subject_id != rust_lang),
             "Deprecated entity should not have relationships as subject");
@@ -191,7 +191,7 @@ fn test_evolution_apply_deprecation() {
     assert!(result.unwrap(), "Deprecation should make changes");
     
     // Verify entity is deprecated
-    let entity = graph.get_entity(entity_to_deprecate).expect("Entity should exist");
+    let entity = graph.get_entity(entity_to_deprecate).unwrap().expect("Entity should exist");
     assert!(entity.is_deprecated, "Entity should be deprecated");
     assert_eq!(entity.deprecation_reason, Some("Low relevance".to_string()));
     
@@ -208,7 +208,7 @@ fn test_evolution_entity_update() {
     let entity_to_update = entity_ids[0];
     
     // Get original name
-    let original_name = graph.get_entity(entity_to_update).unwrap().name.clone();
+    let original_name = graph.get_entity(entity_to_update).unwrap().unwrap().name.clone();
     
     let action = KgEvolutionAction::UpdateEntity {
         entity_id: entity_to_update,
@@ -226,7 +226,7 @@ fn test_evolution_entity_update() {
     assert!(result.is_ok(), "Update should succeed");
     
     // Verify update
-    let entity = graph.get_entity(entity_to_update).expect("Entity should exist");
+    let entity = graph.get_entity(entity_to_update).unwrap().expect("Entity should exist");
     assert_eq!(entity.name, "Rust Language");
     assert_ne!(entity.name, original_name);
     
@@ -255,7 +255,7 @@ fn test_evolution_full_cycle() {
     let engine = KgEvolutionEngine::with_config(config);
     
     // Run evolution cycle
-    let actions = engine.evolve(&graph);
+    let actions = engine.evolve(&graph).unwrap();
     
     eprintln!("Evolution proposed {} actions", actions.len());
     
@@ -287,7 +287,7 @@ fn test_evolution_with_custom_config() {
     };
     
     let strict_engine = KgEvolutionEngine::with_config(strict_config);
-    let strict_candidates = strict_engine.detect_merge_candidates(&graph);
+    let strict_candidates = strict_engine.detect_merge_candidates(&graph).unwrap();
     
     // Lenient config - should find more candidates
     let lenient_config = KgEvolutionConfig {
@@ -299,7 +299,7 @@ fn test_evolution_with_custom_config() {
     };
     
     let lenient_engine = KgEvolutionEngine::with_config(lenient_config);
-    let lenient_candidates = lenient_engine.detect_merge_candidates(&graph);
+    let lenient_candidates = lenient_engine.detect_merge_candidates(&graph).unwrap();
     
     eprintln!("Strict config: {} candidates, Lenient config: {} candidates",
         strict_candidates.len(), lenient_candidates.len());
@@ -369,19 +369,19 @@ fn test_entity_similarity_calculation() {
     let engine = KgEvolutionEngine::with_config(config);
     
     // Get candidates - this uses text_similarity internally
-    let candidates = engine.detect_merge_candidates(&graph);
+    let candidates = engine.detect_merge_candidates(&graph).unwrap();
     
     eprintln!("Candidates found with threshold 0.3:");
     for (e1, e2, sim) in &candidates {
-        let ent1 = graph.get_entity(*e1).unwrap();
-        let ent2 = graph.get_entity(*e2).unwrap();
+        let ent1 = graph.get_entity(*e1).unwrap().unwrap();
+        let ent2 = graph.get_entity(*e2).unwrap().unwrap();
         eprintln!("  '{}' vs '{}' = {:.2}", ent1.name, ent2.name, sim);
     }
     
     // The two Rust entities should be detected as similar
     let has_rust_candidates = candidates.iter().any(|(e1, e2, sim)| {
-        let ent1 = graph.get_entity(*e1).unwrap();
-        let ent2 = graph.get_entity(*e2).unwrap();
+        let ent1 = graph.get_entity(*e1).unwrap().unwrap();
+        let ent2 = graph.get_entity(*e2).unwrap().unwrap();
         (ent1.name.contains("Rust") && ent2.name.contains("Rust")) && *sim > 0.3
     });
     
@@ -417,7 +417,7 @@ fn test_evolution_add_relationship() {
     assert!(result.unwrap(), "Should return true for successful add");
     
     // Verify relationship was added
-    let relationships = graph.get_relationships(entity_ids[0]);
+    let relationships = graph.get_relationships(entity_ids[0]).unwrap();
     assert_eq!(relationships.len(), 1, "Should have one relationship");
     assert_eq!(relationships[0].0.predicate, "related_to");
     
@@ -484,7 +484,7 @@ fn test_evolution_update_relationship() {
     assert!(result.unwrap(), "Should return true for successful update");
     
     // Verify relationship was updated using get_relationship
-    let updated = graph.get_relationship(rel_id);
+    let updated = graph.get_relationship(rel_id).unwrap();
     assert!(updated.is_some(), "Relationship should exist");
     assert_eq!(updated.unwrap().0.confidence, 0.95, "Confidence should be updated");
     
@@ -525,14 +525,14 @@ fn test_evolution_split_entity() {
     assert!(result.unwrap(), "Should return true for successful split");
     
     // Verify original entity is deprecated
-    let original = graph.get_entity(entity_ids[0]).expect("Original should exist");
+    let original = graph.get_entity(entity_ids[0]).unwrap().expect("Original should exist");
     assert!(original.is_deprecated, "Original entity should be deprecated");
     
     // Verify new entities exist
-    assert!(graph.get_entity(new_entity1_id).is_some(), "New entity 1 should exist");
+    assert!(graph.get_entity(new_entity1_id).unwrap().is_some(), "New entity 1 should exist");
     
     // Verify relationships were migrated
-    let new_rels = graph.get_relationships(new_entity1_id);
+    let new_rels = graph.get_relationships(new_entity1_id).unwrap();
     assert!(!new_rels.is_empty(), "Relationships should be migrated to first new entity");
     
     eprintln!("✓ Split entity test passed");
@@ -558,7 +558,7 @@ fn test_evolution_remove_relationship() {
     graph.add_relationship(relationship).expect("Failed to add relationship");
     
     // Verify it exists
-    let relationships_before = graph.get_relationships(entity_ids[0]);
+    let relationships_before = graph.get_relationships(entity_ids[0]).unwrap();
     assert_eq!(relationships_before.len(), 1, "Should have one relationship before removal");
     
     // Remove the relationship
@@ -572,7 +572,7 @@ fn test_evolution_remove_relationship() {
     assert!(result.unwrap(), "Should return true for successful removal");
     
     // Verify it was removed
-    let relationships_after = graph.get_relationships(entity_ids[0]);
+    let relationships_after = graph.get_relationships(entity_ids[0]).unwrap();
     assert!(relationships_after.is_empty(), "Should have no relationships after removal");
     
     eprintln!("✓ Remove relationship test passed");

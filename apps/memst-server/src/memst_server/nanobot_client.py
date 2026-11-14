@@ -8,7 +8,9 @@ from datetime import datetime
 import json
 
 # Add nanobot to path
-NANOBOT_PATH = Path(__file__).parent.parent.parent / "third" / "nanobot"
+# apps/memst-server/src/memst_server/nanobot_client.py -> parents[3] == apps/
+APPS_DIR = Path(__file__).resolve().parents[3]
+NANOBOT_PATH = APPS_DIR / "third" / "nanobot"
 if str(NANOBOT_PATH) not in sys.path:
     sys.path.insert(0, str(NANOBOT_PATH))
 
@@ -43,7 +45,7 @@ try:
     from nanobot.config.loader import Config as NanoConfig
     NANOBOT_AVAILABLE = True
 except ImportError:
-    print("Warning: nanobot not available. Install with: cd third/nanobot && uv pip install -e .")
+    print("Warning: nanobot not available. Install with: cd apps/third/nanobot && uv pip install -e .")
 
 
 # Pattern to match function calls in channel format
@@ -244,7 +246,7 @@ class NanobotClient:
         if self._skills_loader is None and SkillsLoader is not None:
             from pathlib import Path
             # Get the nanobot skills directory (built-in skills)
-            nanobot_path = Path(__file__).parent.parent.parent / "third" / "nanobot"
+            nanobot_path = NANOBOT_PATH
             builtin_skills_dir = nanobot_path / "nanobot" / "skills"
             self._skills_loader = SkillsLoader(self.workspace, builtin_skills_dir)
         return self._skills_loader
