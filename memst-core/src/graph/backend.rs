@@ -109,11 +109,16 @@ pub trait GraphBackend: Send {
     fn expand(&self, frontier: &[EntityId], direction: Direction) -> Result<Vec<Relationship>>;
 
     /// Attach an embedding to an entity (replacing any previous one).
+    /// `source` records what the vector was computed from (see
+    /// [`embedding_source`](super::embedding_source)) and is stored with it.
     /// Returns `false` if the entity does not exist.
-    fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32]) -> Result<bool>;
+    fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32], source: &str) -> Result<bool>;
 
     /// Every stored entity embedding. Used by the brute-force fallback search.
     fn entity_embeddings(&self) -> Result<Vec<(EntityId, Vec<f32>)>>;
+
+    /// The `source` recorded with each stored embedding, without the vectors.
+    fn entity_embedding_sources(&self) -> Result<Vec<(EntityId, String)>>;
 
     /// Search entities with the backend's own indexes.
     ///

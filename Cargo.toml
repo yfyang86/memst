@@ -9,6 +9,7 @@ members = [
     "memst-mcp",
     "memst-extract-v2",
     "memst-graph-helix",
+    "memst-embed",
 ]
 # Everything under apps/ (web server, React UI, Tauri desktop shell) is
 # deliberately outside the Rust workspace. See apps/README.md.

@@ -36,6 +36,9 @@ reqwest = { version = "0.11", features = ["json"] }
 # Async trait for extractor trait
 async-trait = "0.1"
 
+# Runtime for the blocking HTTP embedder
+tokio = { version = "1", features = ["rt"] }
+
 # Async runtime for tests
 futures = "0.3"
 

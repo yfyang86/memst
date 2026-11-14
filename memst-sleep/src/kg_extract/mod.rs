@@ -114,7 +114,8 @@ struct LlmKgResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LlmEntity {
     name: String,
-    #[serde(rename = "type")]
+    // Models sometimes spell the field out.
+    #[serde(rename = "type", alias = "entity_type")]
     entity_type: String,
     #[serde(default)]
     attributes: serde_json::Value,
@@ -138,7 +139,7 @@ struct LlmRelationship {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LlmEvent {
     name: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", alias = "event_type", default)]
     event_type: String,
     #[serde(default)]
     participants: Vec<String>,

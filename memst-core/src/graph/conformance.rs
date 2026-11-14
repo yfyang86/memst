@@ -22,6 +22,7 @@ pub fn run_all(fresh: &mut dyn FnMut() -> KnowledgeGraph) {
     stats_and_decay_helpers(&mut fresh());
     search(&mut fresh());
     sessions_share_entities(&mut fresh());
+    embeddings_follow_entities(&mut fresh());
 }
 
 /// `reopen` must return the same store each time; the previous handle is
@@ -440,4 +441,81 @@ fn sorted(mut ids: Vec<Uuid>) -> Vec<Uuid> {
 
 fn sorted_ids(entities: Vec<Entity>) -> Vec<Uuid> {
     sorted(entities.into_iter().map(|e| e.id).collect())
+}
+
+/// A deterministic embedder: counts calls, and maps a text to a 3-d vector
+/// from which words it contains.
+pub struct KeywordEmbedder {
+    id: &'static str,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl KeywordEmbedder {
+    /// An embedder that identifies itself as `id`.
+    pub fn new(id: &'static str) -> Self {
+        Self { id, calls: std::sync::atomic::AtomicUsize::new(0) }
+    }
+
+    /// How many texts have been embedded so far.
+    pub fn embedded(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl crate::embed::Embedder for KeywordEmbedder {
+    fn id(&self) -> String {
+        self.id.to_string()
+    }
+
+    fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+        self.calls.fetch_add(texts.len(), std::sync::atomic::Ordering::SeqCst);
+        Ok(texts
+            .iter()
+            .map(|text| {
+                let text = text.to_lowercase();
+                let has = |words: &[&str]| if words.iter().any(|w| text.contains(w)) { 1.0 } else { 0.05 };
+                vec![has(&["rust", "python", "language"]), has(&["alice", "person"]), has(&["paris", "city"])]
+            })
+            .collect())
+    }
+}
+
+/// `embed_pending` embeds what is new or changed, and nothing else.
+fn embeddings_follow_entities(graph: &mut KnowledgeGraph) {
+    let session = Uuid::new_v4();
+    let embedder = KeywordEmbedder::new("test-model");
+    let rust = graph.add_entity(Entity::new("Rust", "language", session)).unwrap();
+    let alice = graph.add_entity(Entity::new("Alice", "person", session)).unwrap();
+    let mut gone = Entity::new("Old", "thing", session);
+    gone.deprecate("gone");
+    graph.add_entity(gone).unwrap();
+
+    assert_eq!(graph.entities_needing_embedding("test-model").unwrap().len(), 2);
+    assert_eq!(graph.embed_pending(&embedder).unwrap(), 2, "deprecated entities are skipped");
+    assert_eq!(graph.embed_pending(&embedder).unwrap(), 0, "nothing to do the second time");
+    assert_eq!(embedder.embedded(), 2);
+
+    // Bookkeeping changes do not invalidate an embedding; text changes do.
+    graph.access_entity(rust.id).unwrap();
+    assert_eq!(graph.embed_pending(&embedder).unwrap(), 0);
+    graph.update_entity(alice.id, |e| e.attributes = serde_json::json!({"city": "Paris"})).unwrap();
+    let stale: Vec<Uuid> = graph
+        .entities_needing_embedding("test-model")
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(stale, vec![alice.id]);
+    assert_eq!(graph.embed_pending(&embedder).unwrap(), 1);
+
+    // The new vector is the one that is searched.
+    let paris = EntitySearch { embedding: Some(vec![0.05, 0.05, 1.0]), limit: 1, ..Default::default() };
+    assert_eq!(graph.search_entities(&paris).unwrap().hits[0].entity.id, alice.id);
+
+    // A different model re-embeds everything; a vector set by hand counts as
+    // not embedded by any model.
+    let other = KeywordEmbedder::new("other-model");
+    assert_eq!(graph.embed_pending(&other).unwrap(), 2);
+    graph.set_entity_embedding(rust.id, &[1.0, 0.0, 0.0]).unwrap();
+    assert_eq!(graph.embed_pending(&other).unwrap(), 1);
 }

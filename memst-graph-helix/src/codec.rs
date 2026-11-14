@@ -34,7 +34,7 @@ pub fn entity_props(entity: &Entity) -> Value {
         // Lower-cased copy so case-insensitive search is a plain CONTAINS.
         "name_lc": entity.name.to_lowercase(),
         // What the BM25 index covers: name, type and attribute text.
-        "search_text": search_text(entity),
+        "search_text": entity.search_text(),
         "entity_type": entity.entity_type,
         "attributes": entity.attributes.to_string(),
         "session_id": entity.session_id.to_string(),
@@ -62,34 +62,6 @@ pub fn entity_props(entity: &Entity) -> Value {
 /// (ignoring case) and type.
 pub fn resolve_key(name: &str, entity_type: &str) -> String {
     format!("{}\u{1f}{}", name.to_lowercase(), entity_type)
-}
-
-/// Text indexed for keyword search: the name, the type, and every string
-/// found in the attributes (keys are included, so `{"city": "Paris"}` is
-/// found by "city" as well as "paris").
-pub fn search_text(entity: &Entity) -> String {
-    fn collect(value: &Value, out: &mut String) {
-        match value {
-            Value::String(text) => {
-                out.push(' ');
-                out.push_str(text);
-            }
-            Value::Array(items) => items.iter().for_each(|item| collect(item, out)),
-            Value::Object(map) => map.iter().for_each(|(key, item)| {
-                out.push(' ');
-                out.push_str(key);
-                collect(item, out);
-            }),
-            Value::Number(number) => {
-                out.push(' ');
-                out.push_str(&number.to_string());
-            }
-            Value::Bool(_) | Value::Null => {}
-        }
-    }
-    let mut text = format!("{} {}", entity.name, entity.entity_type);
-    collect(&entity.attributes, &mut text);
-    text
 }
 
 pub fn relationship_props(relationship: &Relationship) -> Value {
@@ -303,13 +275,6 @@ mod tests {
         for value in [0.1f32, 0.3, 0.05, 12.5, 1e-7, f32::MAX] {
             assert_eq!(float(value).as_f64().unwrap() as f32, value);
         }
-    }
-
-    #[test]
-    fn search_text_covers_name_type_and_attributes() {
-        let entity = Entity::new("Alice", "person", Uuid::new_v4())
-            .with_attributes(json!({"city": "Paris", "langs": ["Rust", "Go"], "age": 30, "ok": true}));
-        assert_eq!(search_text(&entity), "Alice person age 30 city Paris langs Rust Go ok");
     }
 
     #[test]

@@ -69,7 +69,7 @@ const EDGE_TYPE: &str = "REL";
 /// Property holding an entity's owner; also the tenant key of the search
 /// indexes.
 const OWNER_PROPERTY: &str = "owner";
-/// Property covered by the BM25 index (see `codec::search_text`).
+/// Property covered by the BM25 index (see `Entity::search_text`).
 const TEXT_PROPERTY: &str = "search_text";
 /// Longest time to wait for a freshly requested index to activate.
 const INDEX_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -704,14 +704,36 @@ impl GraphBackend for HelixGraphBackend {
         Ok(out)
     }
 
-    fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32]) -> Result<bool> {
+    fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32], source: &str) -> Result<bool> {
         self.writable()?;
         self.ensure_vector_index(embedding.len())?;
         let updated = self.count(
-            "MATCH (e:Entity {%Ouid: $uid}) SET e += {embedding: $embedding} RETURN count(e) AS n",
-            json!({ "uid": id.to_string(), "embedding": embedding }),
+            "MATCH (e:Entity {%Ouid: $uid}) SET e += {embedding: $embedding, embedding_source: $source} RETURN count(e) AS n",
+            json!({ "uid": id.to_string(), "embedding": embedding, "source": source }),
         )?;
         Ok(updated > 0)
+    }
+
+    fn entity_embedding_sources(&self) -> Result<Vec<(EntityId, String)>> {
+        let mut out = Vec::new();
+        loop {
+            let rows = self.cypher(
+                "MATCH (e:Entity%N) WHERE e.embedding IS NOT NULL RETURN e.uid AS uid, e.embedding_source AS source ORDER BY uid SKIP $skip LIMIT $limit",
+                json!({ "skip": out.len(), "limit": PAGE }),
+            )?;
+            let page = rows.len();
+            for row in rows {
+                let [Value::String(uid), source] = row.as_slice() else {
+                    return Err(Error::Corruption("helix embedding source row".to_string()));
+                };
+                let id = uuid::Uuid::parse_str(uid)
+                    .map_err(|e| Error::Corruption(format!("helix entity uid: {e}")))?;
+                out.push((id, source.as_str().unwrap_or_default().to_string()));
+            }
+            if page < PAGE {
+                return Ok(out);
+            }
+        }
     }
 
     fn entity_embeddings(&self) -> Result<Vec<(EntityId, Vec<f32>)>> {

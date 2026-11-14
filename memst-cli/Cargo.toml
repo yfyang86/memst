@@ -7,6 +7,8 @@ rust-version.workspace = true
 [dependencies]
 memst-core = { path = "../memst-core" }
 memst-graph-helix = { path = "../memst-graph-helix", optional = true }
+memst-embed = { path = "../memst-embed", optional = true }
+memst-sleep = { path = "../memst-sleep" }
 clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
@@ -18,8 +20,11 @@ chrono = "0.4"
 # `helix` compiles the embedded HelixDB engine into the CLI and makes it the
 # default graph backend. Build with `--no-default-features` for a small binary
 # that only knows graph.json.
-default = ["helix"]
+default = ["helix", "local-embeddings"]
 helix = ["dep:memst-graph-helix"]
+# `local-embeddings` compiles in ONNX Runtime and the BGE-M3 loader, so
+# entities can be embedded on the CPU with no embedding API.
+local-embeddings = ["dep:memst-embed"]
 
 [dev-dependencies]
 assert_cmd = "2.0"

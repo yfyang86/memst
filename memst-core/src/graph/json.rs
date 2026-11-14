@@ -24,6 +24,9 @@ struct GraphFile {
     /// Entity embeddings, keyed by entity id. Absent in MemSt 1.0 files.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     embeddings: IndexMap<EntityId, Vec<f32>>,
+    /// What each embedding was computed from.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    embedding_sources: IndexMap<EntityId, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +100,7 @@ pub struct JsonGraphBackend {
     entities: IndexMap<EntityId, Entity>,
     relationships: IndexMap<RelationshipId, Relationship>,
     embeddings: IndexMap<EntityId, Vec<f32>>,
+    embedding_sources: IndexMap<EntityId, String>,
 }
 
 impl JsonGraphBackend {
@@ -112,6 +116,7 @@ impl JsonGraphBackend {
             entities: IndexMap::new(),
             relationships: IndexMap::new(),
             embeddings: IndexMap::new(),
+            embedding_sources: IndexMap::new(),
         };
         if backend.path.exists() {
             let file: GraphFile = serde_json::from_reader(BufReader::new(File::open(&backend.path)?))?;
@@ -123,6 +128,7 @@ impl JsonGraphBackend {
                 .map(|r| (r.id, r))
                 .collect();
             backend.embeddings = file.embeddings;
+            backend.embedding_sources = file.embedding_sources;
         }
         Ok(backend)
     }
@@ -139,6 +145,7 @@ impl JsonGraphBackend {
             entities: self.entities.values().cloned().collect(),
             edges: self.relationships.values().map(EdgeRecord::from).collect(),
             embeddings: self.embeddings.clone(),
+            embedding_sources: self.embedding_sources.clone(),
         };
         let tmp = self.path.with_extension("json.tmp");
         {
@@ -180,6 +187,7 @@ impl GraphBackend for JsonGraphBackend {
         self.relationships
             .retain(|_, r| r.subject_id != id && r.object_id != id);
         self.embeddings.shift_remove(&id);
+        self.embedding_sources.shift_remove(&id);
         self.save()?;
         Ok(true)
     }
@@ -248,17 +256,26 @@ impl GraphBackend for JsonGraphBackend {
             .collect())
     }
 
-    fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32]) -> Result<bool> {
+    fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32], source: &str) -> Result<bool> {
         if !self.entities.contains_key(&id) {
             return Ok(false);
         }
         self.embeddings.insert(id, embedding.to_vec());
+        self.embedding_sources.insert(id, source.to_string());
         self.save()?;
         Ok(true)
     }
 
     fn entity_embeddings(&self) -> Result<Vec<(EntityId, Vec<f32>)>> {
         Ok(self.embeddings.iter().map(|(id, v)| (*id, v.clone())).collect())
+    }
+
+    fn entity_embedding_sources(&self) -> Result<Vec<(EntityId, String)>> {
+        Ok(self
+            .embeddings
+            .keys()
+            .map(|id| (*id, self.embedding_sources.get(id).cloned().unwrap_or_default()))
+            .collect())
     }
 
     fn entity_count(&self) -> Result<usize> {

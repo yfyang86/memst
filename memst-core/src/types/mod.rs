@@ -733,6 +733,41 @@ impl Entity {
         self
     }
 
+    /// The entity as plain text: its name, its type, and every key, string
+    /// and number in its attributes (`{"city": "Paris"}` contributes both
+    /// "city" and "Paris"). Attribute keys starting with `_` are skipped.
+    /// This is what keyword search indexes and what an embedding of the
+    /// entity is computed from.
+    pub fn search_text(&self) -> String {
+        fn collect(value: &serde_json::Value, out: &mut String) {
+            match value {
+                serde_json::Value::String(text) => {
+                    out.push(' ');
+                    out.push_str(text);
+                }
+                serde_json::Value::Array(items) => items.iter().for_each(|item| collect(item, out)),
+                // Keys starting with `_` are bookkeeping (for example
+                // `_extraction_run`), not something the entity is about.
+                serde_json::Value::Object(map) => map
+                    .iter()
+                    .filter(|(key, _)| !key.starts_with('_'))
+                    .for_each(|(key, item)| {
+                        out.push(' ');
+                        out.push_str(key);
+                        collect(item, out);
+                    }),
+                serde_json::Value::Number(number) => {
+                    out.push(' ');
+                    out.push_str(&number.to_string());
+                }
+                serde_json::Value::Bool(_) | serde_json::Value::Null => {}
+            }
+        }
+        let mut text = format!("{} {}", self.name, self.entity_type);
+        collect(&self.attributes, &mut text);
+        text
+    }
+
     /// Whether this entity was created in, or later seen in, `session`.
     pub fn is_in_session(&self, session: Uuid) -> bool {
         self.session_id == session || self.seen_in.contains(&session)

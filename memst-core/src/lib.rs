@@ -12,6 +12,7 @@
 compile_error!("memst-core needs a search backend: enable the `native-backend` or `tantivy-backend` feature");
 
 pub mod config;
+pub mod embed;
 pub mod context;
 pub mod error;
 pub mod extract;

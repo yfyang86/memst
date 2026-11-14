@@ -103,6 +103,14 @@ enum Command {
         #[arg(long, global = true)]
         all_sessions: bool,
 
+        /// What computes embeddings: auto, local, http or none.
+        ///
+        /// `auto` uses the embedding API from config.toml or
+        /// MEMST_EMBEDDING_API_URL when one is set, and otherwise the local
+        /// BGE-M3 model (downloaded on first use, about 2.2 GB).
+        #[arg(long, global = true, default_value = "auto")]
+        embedder: String,
+
         #[command(subcommand)]
         command: GraphCommand,
     },
@@ -368,35 +376,76 @@ enum GraphCommand {
         json: bool,
     },
 
-    #[command(about = "Compute and store embeddings for entities (for --semantic search)")]
+    #[command(about = "Embed entities that are new or have changed (for --semantic search)")]
     Embed {
         /// Session ID
         session_id: Uuid,
+    },
 
-        /// Re-embed entities that already have an embedding
+    #[command(about = "Extract entities and relationships from a session's messages into the graph")]
+    Ingest {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Re-read every message, not only those added since the last ingest
         #[arg(long)]
         all: bool,
+
+        /// Characters of conversation sent to the LLM per extraction call
+        #[arg(long, default_value = "6000")]
+        batch_chars: usize,
     },
 
     #[command(about = "Copy every per-session graph of this store into the shared graph")]
     Migrate,
 }
 
-/// Text an entity is embedded from: name, type and attributes.
-fn entity_embedding_text(entity: &Entity) -> String {
-    let has_attributes = entity.attributes.as_object().is_some_and(|m| !m.is_empty());
-    if has_attributes {
-        format!("{} ({}) {}", entity.name, entity.entity_type, entity.attributes)
-    } else {
-        format!("{} ({})", entity.name, entity.entity_type)
+/// The embedder the `--embedder` option selects, or `None` for "none".
+fn select_embedder(kind: &str) -> Result<Option<Box<dyn memst_core::embed::Embedder>>> {
+    use memst_core::embed::{Embedder, HttpEmbedder};
+
+    #[cfg(feature = "local-embeddings")]
+    fn local() -> Result<Box<dyn Embedder>> {
+        let dir = memst_embed::default_model_dir();
+        if !memst_embed::LocalEmbedder::is_cached(&dir) {
+            eprintln!(
+                "note: downloading the BGE-M3 embedding model (about 2.2 GB) to {}; this happens once",
+                dir.display()
+            );
+        }
+        Ok(Box::new(memst_embed::LocalEmbedder::bge_m3_in(&dir)?))
+    }
+    #[cfg(not(feature = "local-embeddings"))]
+    fn local() -> Result<Box<dyn Embedder>> {
+        anyhow::bail!("this memst was built without the 'local-embeddings' feature")
+    }
+
+    match kind {
+        "none" => Ok(None),
+        "http" => Ok(Some(Box::new(HttpEmbedder::from_config()?))),
+        "local" => Ok(Some(local()?)),
+        "auto" => match HttpEmbedder::from_config() {
+            Ok(http) => Ok(Some(Box::new(http))),
+            Err(_) => Ok(Some(local()?)),
+        },
+        other => anyhow::bail!("unknown embedder '{other}' (expected auto, local, http or none)"),
     }
 }
 
-/// Embed texts with the configured embedding API.
-fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>> {
-    let client = memst_core::llm::EmbeddingClient::new(memst_core::llm::EmbeddingConfig::default())?;
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    Ok(runtime.block_on(client.embed_batch(texts))?)
+/// Plain text of a message, for extraction.
+fn message_text(message: &memst_core::types::Message) -> String {
+    use memst_core::types::{Content, ContentPart};
+    match &message.content {
+        Content::Text(text) => text.clone(),
+        Content::MultiPart(parts) => parts
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
 }
 
 /// Open the knowledge graph a session of this store uses.
@@ -879,7 +928,7 @@ fn main() -> Result<()> {
             println!("  Long-term: {}", long_term);
         }
 
-        Command::Graph { backend, owner, all_sessions, command } => {
+        Command::Graph { backend, owner, all_sessions, embedder, command } => {
             let store = SessionStore::open(&args.store)?;
             
             if let GraphCommand::Migrate = command {
@@ -909,6 +958,7 @@ fn main() -> Result<()> {
                 GraphCommand::Neighbors { session_id, .. } => *session_id,
                 GraphCommand::Search { session_id, .. } => *session_id,
                 GraphCommand::Embed { session_id, .. } => *session_id,
+                GraphCommand::Ingest { session_id, .. } => *session_id,
                 GraphCommand::Migrate => unreachable!("handled above"),
             };
             let reads_only = matches!(
@@ -1096,10 +1146,14 @@ fn main() -> Result<()> {
                         search.session_id = Some(*session_id);
                     }
                     if *semantic {
-                        // A missing or failing embedding API must not stop
-                        // the search: carry on with keywords only.
-                        match embed_texts(std::slice::from_ref(query)) {
-                            Ok(mut vectors) => search.embedding = vectors.pop(),
+                        // A missing or failing embedder must not stop the
+                        // search: carry on with keywords only.
+                        let embedded = select_embedder(embedder).and_then(|chosen| match chosen {
+                            Some(chosen) => Ok(chosen.embed(std::slice::from_ref(query))?.pop()),
+                            None => Ok(None),
+                        });
+                        match embedded {
+                            Ok(vector) => search.embedding = vector,
                             Err(error) => eprintln!(
                                 "warning: could not embed the query ({error}); searching by keywords only"
                             ),
@@ -1145,23 +1199,81 @@ fn main() -> Result<()> {
                     }
                 }
 
-                GraphCommand::Embed { session_id: _, all } => {
-                    let embedded = graph.embedded_entity_ids()?;
-                    let pending: Vec<Entity> = graph
-                        .all_entities()?
-                        .into_iter()
-                        .filter(|e| *all || !embedded.contains(&e.id))
+                GraphCommand::Embed { session_id: _ } => {
+                    let Some(chosen) = select_embedder(embedder)? else {
+                        anyhow::bail!("--embedder none: nothing to embed with");
+                    };
+                    let embedded = graph.embed_pending(chosen.as_ref())?;
+                    if embedded == 0 {
+                        println!("Every entity is already embedded with {}.", chosen.id());
+                    } else {
+                        println!("Embedded {} entities with {}.", embedded, chosen.id());
+                    }
+                }
+
+                GraphCommand::Ingest {
+                    session_id,
+                    all,
+                    batch_chars,
+                } => {
+                    use memst_sleep::kg_extract::KgExtractionService;
+                    use memst_sleep::kg_ingest::GraphIngestor;
+
+                    // How many of the session's messages earlier runs covered.
+                    let marker = session_path.join("graph.ingested");
+                    let done: usize = if *all {
+                        0
+                    } else {
+                        std::fs::read_to_string(&marker)
+                            .ok()
+                            .and_then(|text| text.trim().parse().ok())
+                            .unwrap_or(0)
+                    };
+                    let messages = store.get_messages(*session_id)?;
+                    let pending: Vec<(Uuid, String)> = messages
+                        .iter()
+                        .skip(done)
+                        .map(|m| (m.id, message_text(m)))
+                        .filter(|(_, text)| !text.trim().is_empty())
                         .collect();
                     if pending.is_empty() {
-                        println!("All {} entities already have embeddings.", embedded.len());
+                        println!("No new messages to ingest ({} already covered).", done.min(messages.len()));
                         return Ok(());
                     }
-                    let texts: Vec<String> = pending.iter().map(entity_embedding_text).collect();
-                    let vectors = embed_texts(&texts)?;
-                    for (entity, vector) in pending.iter().zip(&vectors) {
-                        graph.set_entity_embedding(entity.id, vector)?;
-                    }
-                    println!("Embedded {} entities.", pending.len());
+
+                    let llm = memst_core::llm::LlmLoader::default_provider()?;
+                    // Extraction is the point; a missing embedder only means
+                    // the new entities are not searchable by meaning yet.
+                    let chosen = match select_embedder(embedder) {
+                        Ok(chosen) => chosen,
+                        Err(error) => {
+                            eprintln!("warning: no embedder ({error}); run `memst graph embed` later");
+                            None
+                        }
+                    };
+                    let ingestor = GraphIngestor::new(KgExtractionService::new(llm));
+                    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                    let report = runtime.block_on(ingestor.ingest_messages(
+                        &mut graph,
+                        *session_id,
+                        &pending,
+                        *batch_chars,
+                        chosen.as_deref(),
+                    ))?;
+                    std::fs::write(&marker, messages.len().to_string())?;
+
+                    println!("Ingested {} message(s).", pending.len());
+                    println!(
+                        "Entities: {} new, {} already known.",
+                        report.entities_created, report.entities_reused
+                    );
+                    println!(
+                        "Relationships: {} new, {} seen again, {} skipped (unknown endpoint).",
+                        report.relationships_created,
+                        report.relationships_reinforced,
+                        report.relationships_skipped
+                    );
+                    println!("Embedded: {}.", report.entities_embedded);
                 }
 
                 GraphCommand::Migrate => unreachable!("handled before the graph is opened"),

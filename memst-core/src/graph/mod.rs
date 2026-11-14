@@ -27,6 +27,18 @@ use crate::types::{
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+/// Embedder id recorded for vectors supplied through
+/// [`KnowledgeGraph::set_entity_embedding`].
+pub const MANUAL_EMBEDDER: &str = "manual";
+
+/// What an embedding of `entity` by `embedder_id` is computed from: the
+/// model, and a fingerprint of the entity's text. Stored next to the vector;
+/// when it no longer matches, the embedding is out of date.
+pub fn embedding_source(entity: &Entity, embedder_id: &str) -> String {
+    let fingerprint = blake3::hash(entity.search_text().as_bytes()).to_hex();
+    format!("{embedder_id}#{}", &fingerprint[..16])
+}
+
 /// A relationship together with its subject and object entities.
 pub type Triple = (Relationship, Entity, Entity);
 
@@ -144,18 +156,70 @@ impl KnowledgeGraph {
         Ok(results)
     }
 
-    /// Attach an embedding to an entity, for semantic search.
-    /// Returns `false` if the entity does not exist.
+    /// Attach an embedding you computed yourself to an entity, for semantic
+    /// search. Returns `false` if the entity does not exist.
+    ///
+    /// Prefer [`embed_pending`](Self::embed_pending), which also keeps
+    /// embeddings up to date when entities change.
     pub fn set_entity_embedding(&mut self, entity_id: EntityId, embedding: &[f32]) -> Result<bool> {
         if embedding.is_empty() {
             return Err(Error::InvalidOperation("embedding is empty".to_string()));
         }
-        self.backend.set_entity_embedding(entity_id, embedding)
+        let Some(entity) = self.backend.get_entity(entity_id)? else {
+            return Ok(false);
+        };
+        let source = embedding_source(&entity, MANUAL_EMBEDDER);
+        self.backend.set_entity_embedding(entity_id, embedding, &source)
     }
 
     /// Ids of entities that have an embedding.
     pub fn embedded_entity_ids(&self) -> Result<HashSet<EntityId>> {
-        Ok(self.backend.entity_embeddings()?.into_iter().map(|(id, _)| id).collect())
+        Ok(self
+            .backend
+            .entity_embedding_sources()?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect())
+    }
+
+    /// Entities that `embedder_id` has not embedded in their current form:
+    /// never embedded, embedded by another model, or changed since (renamed,
+    /// retyped, attributes added). Deprecated entities are skipped.
+    pub fn entities_needing_embedding(&self, embedder_id: &str) -> Result<Vec<Entity>> {
+        let stored: HashMap<EntityId, String> =
+            self.backend.entity_embedding_sources()?.into_iter().collect();
+        Ok(self
+            .all_entities()?
+            .into_iter()
+            .filter(|e| !e.is_deprecated)
+            .filter(|e| stored.get(&e.id) != Some(&embedding_source(e, embedder_id)))
+            .collect())
+    }
+
+    /// Embed every entity that needs it (see
+    /// [`entities_needing_embedding`](Self::entities_needing_embedding)) and
+    /// store the vectors. Call this after writing to the graph; it does
+    /// nothing when everything is current. Returns how many were embedded.
+    pub fn embed_pending(&mut self, embedder: &dyn crate::embed::Embedder) -> Result<usize> {
+        const BATCH: usize = 32;
+        let embedder_id = embedder.id();
+        let pending = self.entities_needing_embedding(&embedder_id)?;
+        for batch in pending.chunks(BATCH) {
+            let texts: Vec<String> = batch.iter().map(Entity::search_text).collect();
+            let vectors = embedder.embed(&texts)?;
+            if vectors.len() != batch.len() {
+                return Err(Error::InvalidOperation(format!(
+                    "embedder {embedder_id} returned {} vectors for {} texts",
+                    vectors.len(),
+                    batch.len()
+                )));
+            }
+            for (entity, vector) in batch.iter().zip(&vectors) {
+                let source = embedding_source(entity, &embedder_id);
+                self.backend.set_entity_embedding(entity.id, vector, &source)?;
+            }
+        }
+        Ok(pending.len())
     }
 
     /// Search entities by keywords, by embedding, or both.
@@ -451,8 +515,11 @@ impl KnowledgeGraph {
     pub fn copy_into(&self, target: &mut KnowledgeGraph) -> Result<(usize, usize)> {
         let entities = self.all_entities()?;
         target.backend.put_entities(&entities)?;
+        let sources: HashMap<EntityId, String> =
+            self.backend.entity_embedding_sources()?.into_iter().collect();
         for (id, embedding) in self.backend.entity_embeddings()? {
-            target.backend.set_entity_embedding(id, &embedding)?;
+            let source = sources.get(&id).map(String::as_str).unwrap_or_default();
+            target.backend.set_entity_embedding(id, &embedding, source)?;
         }
         let relationships = self.backend.scan_relationships(&RelationshipQuery::default())?;
         for relationship in &relationships {

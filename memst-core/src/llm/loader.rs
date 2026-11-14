@@ -126,7 +126,7 @@ impl LlmProviderConfig {
                 Please either:\n\
                 1. Create a config file at ~/.memst/config.toml\n\
                 2. Use LlmProviderConfig::openai() or LlmProviderConfig::local() to configure explicitly\n\
-                3. Set the MEMST_CONFIG environment variable to your config file path"
+                3. Set MEMST_CONFIG_PATH to your config file, or MEMST_LLM_API_URL (and MEMST_LLM_MODEL, MEMST_LLM_API_KEY)"
                     .to_string(),
             ));
         }
@@ -189,14 +189,15 @@ impl Default for LlmProviderConfig {
             }
         }
 
-        // No configuration found - use a placeholder that will fail with a clear error
-        // Users must explicitly configure the LLM provider
+        // No config file: fall back to the environment, as the embedding
+        // client and the README do. With nothing set, the URL stays empty
+        // and `validate` fails with a clear error.
         Self {
             provider_type: LlmProviderType::OpenAi,
             base: LlmConfig {
-                api_url: String::new(), // Empty URL will cause error on use
-                model: "gpt-4".to_string(),
-                api_key: None,
+                api_url: std::env::var("MEMST_LLM_API_URL").unwrap_or_default(),
+                model: std::env::var("MEMST_LLM_MODEL").unwrap_or_else(|_| "gpt-4".to_string()),
+                api_key: std::env::var("MEMST_LLM_API_KEY").ok(),
                 timeout: 60,
                 max_tokens: 4096,
                 temperature: 0.7,
