@@ -1,6 +1,6 @@
 //! The HelixDB backend must pass the same suite as the JSON backend.
 
-use memst_core::graph::{conformance, KnowledgeGraph};
+use memst_core::graph::{conformance, EntitySearch, EntitySearchResult, KnowledgeGraph, SearchMethod};
 use memst_core::types::{Entity, EntityQuery, Relationship};
 use memst_graph_helix::{migrate_json_to_helix, open, BackendChoice, HelixGraphBackend};
 use tempfile::TempDir;
@@ -54,6 +54,7 @@ fn migrates_a_json_graph() {
         let mut json = KnowledgeGraph::new(dir.path()).unwrap();
         json.add_entities(&[a.clone(), b.clone()]).unwrap();
         json.add_relationship(rel.clone()).unwrap();
+        json.set_entity_embedding(a.id, &[0.5, 0.5]).unwrap();
     }
 
     assert_eq!(migrate_json_to_helix(dir.path()).unwrap(), (2, 1));
@@ -62,6 +63,7 @@ fn migrates_a_json_graph() {
 
     let graph = open(dir.path(), BackendChoice::Auto).unwrap();
     assert_eq!(graph.backend_kind(), "helix");
+    assert_eq!(graph.embedded_entity_ids().unwrap().len(), 1, "embeddings migrate too");
     let (stored, subject, object) = graph.get_relationship(rel.id).unwrap().unwrap();
     assert_eq!(stored.confidence, 0.9);
     assert_eq!((subject.name.as_str(), object.name.as_str()), ("Alice", "Rust"));
@@ -106,4 +108,118 @@ fn works_inside_an_async_runtime() {
         assert!(graph.get_entity(entity.id).unwrap().is_some());
         drop(graph);
     });
+}
+
+/// Index builds are asynchronous: poll until HelixDB itself answers.
+fn search_native(graph: &KnowledgeGraph, query: &EntitySearch) -> EntitySearchResult {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let result = graph.search_entities(query).unwrap();
+        if result.method == SearchMethod::Native {
+            return result;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native search never became available: {:?}",
+            result.fallback_reason
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn names(result: &EntitySearchResult) -> Vec<&str> {
+    result.hits.iter().map(|h| h.entity.name.as_str()).collect()
+}
+
+#[test]
+fn searches_with_helix_bm25_and_vectors() {
+    let dir = TempDir::new().unwrap();
+    let mut graph = helix(dir.path());
+    let session = Uuid::new_v4();
+    let rust = Entity::new("Rust", "language", session)
+        .with_attributes(serde_json::json!({"paradigm": "systems programming", "tool": "cargo"}));
+    let python = Entity::new("Python", "language", session)
+        .with_attributes(serde_json::json!({"paradigm": "scripting"}));
+    let alice = Entity::new("Alice Smith", "person", session);
+    graph.add_entities(&[rust.clone(), python.clone(), alice.clone()]).unwrap();
+
+    // BM25 covers attributes and type, which substring-on-name cannot reach.
+    let by_attribute = search_native(&graph, &EntitySearch::text("systems programming"));
+    assert_eq!(names(&by_attribute), vec!["Rust"]);
+    assert!(by_attribute.fallback_reason.is_none());
+    let by_type = search_native(&graph, &EntitySearch::text("language"));
+    assert_eq!(by_type.hits.len(), 2);
+    // Multi-word queries are ORed and ranked: the entity matching more terms wins.
+    let ranked = search_native(&graph, &EntitySearch::text("cargo language"));
+    assert_eq!(names(&ranked)[0], "Rust");
+    assert!(ranked.hits[0].score > ranked.hits[1].score);
+
+    // An updated entity is searchable under its new text, not its old.
+    graph.update_entity(alice.id, |e| e.name = "Alice Jones".to_string()).unwrap();
+    assert_eq!(names(&search_native(&graph, &EntitySearch::text("jones"))), vec!["Alice Jones"]);
+    assert_eq!(
+        graph.search_entities(&EntitySearch::text("smith")).unwrap().hits.len(),
+        0
+    );
+
+    // Vector search.
+    graph.set_entity_embedding(rust.id, &[1.0, 0.0, 0.0]).unwrap();
+    graph.set_entity_embedding(python.id, &[0.8, 0.6, 0.0]).unwrap();
+    graph.set_entity_embedding(alice.id, &[0.0, 0.0, 1.0]).unwrap();
+    let semantic = EntitySearch { embedding: Some(vec![0.1, 0.0, 0.9]), limit: 1, ..Default::default() };
+    assert_eq!(names(&search_native(&graph, &semantic)), vec!["Alice Jones"]);
+
+    // Hybrid: one request, both indexes, fused.
+    let hybrid = EntitySearch::text("language").with_embedding(vec![0.8, 0.6, 0.0]);
+    assert_eq!(names(&search_native(&graph, &hybrid))[0], "Python");
+
+    // Embeddings survive an entity update and a reopen.
+    graph.access_entity(python.id).unwrap();
+    drop(graph);
+    let graph = helix(dir.path());
+    assert_eq!(graph.embedded_entity_ids().unwrap().len(), 3);
+    assert_eq!(names(&search_native(&graph, &hybrid))[0], "Python");
+}
+
+#[test]
+fn falls_back_when_helix_search_cannot_answer() {
+    let dir = TempDir::new().unwrap();
+    let mut graph = helix(dir.path());
+    let session = Uuid::new_v4();
+    let rust = graph.add_entity(Entity::new("Rustacean", "person", session)).unwrap();
+    search_native(&graph, &EntitySearch::text("rustacean"));
+
+    // BM25 matches whole terms only, so a partial word finds nothing in
+    // HelixDB; MemSt's substring matching then answers.
+    let partial = graph.search_entities(&EntitySearch::text("rust")).unwrap();
+    assert_eq!(partial.method, SearchMethod::Fallback);
+    assert_eq!(names(&partial), vec!["Rustacean"]);
+    assert!(partial.fallback_reason.unwrap().contains("found nothing"));
+
+    // No embeddings were ever stored, so there is no vector index: the
+    // native request fails, and the text half is still answered.
+    let hybrid = EntitySearch::text("rustacean").with_embedding(vec![1.0, 0.0]);
+    let result = graph.search_entities(&hybrid).unwrap();
+    assert_eq!(result.method, SearchMethod::Fallback);
+    assert_eq!(names(&result), vec!["Rustacean"]);
+    assert!(result.fallback_reason.unwrap().contains("search failed"));
+
+    // A query vector of the wrong dimension fails in HelixDB; the fallback
+    // skips embeddings it cannot compare and still answers from the text.
+    graph.set_entity_embedding(rust.id, &[1.0, 0.0, 0.0]).unwrap();
+    let wrong = EntitySearch::text("rustacean").with_embedding(vec![1.0, 0.0]);
+    search_native(&graph, &EntitySearch { embedding: Some(vec![1.0, 0.0, 0.0]), ..Default::default() });
+    let result = graph.search_entities(&wrong).unwrap();
+    assert_eq!(result.method, SearchMethod::Fallback);
+    assert_eq!(names(&result), vec!["Rustacean"]);
+}
+
+#[test]
+fn json_backend_always_uses_the_fallback() {
+    let dir = TempDir::new().unwrap();
+    let mut graph = open(dir.path(), BackendChoice::Json).unwrap();
+    graph.add_entity(Entity::new("Rust", "language", Uuid::new_v4())).unwrap();
+    let result = graph.search_entities(&EntitySearch::text("rust")).unwrap();
+    assert_eq!(result.method, SearchMethod::Fallback);
+    assert!(result.fallback_reason.unwrap().contains("no native search"));
 }

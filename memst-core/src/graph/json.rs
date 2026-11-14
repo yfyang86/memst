@@ -21,6 +21,9 @@ use uuid::Uuid;
 struct GraphFile {
     entities: Vec<Entity>,
     edges: Vec<EdgeRecord>,
+    /// Entity embeddings, keyed by entity id. Absent in MemSt 1.0 files.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    embeddings: IndexMap<EntityId, Vec<f32>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +96,7 @@ pub struct JsonGraphBackend {
     path: PathBuf,
     entities: IndexMap<EntityId, Entity>,
     relationships: IndexMap<RelationshipId, Relationship>,
+    embeddings: IndexMap<EntityId, Vec<f32>>,
 }
 
 impl JsonGraphBackend {
@@ -107,6 +111,7 @@ impl JsonGraphBackend {
             path,
             entities: IndexMap::new(),
             relationships: IndexMap::new(),
+            embeddings: IndexMap::new(),
         };
         if backend.path.exists() {
             let file: GraphFile = serde_json::from_reader(BufReader::new(File::open(&backend.path)?))?;
@@ -117,6 +122,7 @@ impl JsonGraphBackend {
                 .map(Relationship::from)
                 .map(|r| (r.id, r))
                 .collect();
+            backend.embeddings = file.embeddings;
         }
         Ok(backend)
     }
@@ -132,6 +138,7 @@ impl JsonGraphBackend {
         let file = GraphFile {
             entities: self.entities.values().cloned().collect(),
             edges: self.relationships.values().map(EdgeRecord::from).collect(),
+            embeddings: self.embeddings.clone(),
         };
         let tmp = self.path.with_extension("json.tmp");
         {
@@ -172,6 +179,7 @@ impl GraphBackend for JsonGraphBackend {
         }
         self.relationships
             .retain(|_, r| r.subject_id != id && r.object_id != id);
+        self.embeddings.shift_remove(&id);
         self.save()?;
         Ok(true)
     }
@@ -238,6 +246,19 @@ impl GraphBackend for JsonGraphBackend {
             })
             .cloned()
             .collect())
+    }
+
+    fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32]) -> Result<bool> {
+        if !self.entities.contains_key(&id) {
+            return Ok(false);
+        }
+        self.embeddings.insert(id, embedding.to_vec());
+        self.save()?;
+        Ok(true)
+    }
+
+    fn entity_embeddings(&self) -> Result<Vec<(EntityId, Vec<f32>)>> {
+        Ok(self.embeddings.iter().map(|(id, v)| (*id, v.clone())).collect())
     }
 
     fn entity_count(&self) -> Result<usize> {

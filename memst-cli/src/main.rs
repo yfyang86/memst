@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use memst_core::graph::{Direction, KnowledgeGraph};
+use memst_core::graph::{Direction, EntitySearch, KnowledgeGraph, SearchMethod};
 use memst_core::search::SearchQuery;
 use memst_core::store::SessionStore;
 use memst_core::types::{
@@ -324,11 +324,66 @@ enum GraphCommand {
         json: bool,
     },
 
+    #[command(about = "Search entities by keywords (BM25) and, with --semantic, by meaning")]
+    Search {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Search text
+        query: String,
+
+        /// Maximum results
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+
+        /// Also embed the query and search by vector similarity.
+        /// Needs an embedding API (config.toml or MEMST_EMBEDDING_API_URL)
+        /// and entity embeddings (`graph embed`); without them the search
+        /// continues with keywords only.
+        #[arg(long)]
+        semantic: bool,
+
+        /// Include deprecated entities
+        #[arg(long)]
+        include_deprecated: bool,
+
+        /// JSON output
+        #[arg(long)]
+        json: bool,
+    },
+
+    #[command(about = "Compute and store embeddings for entities (for --semantic search)")]
+    Embed {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Re-embed entities that already have an embedding
+        #[arg(long)]
+        all: bool,
+    },
+
     #[command(about = "Copy a session's graph.json into HelixDB")]
     Migrate {
         /// Session ID
         session_id: Uuid,
     },
+}
+
+/// Text an entity is embedded from: name, type and attributes.
+fn entity_embedding_text(entity: &Entity) -> String {
+    let has_attributes = entity.attributes.as_object().is_some_and(|m| !m.is_empty());
+    if has_attributes {
+        format!("{} ({}) {}", entity.name, entity.entity_type, entity.attributes)
+    } else {
+        format!("{} ({})", entity.name, entity.entity_type)
+    }
+}
+
+/// Embed texts with the configured embedding API.
+fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    let client = memst_core::llm::EmbeddingClient::new(memst_core::llm::EmbeddingConfig::default())?;
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    Ok(runtime.block_on(client.embed_batch(texts))?)
 }
 
 /// Open a session's knowledge graph with the requested backend.
@@ -786,6 +841,8 @@ fn main() -> Result<()> {
                 GraphCommand::Query { session_id, .. } => *session_id,
                 GraphCommand::Stats { session_id } => *session_id,
                 GraphCommand::Neighbors { session_id, .. } => *session_id,
+                GraphCommand::Search { session_id, .. } => *session_id,
+                GraphCommand::Embed { session_id, .. } => *session_id,
                 GraphCommand::Migrate { session_id } => *session_id,
             };
 
@@ -947,6 +1004,85 @@ fn main() -> Result<()> {
                             println!("  {} hop(s)  {}  {} [{}]", distance, e.id, e.name, e.entity_type);
                         }
                     }
+                }
+
+                GraphCommand::Search {
+                    session_id: _,
+                    query,
+                    limit,
+                    semantic,
+                    include_deprecated,
+                    json,
+                } => {
+                    let mut search = EntitySearch::text(query.clone()).with_limit(*limit);
+                    search.include_deprecated = *include_deprecated;
+                    if *semantic {
+                        // A missing or failing embedding API must not stop
+                        // the search: carry on with keywords only.
+                        match embed_texts(std::slice::from_ref(query)) {
+                            Ok(mut vectors) => search.embedding = vectors.pop(),
+                            Err(error) => eprintln!(
+                                "warning: could not embed the query ({error}); searching by keywords only"
+                            ),
+                        }
+                    }
+                    let result = graph.search_entities(&search)?;
+                    let method = match result.method {
+                        SearchMethod::Native => graph.backend_kind(),
+                        SearchMethod::Fallback => "fallback",
+                    };
+                    if *json {
+                        let hits: Vec<_> = result
+                            .hits
+                            .iter()
+                            .map(|hit| {
+                                json!({
+                                    "id": hit.entity.id.to_string(),
+                                    "name": hit.entity.name,
+                                    "entity_type": hit.entity.entity_type,
+                                    "score": hit.score
+                                })
+                            })
+                            .collect();
+                        let output = json!({
+                            "method": method,
+                            "fallback_reason": result.fallback_reason,
+                            "hits": hits
+                        });
+                        println!("{}", serde_json::to_string_pretty(&output)?);
+                    } else {
+                        if let Some(reason) = &result.fallback_reason {
+                            println!("(fallback search: {reason})");
+                        }
+                        if result.hits.is_empty() {
+                            println!("No entities found.");
+                        }
+                        for hit in &result.hits {
+                            println!(
+                                "  {:.3}  {}  {} [{}]",
+                                hit.score, hit.entity.id, hit.entity.name, hit.entity.entity_type
+                            );
+                        }
+                    }
+                }
+
+                GraphCommand::Embed { session_id: _, all } => {
+                    let embedded = graph.embedded_entity_ids()?;
+                    let pending: Vec<Entity> = graph
+                        .all_entities()?
+                        .into_iter()
+                        .filter(|e| *all || !embedded.contains(&e.id))
+                        .collect();
+                    if pending.is_empty() {
+                        println!("All {} entities already have embeddings.", embedded.len());
+                        return Ok(());
+                    }
+                    let texts: Vec<String> = pending.iter().map(entity_embedding_text).collect();
+                    let vectors = embed_texts(&texts)?;
+                    for (entity, vector) in pending.iter().zip(&vectors) {
+                        graph.set_entity_embedding(entity.id, vector)?;
+                    }
+                    println!("Embedded {} entities.", pending.len());
                 }
 
                 GraphCommand::Migrate { .. } => unreachable!("handled before the graph is opened"),

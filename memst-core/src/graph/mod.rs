@@ -14,8 +14,10 @@
 mod backend;
 pub mod conformance;
 mod json;
+mod search;
 
-pub use backend::{entity_matches, relationship_matches, Direction, GraphBackend};
+pub use backend::{entity_matches, relationship_matches, rrf_fuse, Direction, GraphBackend};
+pub use search::{EntityHit, EntitySearch, EntitySearchResult, SearchMethod};
 pub use json::JsonGraphBackend;
 
 use crate::error::{Error, Result};
@@ -106,6 +108,32 @@ impl KnowledgeGraph {
             results.truncate(query.limit);
         }
         Ok(results)
+    }
+
+    /// Attach an embedding to an entity, for semantic search.
+    /// Returns `false` if the entity does not exist.
+    pub fn set_entity_embedding(&mut self, entity_id: EntityId, embedding: &[f32]) -> Result<bool> {
+        if embedding.is_empty() {
+            return Err(Error::InvalidOperation("embedding is empty".to_string()));
+        }
+        self.backend.set_entity_embedding(entity_id, embedding)
+    }
+
+    /// Ids of entities that have an embedding.
+    pub fn embedded_entity_ids(&self) -> Result<HashSet<EntityId>> {
+        Ok(self.backend.entity_embeddings()?.into_iter().map(|(id, _)| id).collect())
+    }
+
+    /// Search entities by keywords, by embedding, or both.
+    ///
+    /// The backend's own indexes are tried first (HelixDB: BM25 over name,
+    /// type and attributes, plus vector search, fused by reciprocal rank). If
+    /// the backend has none, fails, or finds nothing, MemSt's own matching is
+    /// used instead: case-insensitive substring matching on names ranked by
+    /// importance, plus brute-force cosine similarity over stored embeddings.
+    /// [`EntitySearchResult::method`] says which path answered.
+    pub fn search_entities(&self, query: &EntitySearch) -> Result<EntitySearchResult> {
+        search::run(self.backend.as_ref(), query)
     }
 
     /// Delete an entity and all its relationships.
@@ -389,6 +417,9 @@ impl KnowledgeGraph {
     pub fn copy_into(&self, target: &mut KnowledgeGraph) -> Result<(usize, usize)> {
         let entities = self.all_entities()?;
         target.backend.put_entities(&entities)?;
+        for (id, embedding) in self.backend.entity_embeddings()? {
+            target.backend.set_entity_embedding(id, &embedding)?;
+        }
         let relationships = self.backend.scan_relationships(&RelationshipQuery::default())?;
         for relationship in &relationships {
             target.backend.put_relationship(relationship)?;

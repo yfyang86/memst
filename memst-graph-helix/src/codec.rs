@@ -33,6 +33,8 @@ pub fn entity_props(entity: &Entity) -> Value {
         "name": entity.name,
         // Lower-cased copy so case-insensitive search is a plain CONTAINS.
         "name_lc": entity.name.to_lowercase(),
+        // What the BM25 index covers: name, type and attribute text.
+        "search_text": search_text(entity),
         "entity_type": entity.entity_type,
         "attributes": entity.attributes.to_string(),
         "session_id": entity.session_id.to_string(),
@@ -47,6 +49,34 @@ pub fn entity_props(entity: &Entity) -> Value {
         "is_deprecated": entity.is_deprecated,
         "deprecation_reason": entity.deprecation_reason,
     })
+}
+
+/// Text indexed for keyword search: the name, the type, and every string
+/// found in the attributes (keys are included, so `{"city": "Paris"}` is
+/// found by "city" as well as "paris").
+pub fn search_text(entity: &Entity) -> String {
+    fn collect(value: &Value, out: &mut String) {
+        match value {
+            Value::String(text) => {
+                out.push(' ');
+                out.push_str(text);
+            }
+            Value::Array(items) => items.iter().for_each(|item| collect(item, out)),
+            Value::Object(map) => map.iter().for_each(|(key, item)| {
+                out.push(' ');
+                out.push_str(key);
+                collect(item, out);
+            }),
+            Value::Number(number) => {
+                out.push(' ');
+                out.push_str(&number.to_string());
+            }
+            Value::Bool(_) | Value::Null => {}
+        }
+    }
+    let mut text = format!("{} {}", entity.name, entity.entity_type);
+    collect(&entity.attributes, &mut text);
+    text
 }
 
 pub fn relationship_props(relationship: &Relationship) -> Value {
@@ -106,6 +136,44 @@ pub fn relationship_from_row(row: Vec<Value>) -> Result<Relationship> {
         is_stable: props.bool("is_stable")?,
         last_decay_at: props.timestamp("last_decay_at")?,
     })
+}
+
+/// A `(uid, embedding)` row.
+pub fn embedding_from_row(row: Vec<Value>) -> Result<(Uuid, Vec<f32>)> {
+    let [Value::String(uid), Value::Array(components)] = row.as_slice() else {
+        return Err(corrupt("entity", "embedding", "expected (uid, number array)"));
+    };
+    let id = Uuid::parse_str(uid).map_err(|e| corrupt("entity", "uid", &e.to_string()))?;
+    let embedding = components
+        .iter()
+        .map(|c| c.as_f64().map(|v| v as f32))
+        .collect::<Option<Vec<f32>>>()
+        .ok_or_else(|| corrupt("entity", "embedding", "non-numeric component"))?;
+    Ok((id, embedding))
+}
+
+/// Hits of one search in a native query response: `[{uid, <score_key>}]`,
+/// best first. A search that was not part of the request yields no hits.
+pub fn search_hits(response: &Value, name: &str, score_key: &str) -> Result<Vec<(Uuid, f32)>> {
+    let Some(hits) = response.get(name) else {
+        return Ok(Vec::new());
+    };
+    let hits = hits
+        .as_array()
+        .ok_or_else(|| corrupt("search", name, "not a list of hits"))?;
+    hits.iter()
+        // Nodes written before the index covered them may lack a uid.
+        .filter(|hit| hit.get("uid").is_some_and(Value::is_string))
+        .map(|hit| {
+            let uid = hit["uid"].as_str().unwrap_or_default();
+            let id = Uuid::parse_str(uid).map_err(|e| corrupt("search", "uid", &e.to_string()))?;
+            let score = hit
+                .get(score_key)
+                .and_then(Value::as_f64)
+                .ok_or_else(|| corrupt("search", score_key, "missing"))?;
+            Ok((id, score as f32))
+        })
+        .collect()
 }
 
 /// Integers come back as JSON numbers, or as `{"$type":"integer","value":"…"}`
@@ -199,6 +267,13 @@ mod tests {
         for value in [0.1f32, 0.3, 0.05, 12.5, 1e-7, f32::MAX] {
             assert_eq!(float(value).as_f64().unwrap() as f32, value);
         }
+    }
+
+    #[test]
+    fn search_text_covers_name_type_and_attributes() {
+        let entity = Entity::new("Alice", "person", Uuid::new_v4())
+            .with_attributes(json!({"city": "Paris", "langs": ["Rust", "Go"], "age": 30, "ok": true}));
+        assert_eq!(search_text(&entity), "Alice person age 30 city Paris langs Rust Go ok");
     }
 
     #[test]

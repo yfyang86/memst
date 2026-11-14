@@ -5,7 +5,7 @@
 //! with a factory for fresh, empty graphs, and [`persistence`] with a factory
 //! that reopens the same store. The functions panic on the first violation.
 
-use super::{Direction, KnowledgeGraph};
+use super::{Direction, EntitySearch, KnowledgeGraph};
 use crate::types::{Entity, EntityQuery, Relationship, RelationshipQuery};
 use uuid::Uuid;
 
@@ -20,6 +20,7 @@ pub fn run_all(fresh: &mut dyn FnMut() -> KnowledgeGraph) {
     migrate_relationships(&mut fresh());
     neighborhood(&mut fresh());
     stats_and_decay_helpers(&mut fresh());
+    search(&mut fresh());
 }
 
 /// `reopen` must return the same store each time; the previous handle is
@@ -327,4 +328,49 @@ fn stats_and_decay_helpers(graph: &mut KnowledgeGraph) {
     assert!((graph.average_relevance().unwrap() - 0.35).abs() < 1e-6);
     assert_eq!(graph.update_all_relationships(|r| r.relevance = 0.5).unwrap(), 1);
     assert_eq!(graph.all_relationships().unwrap()[0].0.relevance, 0.5);
+}
+
+/// Search must give the same answers whichever path serves it (a backend's
+/// own indexes, or the fallback while they are unavailable).
+fn search(graph: &mut KnowledgeGraph) {
+    let session = Uuid::new_v4();
+    let rust = graph.add_entity(Entity::new("Rust Programming Language", "technology", session)).unwrap();
+    let python = graph.add_entity(Entity::new("Python", "technology", session)).unwrap();
+    let alice = graph.add_entity(Entity::new("Alice Smith", "person", session)).unwrap();
+    let mut old = Entity::new("Rust 2015 edition", "technology", session);
+    old.deprecate("superseded");
+    graph.add_entity(old.clone()).unwrap();
+
+    fn ids(graph: &KnowledgeGraph, query: EntitySearch) -> Vec<Uuid> {
+        graph.search_entities(&query).unwrap().hits.into_iter().map(|h| h.entity.id).collect()
+    }
+
+    assert_eq!(ids(graph, EntitySearch::text("rust")), vec![rust.id], "deprecated entities are hidden");
+    assert_eq!(ids(graph, EntitySearch::text("alice")), vec![alice.id]);
+    assert!(ids(graph, EntitySearch::text("zzz-no-such-thing")).is_empty());
+    let mut with_deprecated = EntitySearch::text("rust");
+    with_deprecated.include_deprecated = true;
+    assert_eq!(ids(graph, with_deprecated).len(), 2);
+    assert_eq!(ids(graph, EntitySearch::text("rust").with_limit(1)).len(), 1);
+    assert!(graph.search_entities(&EntitySearch::default()).is_err());
+    assert!(graph.search_entities(&EntitySearch::text("   ")).is_err());
+
+    // Embeddings: stored, survive an entity update, and drive vector search.
+    assert!(graph.set_entity_embedding(rust.id, &[1.0, 0.0, 0.0]).unwrap());
+    assert!(graph.set_entity_embedding(python.id, &[0.8, 0.6, 0.0]).unwrap());
+    assert!(graph.set_entity_embedding(alice.id, &[0.0, 0.0, 1.0]).unwrap());
+    assert!(!graph.set_entity_embedding(Uuid::new_v4(), &[1.0, 0.0, 0.0]).unwrap());
+    assert!(graph.set_entity_embedding(rust.id, &[]).is_err());
+    graph.access_entity(rust.id).unwrap();
+    assert_eq!(graph.embedded_entity_ids().unwrap().len(), 3);
+
+    let semantic = EntitySearch { embedding: Some(vec![0.9, 0.1, 0.0]), limit: 2, ..Default::default() };
+    assert_eq!(ids(graph, semantic), vec![rust.id, python.id]);
+
+    // Hybrid: the entity that matches both the words and the vector wins.
+    let hybrid = EntitySearch::text("python").with_embedding(vec![0.8, 0.6, 0.0]);
+    assert_eq!(ids(graph, hybrid)[0], python.id);
+
+    graph.delete_entity(alice.id).unwrap();
+    assert_eq!(graph.embedded_entity_ids().unwrap().len(), 2);
 }

@@ -90,6 +90,30 @@ pub trait GraphBackend: Send {
     /// This is the traversal primitive: one call per hop of a k-hop walk.
     fn expand(&self, frontier: &[EntityId], direction: Direction) -> Result<Vec<Relationship>>;
 
+    /// Attach an embedding to an entity (replacing any previous one).
+    /// Returns `false` if the entity does not exist.
+    fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32]) -> Result<bool>;
+
+    /// Every stored entity embedding. Used by the brute-force fallback search.
+    fn entity_embeddings(&self) -> Result<Vec<(EntityId, Vec<f32>)>>;
+
+    /// Search entities with the backend's own indexes.
+    ///
+    /// `text` is a keyword query and `embedding` a query vector; at least one
+    /// is given. Returns entity ids best first with a relevance score, or
+    /// `Ok(None)` when the backend has no native search. Backends with native
+    /// search return `Err` when it cannot be served (for example an index that
+    /// is still building); [`KnowledgeGraph::search_entities`](super::KnowledgeGraph::search_entities)
+    /// then falls back to MemSt's own matching.
+    fn search_entities(
+        &self,
+        _text: Option<&str>,
+        _embedding: Option<&[f32]>,
+        _limit: usize,
+    ) -> Result<Option<Vec<(EntityId, f32)>>> {
+        Ok(None)
+    }
+
     /// Number of stored entities (including deprecated ones).
     fn entity_count(&self) -> Result<usize>;
 
@@ -145,4 +169,28 @@ pub fn relationship_matches(relationship: &Relationship, query: &RelationshipQue
         }
     }
     true
+}
+
+/// Reciprocal Rank Fusion of several best-first rankings (the same fusion
+/// MemSt's hybrid message search uses). Returns ids best first with their
+/// fused score.
+pub fn rrf_fuse(rankings: &[Vec<EntityId>]) -> Vec<(EntityId, f32)> {
+    const K: f32 = 60.0;
+    let mut scores: Vec<(EntityId, f32)> = Vec::new();
+    let mut position: std::collections::HashMap<EntityId, usize> = std::collections::HashMap::new();
+    for ranking in rankings {
+        for (rank, id) in ranking.iter().enumerate() {
+            let contribution = 1.0 / (K + rank as f32 + 1.0);
+            match position.get(id) {
+                Some(&index) => scores[index].1 += contribution,
+                None => {
+                    position.insert(*id, scores.len());
+                    scores.push((*id, contribution));
+                }
+            }
+        }
+    }
+    // Stable sort: ties keep first-seen order, so the result is deterministic.
+    scores.sort_by(|a, b| b.1.total_cmp(&a.1));
+    scores
 }

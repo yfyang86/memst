@@ -62,7 +62,7 @@ unreviewed preprints and are marked there.
 | Raw evidence | Messages are kept in the session store | Good: the raw episodes exist. They are not offered as a retrieval strategy alongside the consolidated ones. |
 | Skills | Procedural memory with lookup | No update / deprecate path, flat retrieval, no import or export in the common `SKILL.md` layout. |
 | Security | None | No provenance beyond `session_id` / `source_message_id`, no write gating, no ownership check at retrieval, MCP adapter unauthenticated. |
-| Graph substrate | Embedded HelixDB (graph + vector + BM25) | Matches the hybrid substrate the field converged on. The vector and BM25 halves are not used yet; see [graph-backend-helix.md](../graph-backend-helix.md). |
+| Graph substrate | Embedded HelixDB (graph + vector + BM25). Entity search uses its BM25 and vector indexes, fused by reciprocal rank, with MemSt's substring matching as fallback | Matches the hybrid substrate the field converged on. Entities are embedded only on request, and relationships are not indexed for search; see [graph-backend-helix.md](../graph-backend-helix.md). |
 
 ## Recommended order of work
 
@@ -96,9 +96,10 @@ the version log already supplies transaction time.
 retrieval, authentication and scoping on the MCP adapter, and a design for
 deletion in a store that keeps history.
 
-**5. Use the rest of HelixDB.** Entity embeddings and names in HelixDB's vector
-and BM25 indexes would let one query do vector search, keyword search and graph
-expansion together, and would allow one graph per user rather than per session.
+**5. Finish the move onto HelixDB.** Entity search already uses its BM25 and
+vector indexes. Still open: embedding entities automatically at extraction
+time, combining search with graph expansion in one query, and one graph per
+user rather than per session.
 
 **6. Interoperability.** Skills import and export in the `SKILL.md` layout, and
 a backend for the file-style memory tool command set, next to MCP.

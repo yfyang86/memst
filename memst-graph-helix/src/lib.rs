@@ -43,10 +43,10 @@
 
 mod codec;
 
-use helix_db::dsl::prelude::{g, write_batch, IndexSpec, QueryRequest};
+use helix_db::dsl::prelude::{g, read_batch, write_batch, IndexSpec, QueryRequest, VectorDistanceMetric};
 use helix_db::{Client, HelixDbSource, HelixError};
 use memst_core::error::{Error, Result};
-use memst_core::graph::{Direction, GraphBackend, JsonGraphBackend, KnowledgeGraph};
+use memst_core::graph::{rrf_fuse, Direction, GraphBackend, JsonGraphBackend, KnowledgeGraph};
 use memst_core::types::{Entity, EntityId, EntityQuery, Relationship, RelationshipId, RelationshipQuery};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
@@ -58,6 +58,12 @@ pub const HELIX_DIR: &str = "graph.helix";
 
 const NODE_LABEL: &str = "Entity";
 const EDGE_TYPE: &str = "REL";
+/// Property covered by the BM25 index (see `codec::search_text`).
+const TEXT_PROPERTY: &str = "search_text";
+/// Longest time to wait for a freshly requested index to activate.
+const INDEX_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Property covered by the vector index.
+const VECTOR_PROPERTY: &str = "embedding";
 /// Rows per request when reading or writing in bulk. Keeps every request
 /// far below HelixDB's 16 MiB response and 200,000-value parameter limits.
 const PAGE: usize = 2_000;
@@ -81,6 +87,8 @@ pub struct HelixGraphBackend {
     client: Client,
     runtime: Option<tokio::runtime::Runtime>,
     root: PathBuf,
+    /// Dimension the vector index is known to exist for (set on first use).
+    vector_dimension: std::sync::Mutex<Option<usize>>,
 }
 
 impl HelixGraphBackend {
@@ -117,6 +125,7 @@ impl HelixGraphBackend {
             client,
             runtime: Some(runtime),
             root,
+            vector_dimension: std::sync::Mutex::new(None),
         };
         backend.ensure_indexes()?;
         Ok(backend)
@@ -154,16 +163,84 @@ impl HelixGraphBackend {
         for spec in [
             IndexSpec::node_unique_equality(NODE_LABEL, "uid"),
             IndexSpec::node_equality(NODE_LABEL, "entity_type"),
+            // BM25 keyword search. The vector index is created on the first
+            // `set_entity_embedding`, when the dimension is known.
+            IndexSpec::node_text(NODE_LABEL, TEXT_PROPERTY, None::<&str>),
         ] {
-            let request = QueryRequest::write(
-                write_batch()
-                    .var_as("index", g().create_index_if_not_exists(spec))
-                    .returning(["index"]),
-            );
-            let client = self.client.clone();
-            self.block_on(async move { client.query::<Value>(request).send().await })
-                .map_err(helix_error)?;
+            self.create_index(spec)?;
         }
+        self.wait_until_searchable(|| {
+            let probe = g()
+                .text_search_nodes(NODE_LABEL, TEXT_PROPERTY, "memst", 1, None)
+                .value_map(Some(vec!["uid"]));
+            QueryRequest::read(read_batch().var_as("probe", probe).returning(["probe"]))
+        });
+        Ok(())
+    }
+
+    /// Wait, for a bounded time, until a search index answers.
+    ///
+    /// HelixDB builds indexes in the background. A short-lived process (one
+    /// CLI command) would otherwise exit before the build activates and every
+    /// search would fall back. On an existing database this is one cheap
+    /// query. If the index is still not ready after the limit (a large
+    /// backfill), give up quietly: searches fall back until it is.
+    fn wait_until_searchable(&self, probe: impl Fn() -> QueryRequest) {
+        let deadline = std::time::Instant::now() + INDEX_WAIT;
+        loop {
+            let request = probe();
+            let client = self.client.clone();
+            let outcome = self.block_on(async move { client.query::<Value>(request).send().await });
+            let building = matches!(&outcome, Err(error) if error.error_code() == Some("index_not_found"));
+            if !building || std::time::Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
+    /// Request an index. Creation is accepted immediately and the index is
+    /// built in the background; until it activates, searching it fails with
+    /// `index_not_found`, which `KnowledgeGraph` answers with its fallback.
+    fn create_index(&self, spec: IndexSpec) -> Result<()> {
+        let request = QueryRequest::write(
+            write_batch()
+                .var_as("index", g().create_index_if_not_exists(spec))
+                .returning(["index"]),
+        );
+        let client = self.client.clone();
+        self.block_on(async move { client.query::<Value>(request).send().await })
+            .map(|_| ())
+            .map_err(helix_error)
+    }
+
+    fn ensure_vector_index(&self, dimension: usize) -> Result<()> {
+        let mut known = self.vector_dimension.lock().expect("vector dimension lock");
+        if *known == Some(dimension) {
+            return Ok(());
+        }
+        let Some(non_zero) = std::num::NonZeroUsize::new(dimension) else {
+            return Err(Error::InvalidOperation("embedding is empty".to_string()));
+        };
+        // If an index of another dimension already exists this is a no-op,
+        // and the write that follows fails with `invalid_vector_dimension`.
+        self.create_index(IndexSpec::node_vector(
+            NODE_LABEL,
+            VECTOR_PROPERTY,
+            non_zero,
+            VectorDistanceMetric::Cosine,
+            None::<&str>,
+        ))?;
+        *known = Some(dimension);
+        drop(known);
+        self.wait_until_searchable(move || {
+            let mut unit = vec![0.0; dimension];
+            unit[0] = 1.0;
+            let probe = g()
+                .vector_search_nodes(NODE_LABEL, VECTOR_PROPERTY, unit, 1, None)
+                .value_map(Some(vec!["uid"]));
+            QueryRequest::read(read_batch().var_as("probe", probe).returning(["probe"]))
+        });
         Ok(())
     }
 
@@ -250,10 +327,12 @@ impl GraphBackend for HelixGraphBackend {
                 // label scan per row for a field of an UNWIND element
                 // (`{uid: row.uid}`), which is quadratic. Measured on 1,000
                 // rows: 0.8 s with the WITH, >30 s (deadline) without.
-                // `SET e = map` replaces every property, so cleared optional
-                // fields really disappear.
+                // `+=` rather than `=`: replacing every property would also
+                // drop the entity's embedding, which is not part of `props`.
+                // Cleared optional fields still disappear, because `props`
+                // carries them as explicit nulls.
                 self.cypher(
-                    "UNWIND $rows AS row WITH row.uid AS k, row.props AS props MATCH (e:Entity {uid: k}) SET e = props RETURN count(e) AS n",
+                    "UNWIND $rows AS row WITH row.uid AS k, row.props AS props MATCH (e:Entity {uid: k}) SET e += props RETURN count(e) AS n",
                     json!({ "rows": update }),
                 )?;
             }
@@ -465,6 +544,87 @@ impl GraphBackend for HelixGraphBackend {
         let mut seen = HashSet::new();
         out.retain(|r| seen.insert(r.id));
         Ok(out)
+    }
+
+    fn set_entity_embedding(&mut self, id: EntityId, embedding: &[f32]) -> Result<bool> {
+        self.ensure_vector_index(embedding.len())?;
+        let updated = self.count(
+            "MATCH (e:Entity {uid: $uid}) SET e += {embedding: $embedding} RETURN count(e) AS n",
+            json!({ "uid": id.to_string(), "embedding": embedding }),
+        )?;
+        Ok(updated > 0)
+    }
+
+    fn entity_embeddings(&self) -> Result<Vec<(EntityId, Vec<f32>)>> {
+        let mut out = Vec::new();
+        loop {
+            let rows = self.cypher(
+                "MATCH (e:Entity) WHERE e.embedding IS NOT NULL RETURN e.uid AS uid, e.embedding AS embedding ORDER BY uid SKIP $skip LIMIT $limit",
+                json!({ "skip": out.len(), "limit": PAGE }),
+            )?;
+            let page = rows.len();
+            for row in rows {
+                out.push(codec::embedding_from_row(row)?);
+            }
+            if page < PAGE {
+                return Ok(out);
+            }
+        }
+    }
+
+    /// BM25 over `search_text` and/or vector search over `embedding`, both
+    /// inside HelixDB and in one request. With both, the two rankings are
+    /// fused by reciprocal rank.
+    fn search_entities(
+        &self,
+        text: Option<&str>,
+        embedding: Option<&[f32]>,
+        limit: usize,
+    ) -> Result<Option<Vec<(EntityId, f32)>>> {
+        // Fusion needs more than `limit` candidates from each side.
+        let k = if text.is_some() && embedding.is_some() { limit * 3 } else { limit };
+        let mut batch = read_batch();
+        let mut returning = Vec::new();
+        if let Some(text) = text {
+            batch = batch.var_as(
+                "keyword",
+                g().text_search_nodes(NODE_LABEL, TEXT_PROPERTY, text, k, None)
+                    .value_map(Some(vec!["uid", "$score"])),
+            );
+            returning.push("keyword");
+        }
+        if let Some(embedding) = embedding {
+            batch = batch.var_as(
+                "semantic",
+                g().vector_search_nodes(NODE_LABEL, VECTOR_PROPERTY, embedding.to_vec(), k, None)
+                    .value_map(Some(vec!["uid", "$distance"])),
+            );
+            returning.push("semantic");
+        }
+        let request = QueryRequest::read(batch.returning(returning));
+        let client = self.client.clone();
+        let response = self
+            .block_on(async move { client.query::<Value>(request).send().await })
+            .map_err(helix_error)?;
+
+        // BM25 score: higher is better. Cosine distance: lower is better,
+        // reported as similarity (1 - distance).
+        let keyword = codec::search_hits(&response, "keyword", "$score")?;
+        let semantic: Vec<(EntityId, f32)> = codec::search_hits(&response, "semantic", "$distance")?
+            .into_iter()
+            .map(|(id, distance)| (id, 1.0 - distance))
+            .collect();
+
+        let mut ranked = match (text.is_some(), embedding.is_some()) {
+            (true, true) => rrf_fuse(&[
+                keyword.into_iter().map(|(id, _)| id).collect(),
+                semantic.into_iter().map(|(id, _)| id).collect(),
+            ]),
+            (true, false) => keyword,
+            _ => semantic,
+        };
+        ranked.truncate(limit);
+        Ok(Some(ranked))
     }
 
     fn entity_count(&self) -> Result<usize> {

@@ -16,7 +16,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Sleep-time consolidation** for automatic memory maintenance
 - **Multi-agent support** with isolated worktrees
 - **MCP (Model Context Protocol)** adapter for Claude/Cursor integration
-- **Knowledge Graph** for entity and relationship tracking, stored in embedded HelixDB ([details](docs/graph-backend-helix.md))
+- **Knowledge Graph** for entity and relationship tracking, stored in embedded HelixDB with BM25 and vector entity search ([details](docs/graph-backend-helix.md))
 - **KG decay** - Temporal relevance decay for entities/relationships
 - **KG evolution** - Automatic entity merging and deprecation
 - **KG extraction v2** - Multi-backend storage (SQLite/DuckDB) with LLM-powered extraction
