@@ -26,6 +26,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # memst-lib's tests embed Python through PyO3 0.22, which supports
+      # Python up to 3.13; the runner's default is newer.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
       # memst-py is a Python extension module: its test binary cannot link
       # without libpython, and the "python bindings" job builds and tests it
       # properly, through maturin.
