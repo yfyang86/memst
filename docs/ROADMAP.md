@@ -23,8 +23,8 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 2 | One graph per store | **Done** | Conformance suite passes on the store-level graph; old stores migrate; a query scoped to one owner never returns another's entities |
 | 3 | Extraction into HelixDB | **Done**, two items carried into sprint 4 | Extracting a conversation makes its entities searchable with no manual step; the server has no separate graph store |
 | 4 | Non-destructive, time-aware graph | **Done**, one item moved to sprint 5 | A corrected fact outranks and hides the stale one; an entity merge can be undone |
-| 5 | Evaluation harness | Next (needs an LLM key) | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
-| 6 | Security and MCP | Planned | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
+| 5 | Evaluation harness | **Done** (pilot run; LongMemEval not yet) | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
+| 6 | Security and MCP | Next | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
 
 The manuscript update follows sprint 5.
 
@@ -78,9 +78,32 @@ Carried into sprint 4:
 Moved to sprint 5: raw messages as a retrieval strategy. That is the
 raw-history baseline the evaluation needs, so it is built there.
 
-**5. Evaluation harness.** Full-context and raw-history retrieval baselines
-under the same reader. LongMemEval-S. Hardened LoCoMo runs. Cost and latency
-reporting. Oracle-router bound.
+**5. Evaluation harness.** Done: `benchmarks/harness` runs six systems
+(full context, three raw-history retrievers, the MemSt graph, the graph plus
+raw turns) under one reader, and reports F1 with intervals, judged accuracy,
+evidence coverage, prompt tokens, retrieval latency, write-path cost and an
+oracle-router bound. A pilot on 138 LoCoMo questions is in
+`benchmarks/results/harness/`.
+
+The pilot's finding: **the graph alone is well below raw-history retrieval,
+and adds nothing measurable on top of it.** See
+`benchmarks/harness/README.md`. Running against a real model also exposed
+three engine faults, now fixed: the extraction output budget was too small for
+reasoning models, the parser threw away a whole batch over one malformed item,
+and the LLM client did not retry dropped connections.
+
+Not done: LongMemEval and other benchmarks, repeated or independent judging,
+a full-dataset run, and any measurement of consolidation, decay or the memory
+tiers.
+
+What the pilot says to do next, before more evaluation:
+
+1. Put dates on facts: fill `valid_from` from the source message at
+   ingestion, and show it in the context. Temporal questions score 10 F1
+   without it.
+2. Keep the source text reachable from a fact (the message id is already
+   stored) and return it with the fact, instead of the bare triple.
+3. Then re-run, and only then extend to LongMemEval.
 
 **6. Security and MCP.** Connect the MCP tool handlers to a real store (they
 are placeholders today). Write gating, ownership checks and authentication.

@@ -37,7 +37,7 @@ reqwest = { version = "0.11", features = ["json"] }
 async-trait = "0.1"
 
 # Runtime for the blocking HTTP embedder
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "time"] }
 
 # Async runtime for tests
 futures = "0.3"

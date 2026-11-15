@@ -78,6 +78,7 @@ fn lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SearchStrategyWrapper>()?;
     // Phase 16: KG Extraction v2
     m.add_class::<graph::Graph>()?;
+    m.add_class::<graph::Embedder>()?;
     m.add_class::<KgStorageWrapper>()?;
     m.add_class::<Entity>()?;
     m.add_class::<ExtractionJob>()?;
@@ -1003,6 +1004,7 @@ fn _init_module_all(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
             "Ontology",
             "OntologyManager",
             "Graph",
+            "Embedder",
             "__version__",
         ],
     );

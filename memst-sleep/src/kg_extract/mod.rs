@@ -24,8 +24,13 @@ pub struct KgExtractionConfig {
     pub classify_temporal: bool,
     /// Temperature for LLM (lower = more deterministic)
     pub llm_temperature: f32,
-    /// Maximum tokens for extraction response
+    /// Maximum tokens the model may produce. With a reasoning model this
+    /// budget also pays for its hidden reasoning, so it has to be generous:
+    /// at 2,000 such a model can spend everything thinking and answer nothing.
     pub max_tokens: u32,
+    /// Provider-specific request fields (see `LlmRequest::extra`), for
+    /// example `{"thinking": {"type": "disabled"}}`.
+    pub request_extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for KgExtractionConfig {
@@ -36,7 +41,8 @@ impl Default for KgExtractionConfig {
             max_relationships: 30,
             classify_temporal: true,
             llm_temperature: 0.1,
-            max_tokens: 2000,
+            max_tokens: 16_000,
+            request_extra: serde_json::Map::new(),
         }
     }
 }
@@ -154,6 +160,54 @@ fn default_confidence() -> f32 {
     0.5
 }
 
+/// The items of `root[key]` that can be read as `T`, after tidying the
+/// usual deviations: nulls are dropped (so defaults apply), a confidence
+/// given as a string becomes a number, and scalars where text is expected
+/// (a year as a number, say) become strings. Items still unreadable, for
+/// instance without a name, are skipped.
+fn lenient_items<T: serde::de::DeserializeOwned>(root: &serde_json::Value, key: &str) -> Vec<T> {
+    const TEXT_FIELDS: &[&str] = &[
+        "name", "type", "entity_type", "event_type", "subject", "predicate", "object",
+        "temporal_relevance", "temporal_type", "timestamp",
+    ];
+    let Some(items) = root.get(key).and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let mut object = item.as_object()?.clone();
+            object.retain(|_, value| !value.is_null());
+            if let Some(text) = object.get("confidence").and_then(serde_json::Value::as_str) {
+                match text.trim().parse::<f64>() {
+                    Ok(number) => {
+                        object.insert("confidence".to_string(), serde_json::json!(number));
+                    }
+                    Err(_) => {
+                        object.remove("confidence");
+                    }
+                }
+            }
+            for field in TEXT_FIELDS {
+                if let Some(value) = object.get(*field) {
+                    if value.is_number() || value.is_boolean() {
+                        let text = value.to_string();
+                        object.insert(field.to_string(), serde_json::Value::String(text));
+                    }
+                }
+            }
+            if let Some(participants) = object.get("participants").and_then(serde_json::Value::as_array) {
+                let names: Vec<serde_json::Value> = participants
+                    .iter()
+                    .filter_map(|p| p.as_str().map(|s| serde_json::json!(s)))
+                    .collect();
+                object.insert("participants".to_string(), serde_json::Value::Array(names));
+            }
+            serde_json::from_value(serde_json::Value::Object(object)).ok()
+        })
+        .collect()
+}
+
 impl KgExtractionService {
     /// Create a new extraction service.
     pub fn new(llm_client: Arc<dyn LlmProvider>) -> Self {
@@ -175,19 +229,25 @@ impl KgExtractionService {
     pub async fn extract_from_text(&self, text: &str) -> anyhow::Result<KgExtractionResult> {
         let prompt = KG_EXTRACTION_PROMPT.replace("{TEXT}", text);
 
-        let request = LlmRequest::new(self.llm_client.model().to_string())
+        let mut request = LlmRequest::new(self.llm_client.model().to_string())
             .with_message(Message::user(prompt))
             .with_temperature(self.config.llm_temperature)
             .with_max_tokens(self.config.max_tokens);
+        request.extra = self.config.request_extra.clone();
 
         let response = self.llm_client.chat(request).await?;
-        let content = response
-            .choices
-            .into_iter()
-            .next()
-            .and_then(|c| c.message)
-            .map(|m| m.content)
-            .unwrap_or_default();
+        let choice = response.choices.into_iter().next();
+        let cut_off = choice.as_ref().and_then(|c| c.finish_reason.as_deref()) == Some("length");
+        let content = choice.and_then(|c| c.message).map(|m| m.content).unwrap_or_default();
+        if cut_off {
+            // Say what happened: "could not parse JSON" would send the
+            // reader looking in the wrong place.
+            return Err(anyhow::anyhow!(
+                "the model stopped at the {}-token output limit before finishing its answer{}; raise max_tokens, send less text per call, or turn the model's reasoning off",
+                self.config.max_tokens,
+                if content.trim().is_empty() { " (it produced no answer at all, which is typical of a reasoning model)" } else { "" }
+            ));
+        }
 
         self.parse_extraction_response(&content)
     }
@@ -203,15 +263,24 @@ impl KgExtractionService {
 
     /// Parse LLM response into structured result.
     fn parse_extraction_response(&self, response: &str) -> anyhow::Result<KgExtractionResult> {
-        // Try to parse as JSON directly
-        let parsed: LlmKgResponse = match serde_json::from_str(response) {
-            Ok(r) => r,
+        let root: serde_json::Value = match serde_json::from_str(response) {
+            Ok(value) => value,
             Err(_) => {
-                // Try to extract JSON from markdown code blocks
                 let json_str = self.extract_json_from_markdown(response)?;
                 serde_json::from_str(&json_str)
                     .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?
             }
+        };
+        if !root.is_object() {
+            return Err(anyhow::anyhow!("Failed to parse LLM response: not a JSON object"));
+        }
+        // Items are read one by one and leniently. Models do not follow a
+        // schema exactly (a null confidence, a number where a string was
+        // asked for), and one odd item must not cost the whole batch.
+        let parsed = LlmKgResponse {
+            entities: lenient_items(&root, "entities"),
+            relationships: lenient_items(&root, "relationships"),
+            events: lenient_items(&root, "events"),
         };
 
         let mut result = KgExtractionResult::empty();

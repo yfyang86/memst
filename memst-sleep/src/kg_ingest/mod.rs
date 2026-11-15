@@ -132,6 +132,14 @@ pub struct IngestReport {
     pub relationships_skipped: usize,
     /// Entities embedded (or re-embedded) afterwards.
     pub entities_embedded: usize,
+    /// Extraction calls made to the LLM (the write-path cost).
+    pub llm_calls: usize,
+    /// Extraction calls that failed (LLM error, cut-off or unparseable
+    /// answer). The text of those batches is not in the graph.
+    pub llm_failures: usize,
+    /// Characters of conversation sent to the LLM for extraction, not
+    /// counting the instructions wrapped around each batch.
+    pub llm_input_chars: usize,
 }
 
 impl IngestReport {
@@ -143,6 +151,9 @@ impl IngestReport {
         self.relationships_superseded += other.relationships_superseded;
         self.relationships_skipped += other.relationships_skipped;
         self.entities_embedded += other.entities_embedded;
+        self.llm_calls += other.llm_calls;
+        self.llm_failures += other.llm_failures;
+        self.llm_input_chars += other.llm_input_chars;
     }
 }
 
@@ -303,12 +314,23 @@ pub fn ingest_and_embed(
 /// Runs extraction over text and writes the result into a graph.
 pub struct GraphIngestor {
     extractor: KgExtractionService,
+    /// Why batches failed, most recent run last.
+    errors: std::sync::Mutex<Vec<String>>,
 }
 
 impl GraphIngestor {
     /// Ingest using this extraction service.
     pub fn new(extractor: KgExtractionService) -> Self {
-        Self { extractor }
+        Self {
+            extractor,
+            errors: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The reasons extraction batches failed since this was last called
+    /// (the count is `IngestReport::llm_failures`).
+    pub fn take_errors(&self) -> Vec<String> {
+        std::mem::take(&mut *self.errors.lock().expect("error list lock"))
     }
 
     /// Extract from one text and write the result into `graph`.
@@ -324,13 +346,17 @@ impl GraphIngestor {
             .extract_from_text(text)
             .await
             .map_err(|error| KgError::llm_error(error.to_string()))?;
-        ingest_and_embed(graph, &extraction, provenance, embedder)
+        let mut report = ingest_and_embed(graph, &extraction, provenance, embedder)?;
+        report.llm_calls = 1;
+        report.llm_input_chars = text.len();
+        Ok(report)
     }
 
     /// Extract from a session's messages, in batches, and write the results
     /// into `graph`. Each message is `(id, text)`. Embedding happens once, at
-    /// the end. A batch whose extraction fails stops the run with the error;
-    /// what earlier batches wrote stays.
+    /// the end. A batch whose extraction fails is skipped and counted in
+    /// `llm_failures`, and the rest still go in; only if every batch fails
+    /// is the (last) error returned.
     pub async fn ingest_messages(
         &self,
         graph: &mut KnowledgeGraph,
@@ -341,15 +367,25 @@ impl GraphIngestor {
     ) -> Result<IngestReport> {
         let mut provenance = Provenance::new(session_id);
         let mut report = IngestReport::default();
+        let mut last_error = None;
         for batch in batches(messages, batch_chars.max(1)) {
             provenance.source_message_id = batch.first().map(|(id, _)| *id);
             let text = batch.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>().join("\n\n");
-            let extraction = self
-                .extractor
-                .extract_from_text(&text)
-                .await
-                .map_err(|error| KgError::llm_error(error.to_string()))?;
-            report.add(ingest_extraction(graph, &extraction, &provenance)?);
+            report.llm_calls += 1;
+            report.llm_input_chars += text.len();
+            match self.extractor.extract_from_text(&text).await {
+                Ok(extraction) => report.add(ingest_extraction(graph, &extraction, &provenance)?),
+                Err(error) => {
+                    report.llm_failures += 1;
+                    self.errors.lock().expect("error list lock").push(error.to_string());
+                    last_error = Some(error.to_string());
+                }
+            }
+        }
+        if let Some(error) = last_error {
+            if report.llm_failures == report.llm_calls {
+                return Err(KgError::llm_error(error));
+            }
         }
         if let Some(embedder) = embedder {
             report.entities_embedded = graph.embed_pending(embedder)?;

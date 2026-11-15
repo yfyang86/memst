@@ -84,9 +84,20 @@ pub struct LlmRequest {
     /// Whether to stream the response
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    /// Provider-specific fields sent at the top level of the request, for
+    /// options this type does not model, such as `{"thinking": {"type":
+    /// "disabled"}}` to turn off a reasoning model's hidden reasoning.
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl LlmRequest {
+    /// Add a provider-specific top-level request field.
+    pub fn with_extra(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        self.extra.insert(key.into(), value);
+        self
+    }
+
     /// Create a new request
     pub fn new(model: impl Into<String>) -> Self {
         Self {
@@ -96,6 +107,7 @@ impl LlmRequest {
             temperature: None,
             top_p: None,
             stream: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -230,33 +242,47 @@ impl OpenAiProvider {
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
     async fn chat(&self, request: LlmRequest) -> Result<LlmResponse> {
-        let mut builder = self.client.post(&self.chat_endpoint());
-        
-        if let Some(ref key) = self.api_key {
-            builder = builder.header("Authorization", format!("Bearer {}", key));
-        }
+        // Dropped connections, rate limits and server errors are routine
+        // against a hosted model, and usually gone a moment later. Retry
+        // those a few times; anything else (a bad request, a wrong key)
+        // fails at once.
+        const ATTEMPTS: u32 = 4;
+        let mut last_error = None;
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(500 * 2u64.pow(attempt - 1))).await;
+            }
+            let mut builder = self.client.post(&self.chat_endpoint());
+            if let Some(ref key) = self.api_key {
+                builder = builder.header("Authorization", format!("Bearer {}", key));
+            }
 
-        let response = builder
-            .json(&request)
-            .send()
-            .await
-            .map_err(crate::error::Error::Http)?;
+            let response = match builder.json(&request).send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    last_error = Some(crate::error::Error::Http(error));
+                    continue;
+                }
+            };
 
-        if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(crate::error::Error::InvalidOperation(format!(
-                "LLM API error {}: {}",
-                status, text
-            )));
+            if !status.is_success() {
+                let text = response.text().await.unwrap_or_default();
+                let error = crate::error::Error::InvalidOperation(format!("LLM API error {}: {}", status, text));
+                if status.as_u16() == 429 || status.is_server_error() {
+                    last_error = Some(error);
+                    continue;
+                }
+                return Err(error);
+            }
+
+            // The body can be cut off mid-transfer too.
+            match response.json::<LlmResponse>().await {
+                Ok(llm_response) => return Ok(llm_response),
+                Err(error) => last_error = Some(crate::error::Error::Http(error)),
+            }
         }
-
-        let llm_response: LlmResponse = response
-            .json()
-            .await
-            .map_err(crate::error::Error::Http)?;
-
-        Ok(llm_response)
+        Err(last_error.expect("at least one attempt was made"))
     }
 
     fn model(&self) -> &str {

@@ -78,6 +78,9 @@ async fn extraction_lands_in_the_graph_searchable() {
             relationships_superseded: 0,
             relationships_skipped: 1,
             entities_embedded: 3,
+            llm_calls: 1,
+            llm_failures: 0,
+            llm_input_chars: 51,
         }
     );
 
@@ -130,6 +133,9 @@ async fn extraction_lands_in_the_graph_searchable() {
             relationships_skipped: 0,
             // Tokio is new; Rust gained an attribute, so its text changed.
             entities_embedded: 2,
+            llm_calls: 1,
+            llm_failures: 0,
+            llm_input_chars: 48,
         }
     );
 
@@ -232,4 +238,52 @@ async fn a_later_conversation_updates_a_single_valued_fact() {
     let paris = all.iter().find(|t| t.2.name == "Paris").expect("still on record");
     assert!(!paris.0.is_current());
     assert!(paris.0.superseded_by.is_some());
+}
+
+#[tokio::test]
+async fn one_failed_batch_does_not_lose_the_rest() {
+    let (mut graph, _dir) = graph();
+    let messages: Vec<(Uuid, String)> = (0..3).map(|i| (Uuid::new_v4(), format!("message {i} {}", "x".repeat(40)))).collect();
+    // The mock hands out answers last-first: good, unusable, good.
+    let ingestor = ingestor(&[FIRST, "not json at all", IN_PARIS]);
+    let report = ingestor.ingest_messages(&mut graph, Uuid::new_v4(), &messages, 60, None).await.unwrap();
+    assert_eq!((report.llm_calls, report.llm_failures), (3, 1));
+    // Alice, Rust and RustConf from one good batch; Paris from the other
+    // (Alice and Rust are the same entities in both).
+    assert_eq!(graph.all_entities().unwrap().len(), 4, "both good batches were written");
+}
+
+/// Real models do not follow the schema exactly. One odd item must not cost
+/// the batch: readable items go in, unreadable ones are skipped.
+#[tokio::test]
+async fn imperfect_model_output_is_read_item_by_item() {
+    let (mut graph, _dir) = graph();
+    let sloppy = r#"{
+      "entities": [
+        {"name": "Alice", "type": "person", "confidence": null, "attributes": null},
+        {"name": "Lyon", "type": "city", "confidence": "0.9"},
+        {"name": 2023, "type": "year"},
+        {"type": "person"},
+        "not an object"
+      ],
+      "relationships": [
+        {"subject": "Alice", "predicate": "lives_in", "object": "Lyon", "confidence": "high"},
+        {"subject": "Alice", "predicate": "born_in", "object": 2023, "temporal_type": null},
+        {"subject": "Alice", "object": "Lyon"}
+      ],
+      "events": [
+        {"name": "Move to Lyon", "type": "relocation", "participants": ["Alice", 7, null], "timestamp": 2021}
+      ]
+    }"#;
+    let report = ingestor(&[sloppy])
+        .ingest_messages(&mut graph, Uuid::new_v4(), &[(Uuid::new_v4(), "text".to_string())], 4000, None)
+        .await
+        .unwrap();
+    assert_eq!(report.llm_failures, 0);
+    // Alice, Lyon, "2023", and the event; the nameless entity and the string are skipped.
+    assert_eq!(report.entities_created, 4);
+    // lives_in, born_in, and Alice's participation; the relation without a predicate is skipped.
+    assert_eq!(report.relationships_created, 3);
+    let lyon = graph.find_entities(EntityQuery::new().with_type("city")).unwrap().remove(0);
+    assert_eq!(lyon.confidence, 0.9);
 }

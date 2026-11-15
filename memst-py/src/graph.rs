@@ -91,6 +91,9 @@ fn report_json(report: &IngestReport) -> Value {
         "relationships_superseded": report.relationships_superseded,
         "relationships_skipped": report.relationships_skipped,
         "entities_embedded": report.entities_embedded,
+        "llm_calls": report.llm_calls,
+        "llm_failures": report.llm_failures,
+        "llm_input_chars": report.llm_input_chars,
     })
 }
 
@@ -408,7 +411,13 @@ impl Graph {
     ///
     /// ``messages`` is a list of ``(message_id, text)``. The LLM is an
     /// OpenAI-compatible endpoint. Returns a report of what changed.
-    #[pyo3(signature = (session_id, messages, llm_api_url, llm_model, llm_api_key=None, embedder="auto", batch_chars=6000))]
+    ///
+    /// ``max_tokens`` is the model's output budget per call; reasoning models
+    /// spend part of it thinking. ``llm_extra`` is a JSON object of
+    /// provider-specific request fields, for example
+    /// ``'{"thinking": {"type": "disabled"}}'``. Batches the model fails on
+    /// are skipped and counted in ``llm_failures``.
+    #[pyo3(signature = (session_id, messages, llm_api_url, llm_model, llm_api_key=None, embedder="auto", batch_chars=6000, max_tokens=16000, llm_extra=None))]
     #[allow(clippy::too_many_arguments)]
     fn ingest_messages(
         &self,
@@ -420,8 +429,23 @@ impl Graph {
         llm_api_key: Option<String>,
         embedder: &str,
         batch_chars: usize,
+        max_tokens: u32,
+        llm_extra: Option<&str>,
     ) -> PyResult<PyObject> {
         use memst_core::llm::loader::{LlmLoader, LlmProviderConfig};
+
+        let mut extraction_config = memst_sleep::kg_extract::KgExtractionConfig {
+            max_tokens,
+            ..Default::default()
+        };
+        if let Some(text) = llm_extra {
+            let Value::Object(extra) = serde_json::from_str::<Value>(text)
+                .map_err(|e| PyErr::new::<PyValueError, _>(format!("llm_extra is not JSON: {e}")))?
+            else {
+                return Err(PyErr::new::<PyValueError, _>("llm_extra must be a JSON object"));
+            };
+            extraction_config.request_extra = extra;
+        }
 
         let session = parse_uuid(session_id, "session id")?;
         let messages: Vec<(Uuid, String)> = messages
@@ -434,15 +458,15 @@ impl Graph {
         }
         let llm = LlmLoader::load(config).map_err(to_py_err)?;
         let embedder = memst_embed::select_embedder(embedder, |_| {}).map_err(to_py_err)?;
-        let ingestor = GraphIngestor::new(KgExtractionService::new(llm));
+        let ingestor = GraphIngestor::new(KgExtractionService::with_config(llm, extraction_config));
 
-        let report = py
-            .allow_threads(|| -> Result<IngestReport, String> {
+        let (report, errors) = py
+            .allow_threads(|| -> Result<(IngestReport, Vec<String>), String> {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| e.to_string())?;
-                self.locked(|graph| {
+                let report = self.locked(|graph| {
                     runtime.block_on(ingestor.ingest_messages(
                         graph,
                         session,
@@ -450,10 +474,13 @@ impl Graph {
                         batch_chars,
                         embedder.as_deref(),
                     ))
-                })
+                })?;
+                Ok((report, ingestor.take_errors()))
             })
             .map_err(to_py_err)?;
-        json_to_py(py, &report_json(&report))
+        let mut out = report_json(&report);
+        out["llm_errors"] = json!(errors);
+        json_to_py(py, &out)
     }
 
     /// Embed entities that are new or have changed. Returns how many.
@@ -477,5 +504,40 @@ impl Graph {
             .map_err(to_py_err)?
             .pop()
             .ok_or_else(|| to_py_err("the embedder returned nothing"))
+    }
+}
+
+/// A text embedding model, kept loaded.
+///
+/// ``kind`` is ``"auto"``, ``"local"`` (BGE-M3 on the CPU) or ``"http"``
+/// (the configured embeddings endpoint).
+#[pyclass]
+pub struct Embedder {
+    inner: Box<dyn memst_core::embed::Embedder>,
+}
+
+#[pymethods]
+impl Embedder {
+    #[new]
+    #[pyo3(signature = (kind="auto"))]
+    fn new(py: Python<'_>, kind: &str) -> PyResult<Self> {
+        let chosen = py
+            .allow_threads(|| memst_embed::select_embedder(kind, |_| {}))
+            .map_err(to_py_err)?;
+        match chosen {
+            Some(inner) => Ok(Self { inner }),
+            None => Err(PyErr::new::<PyValueError, _>("embedder 'none' cannot embed")),
+        }
+    }
+
+    /// Identifies the model, for example ``"local:bge-m3"``.
+    #[getter]
+    fn id(&self) -> String {
+        self.inner.id()
+    }
+
+    /// Embed each text; one vector per text, in order.
+    fn embed(&self, py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<Vec<f32>>> {
+        py.allow_threads(|| self.inner.embed(&texts)).map_err(to_py_err)
     }
 }
