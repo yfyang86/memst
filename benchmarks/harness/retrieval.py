@@ -2,6 +2,7 @@
 reciprocal rank fusion, and an embedder that caches."""
 
 import math
+from array import array
 import re
 import shutil
 import time
@@ -76,9 +77,11 @@ class CachedEmbedder:
         self.cache_path = Path(cache_path) if cache_path else None
         self.vectors: Dict[str, List[float]] = {}
         if self.cache_path and self.cache_path.exists():
-            for line in self.cache_path.read_text().splitlines():
-                row = json.loads(line)
-                self.vectors[row["text"]] = row["vector"]
+            # Line by line, and packed: a large run caches several gigabytes.
+            with self.cache_path.open() as handle:
+                for line in handle:
+                    row = json.loads(line)
+                    self.vectors[row["text"]] = array("f", row["vector"])
 
     def embed(self, texts: Sequence[str]) -> List[List[float]]:
         import json
@@ -90,7 +93,7 @@ class CachedEmbedder:
         for start in range(0, len(missing), 16):
             batch = missing[start : start + 16]
             for text, vector in zip(batch, self.embedder.embed([t[: self.max_chars] for t in batch])):
-                self.vectors[text] = vector
+                self.vectors[text] = array("f", vector)
                 if self.cache_path:
                     with self.cache_path.open("a") as handle:
                         handle.write(json.dumps({"text": text, "vector": vector}) + "\n")
