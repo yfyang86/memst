@@ -79,6 +79,8 @@ fn triple_json((relationship, subject, object): &(Relationship, Entity, Entity))
         "session_id": relationship.session_id.to_string(),
         "source_message_id": relationship.source_message_id.map(|id| id.to_string()),
         "created_at": relationship.created_at.to_rfc3339(),
+        "valid_from": relationship.valid_from.map(|t| t.to_rfc3339()),
+        "valid_to": relationship.valid_to.map(|t| t.to_rfc3339()),
     })
 }
 
@@ -417,7 +419,11 @@ impl Graph {
     /// provider-specific request fields, for example
     /// ``'{"thinking": {"type": "disabled"}}'``. Batches the model fails on
     /// are skipped and counted in ``llm_failures``.
-    #[pyo3(signature = (session_id, messages, llm_api_url, llm_model, llm_api_key=None, embedder="auto", batch_chars=6000, max_tokens=16000, llm_extra=None))]
+    ///
+    /// ``timestamps``, if given, has one entry per message: when it was sent,
+    /// as an RFC 3339 string, or ``None``. Facts are then dated from the
+    /// message that states them.
+    #[pyo3(signature = (session_id, messages, llm_api_url, llm_model, llm_api_key=None, embedder="auto", batch_chars=6000, max_tokens=16000, llm_extra=None, timestamps=None))]
     #[allow(clippy::too_many_arguments)]
     fn ingest_messages(
         &self,
@@ -431,7 +437,11 @@ impl Graph {
         batch_chars: usize,
         max_tokens: u32,
         llm_extra: Option<&str>,
+        timestamps: Option<Vec<Option<String>>>,
     ) -> PyResult<PyObject> {
+        if timestamps.as_ref().is_some_and(|t| t.len() != messages.len()) {
+            return Err(PyErr::new::<PyValueError, _>("timestamps must have one entry per message"));
+        }
         use memst_core::llm::loader::{LlmLoader, LlmProviderConfig};
 
         let mut extraction_config = memst_sleep::kg_extract::KgExtractionConfig {
@@ -448,9 +458,20 @@ impl Graph {
         }
 
         let session = parse_uuid(session_id, "session id")?;
-        let messages: Vec<(Uuid, String)> = messages
+        let messages: Vec<memst_sleep::kg_ingest::SourceMessage> = messages
             .into_iter()
-            .map(|(id, text)| Ok((parse_uuid(&id, "message id")?, text)))
+            .enumerate()
+            .map(|(index, (id, text))| {
+                let timestamp = match timestamps.as_ref().and_then(|t| t[index].as_deref()) {
+                    Some(text) => Some(
+                        chrono::DateTime::parse_from_rfc3339(text)
+                            .map(|t| t.with_timezone(&chrono::Utc))
+                            .map_err(|e| PyErr::new::<PyValueError, _>(format!("invalid timestamp '{text}': {e}")))?,
+                    ),
+                    None => None,
+                };
+                Ok(memst_sleep::kg_ingest::SourceMessage { id: parse_uuid(&id, "message id")?, text, timestamp })
+            })
             .collect::<PyResult<_>>()?;
         let mut config = LlmProviderConfig::openai(llm_api_url, llm_model);
         if let Some(key) = llm_api_key.filter(|key| !key.is_empty()) {
@@ -467,7 +488,7 @@ impl Graph {
                     .build()
                     .map_err(|e| e.to_string())?;
                 let report = self.locked(|graph| {
-                    runtime.block_on(ingestor.ingest_messages(
+                    runtime.block_on(ingestor.ingest_dated_messages(
                         graph,
                         session,
                         &messages,

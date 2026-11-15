@@ -195,8 +195,11 @@ into the shared graph (`memst_sleep::kg_ingest`):
 - a relationship already present is reinforced (confidence raised, relevance
   restored) rather than repeated;
 - events become entities, with a `participated_in` edge from each participant;
-- everything records its session and source message, and each entity the
-  extraction run that last wrote it;
+- each relationship records the exact message that states it (the model is
+  shown labelled messages and cites one) and is dated: `valid_from` is the
+  date the text gives for the fact, or else when the message was sent;
+- everything records its session, and each entity the extraction run that
+  last wrote it;
 - a relationship whose endpoint cannot be identified is skipped and counted;
 - new and changed entities are embedded.
 

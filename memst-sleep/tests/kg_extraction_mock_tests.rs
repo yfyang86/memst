@@ -56,6 +56,8 @@ fn mock_matrix_extraction() -> KgExtractionResult {
                 object: "The Oracle".to_string(),
                 confidence: 0.95,
                 temporal_type: TemporalRelevance::ShortTerm,
+                source: None,
+                when: None,
             },
             ExtractedRelationship {
                 subject: "Morpheus".to_string(),
@@ -63,6 +65,8 @@ fn mock_matrix_extraction() -> KgExtractionResult {
                 object: "Neo".to_string(),
                 confidence: 0.90,
                 temporal_type: TemporalRelevance::LongTerm,
+                source: None,
+                when: None,
             },
             ExtractedRelationship {
                 subject: "The Oracle".to_string(),
@@ -70,6 +74,8 @@ fn mock_matrix_extraction() -> KgExtractionResult {
                 object: "Neo".to_string(),
                 confidence: 0.85,
                 temporal_type: TemporalRelevance::ShortTerm,
+                source: None,
+                when: None,
             },
             ExtractedRelationship {
                 subject: "Neo".to_string(),
@@ -77,6 +83,8 @@ fn mock_matrix_extraction() -> KgExtractionResult {
                 object: "The One".to_string(),
                 confidence: 0.70,
                 temporal_type: TemporalRelevance::LongTerm,
+                source: None,
+                when: None,
             },
         ],
         events: vec![
@@ -148,6 +156,8 @@ fn mock_tech_meeting_extraction() -> KgExtractionResult {
                 object: "Project Phoenix".to_string(),
                 confidence: 0.90,
                 temporal_type: TemporalRelevance::LongTerm,
+                source: None,
+                when: None,
             },
             ExtractedRelationship {
                 subject: "Alex Rodriguez".to_string(),
@@ -155,6 +165,8 @@ fn mock_tech_meeting_extraction() -> KgExtractionResult {
                 object: "Project Phoenix".to_string(),
                 confidence: 0.90,
                 temporal_type: TemporalRelevance::LongTerm,
+                source: None,
+                when: None,
             },
             ExtractedRelationship {
                 subject: "Project Phoenix".to_string(),
@@ -162,6 +174,8 @@ fn mock_tech_meeting_extraction() -> KgExtractionResult {
                 object: "Kubernetes".to_string(),
                 confidence: 0.85,
                 temporal_type: TemporalRelevance::LongTerm,
+                source: None,
+                when: None,
             },
             ExtractedRelationship {
                 subject: "Project Phoenix".to_string(),
@@ -169,6 +183,8 @@ fn mock_tech_meeting_extraction() -> KgExtractionResult {
                 object: "Stripe".to_string(),
                 confidence: 0.80,
                 temporal_type: TemporalRelevance::LongTerm,
+                source: None,
+                when: None,
             },
         ],
         events: vec![
@@ -225,6 +241,8 @@ fn mock_medical_extraction() -> KgExtractionResult {
                 object: "James Wilson".to_string(),
                 confidence: 0.95,
                 temporal_type: TemporalRelevance::LongTerm,
+                source: None,
+                when: None,
             },
             ExtractedRelationship {
                 subject: "James Wilson".to_string(),
@@ -232,6 +250,8 @@ fn mock_medical_extraction() -> KgExtractionResult {
                 object: "Essential Hypertension".to_string(),
                 confidence: 0.90,
                 temporal_type: TemporalRelevance::LongTerm,
+                source: None,
+                when: None,
             },
             ExtractedRelationship {
                 subject: "James Wilson".to_string(),
@@ -239,6 +259,8 @@ fn mock_medical_extraction() -> KgExtractionResult {
                 object: "Atorvastatin".to_string(),
                 confidence: 0.95,
                 temporal_type: TemporalRelevance::LongTerm,
+                source: None,
+                when: None,
             },
         ],
         events: vec![

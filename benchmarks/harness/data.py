@@ -20,6 +20,16 @@ class Turn:
     def render(self) -> str:
         return f"[{self.date}] {self.speaker}: {self.text}"
 
+    def timestamp(self) -> Optional[str]:
+        """The session's date as RFC 3339, if it parses ("1:56 pm on 8 May, 2023")."""
+        from datetime import datetime, timezone
+
+        try:
+            parsed = datetime.strptime(self.date.strip(), "%I:%M %p on %d %B, %Y")
+        except ValueError:
+            return None
+        return parsed.replace(tzinfo=timezone.utc).isoformat()
+
 
 @dataclass
 class Question:

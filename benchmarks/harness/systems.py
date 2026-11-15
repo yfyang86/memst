@@ -201,8 +201,11 @@ class MemstGraph(System):
         k: int = 8,
         batch_chars: int = 6000,
         llm_extra: Optional[dict] = None,
+        source_turns: int = 12,
     ):
         self.llm_extra = llm_extra or {}
+        # How many source messages to show next to the facts.
+        self.source_turns = source_turns
         import memst
 
         self.memst = memst
@@ -229,6 +232,9 @@ class MemstGraph(System):
             self.graph = self.memst.Graph.open(str(store))
             session = str(uuid.uuid4())
             messages = [(str(uuid.uuid4()), turn.render()) for turn in self.turns]
+            (store / "message-turns.json").write_text(
+                json.dumps({message_id: index for index, (message_id, _) in enumerate(messages)})
+            )
             started = time.time()
             report = self.graph.ingest_messages(
                 session,
@@ -239,10 +245,13 @@ class MemstGraph(System):
                 embedder="none",
                 batch_chars=self.batch_chars,
                 llm_extra=json.dumps(self.llm_extra) if self.llm_extra else None,
+                timestamps=[turn.timestamp() for turn in self.turns],
             )
             # Embed with the harness's embedder, so the model is loaded once.
             report["seconds"] = time.time() - started
             marker.write_text(json.dumps(report))
+        # Which conversation turn each stored message id is.
+        self.turn_of_message = json.loads((store / "message-turns.json").read_text())
         self._embed_entities()
         self.write_llm_calls = report["llm_calls"]
         self.write_llm_chars = report["llm_input_chars"]
@@ -261,26 +270,41 @@ class MemstGraph(System):
         extra = "; ".join(f"{k}: {v}" for k, v in attributes.items())
         return f"{entity['name']} ({entity['entity_type']})" + (f" - {extra}" if extra else "")
 
-    def facts(self, question) -> List[str]:
+    def retrieve(self, question) -> Tuple[List[str], List[int]]:
+        """Fact lines for the question, and the turns those facts were stated in."""
         by_text = [hit["id"] for hit in self.graph.search(question, limit=self.k * 3)["hits"]]
         by_vector = [
             self.entities[i]["id"]
             for i, _ in cosine_rank(self.embedder.embed([question])[0], self.entity_vectors)[: self.k * 3]
         ]
-        index = {e["id"]: e for e in self.entities}
         position = {e["id"]: i for i, e in enumerate(self.entities)}
         fused = rrf([[position[i] for i in by_text if i in position], [position[i] for i in by_vector]])
         hits = [self.entities[i] for i in fused[: self.k]]
-        lines, seen = [self._entity_text(e) for e in hits], set()
+        lines, seen, turns = [self._entity_text(e) for e in hits], set(), []
         for entity in hits:
             for rel in self.graph.relationships(entity_id=entity["id"]):
-                if rel["id"] not in seen:
-                    seen.add(rel["id"])
-                    lines.append(f"{rel['subject']} {rel['predicate']} {rel['object']}")
-        return lines
+                if rel["id"] in seen:
+                    continue
+                seen.add(rel["id"])
+                since = f" (since {rel['valid_from'][:10]})" if rel.get("valid_from") else ""
+                lines.append(f"{rel['subject']} {rel['predicate']} {rel['object']}{since}")
+                turn = self.turn_of_message.get(rel.get("source_message_id") or "")
+                if turn is not None and turn not in turns:
+                    turns.append(turn)
+        return lines, turns
+
+    def facts(self, question) -> List[str]:
+        return self.retrieve(question)[0]
 
     def context(self, question):
-        return "Known facts:\n" + "\n".join(self.facts(question)), []
+        # The facts, and the messages they were stated in: the graph used as
+        # an index into the evidence rather than as a replacement for it.
+        lines, turns = self.retrieve(question)
+        evidence, ids = self._render(turns[: self.source_turns])
+        text = "Known facts:\n" + "\n".join(lines)
+        if evidence:
+            text += "\n\nMessages these facts come from:\n" + evidence
+        return text, ids
 
 
 class MemstGraphPlusRaw(System):
@@ -300,6 +324,9 @@ class MemstGraphPlusRaw(System):
         self.write_seconds = self.graph_system.write_seconds + self.raw.write_seconds
 
     def context(self, question):
-        turns, ids = self._render(self.raw.ranked(question)[: self.raw_k])
-        facts = "\n".join(self.graph_system.facts(question))
+        # Raw retrieval, plus the turns the graph's facts point at.
+        lines, fact_turns = self.graph_system.retrieve(question)
+        chosen = list(dict.fromkeys(self.raw.ranked(question)[: self.raw_k] + fact_turns[:6]))
+        turns, ids = self._render(chosen)
+        facts = "\n".join(lines)
         return f"Known facts:\n{facts}\n\nConversation excerpts:\n{turns}", ids

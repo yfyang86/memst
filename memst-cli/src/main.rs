@@ -1290,11 +1290,15 @@ fn main() -> Result<()> {
                             .unwrap_or(0)
                     };
                     let messages = store.get_messages(*session_id)?;
-                    let pending: Vec<(Uuid, String)> = messages
+                    let pending: Vec<memst_sleep::kg_ingest::SourceMessage> = messages
                         .iter()
                         .skip(done)
-                        .map(|m| (m.id, message_text(m)))
-                        .filter(|(_, text)| !text.trim().is_empty())
+                        .map(|m| memst_sleep::kg_ingest::SourceMessage {
+                            id: m.id,
+                            text: message_text(m),
+                            timestamp: Some(m.timestamp),
+                        })
+                        .filter(|m| !m.text.trim().is_empty())
                         .collect();
                     if pending.is_empty() {
                         println!("No new messages to ingest ({} already covered).", done.min(messages.len()));
@@ -1313,7 +1317,7 @@ fn main() -> Result<()> {
                     };
                     let ingestor = GraphIngestor::new(KgExtractionService::new(llm));
                     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-                    let report = runtime.block_on(ingestor.ingest_messages(
+                    let report = runtime.block_on(ingestor.ingest_dated_messages(
                         &mut graph,
                         *session_id,
                         &pending,

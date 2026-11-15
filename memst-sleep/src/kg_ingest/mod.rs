@@ -96,6 +96,22 @@ pub struct Provenance {
     pub source_message_id: Option<Uuid>,
     /// Identifies this extraction run.
     pub run_id: String,
+    /// The messages the extractor was shown, by the label it saw them under
+    /// (`"m3"`). When a relationship cites a label, it is attributed to that
+    /// message, and dated from it, instead of to `source_message_id`.
+    pub sources: HashMap<String, SourceMessage>,
+}
+
+/// A message handed to extraction.
+#[derive(Debug, Clone)]
+pub struct SourceMessage {
+    /// The message's id.
+    pub id: Uuid,
+    /// Its text.
+    pub text: String,
+    /// When it was sent, if known. Facts stated in it are dated from this
+    /// unless the text says when they became true.
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Provenance {
@@ -105,6 +121,7 @@ impl Provenance {
             session_id,
             source_message_id: None,
             run_id: format!("run-{}", Uuid::new_v4().simple()),
+            sources: HashMap::new(),
         }
     }
 
@@ -229,12 +246,27 @@ pub fn ingest_extraction_with(
     let triples = extraction
         .relationships
         .iter()
-        .map(|r| (r.subject.as_str(), r.predicate.as_str(), r.object.as_str(), r.confidence, &r.temporal_type))
+        .map(|r| {
+            (
+                r.subject.as_str(),
+                r.predicate.as_str(),
+                r.object.as_str(),
+                r.confidence,
+                &r.temporal_type,
+                r.source.as_deref(),
+                r.when.as_deref(),
+            )
+        })
         .chain(event_edges.iter().map(|(participant, event, confidence)| {
-            (participant.as_str(), PARTICIPATED_IN, event.as_str(), *confidence, &TemporalRelevance::LongTerm)
+            (participant.as_str(), PARTICIPATED_IN, event.as_str(), *confidence, &TemporalRelevance::LongTerm, None, None)
         }));
 
-    for (subject, predicate, object, confidence, temporal) in triples {
+    for (subject, predicate, object, confidence, temporal, source, when) in triples {
+        // Where and when: the cited message if there is one, otherwise the
+        // batch; the date the text gives, otherwise when it was said.
+        let cited = source.and_then(|label| provenance.sources.get(label));
+        let source_message_id = cited.map(|m| m.id).or(provenance.source_message_id);
+        let valid_from = when.and_then(parse_when).or_else(|| cited.and_then(|m| m.timestamp));
         let predicate = normalise_predicate(predicate);
         let predicate = predicate.as_str();
         let (Some(subject_id), Some(object_id)) = (
@@ -248,7 +280,8 @@ pub fn ingest_extraction_with(
         if policy.is_single_valued(predicate) {
             let mut fact = Relationship::new(subject_id, predicate, object_id, provenance.session_id)
                 .with_confidence(confidence);
-            fact.source_message_id = provenance.source_message_id;
+            fact.source_message_id = source_message_id;
+            fact.valid_from = valid_from;
             fact.half_life_days = temporal.default_half_life_days();
             fact.is_stable = temporal.is_stable();
             let new_id = fact.id;
@@ -285,7 +318,8 @@ pub fn ingest_extraction_with(
                 let mut relationship =
                     Relationship::new(subject_id, predicate, object_id, provenance.session_id)
                         .with_confidence(confidence);
-                relationship.source_message_id = provenance.source_message_id;
+                relationship.source_message_id = source_message_id;
+                relationship.valid_from = valid_from;
                 relationship.half_life_days = temporal.default_half_life_days();
                 relationship.is_stable = temporal.is_stable();
                 graph.add_relationship(relationship)?;
@@ -353,10 +387,9 @@ impl GraphIngestor {
     }
 
     /// Extract from a session's messages, in batches, and write the results
-    /// into `graph`. Each message is `(id, text)`. Embedding happens once, at
-    /// the end. A batch whose extraction fails is skipped and counted in
-    /// `llm_failures`, and the rest still go in; only if every batch fails
-    /// is the (last) error returned.
+    /// into `graph`. Each message is `(id, text)`; see
+    /// [`ingest_dated_messages`](Self::ingest_dated_messages) to also give
+    /// the time each was sent.
     pub async fn ingest_messages(
         &self,
         graph: &mut KnowledgeGraph,
@@ -365,12 +398,46 @@ impl GraphIngestor {
         batch_chars: usize,
         embedder: Option<&dyn Embedder>,
     ) -> Result<IngestReport> {
+        let messages: Vec<SourceMessage> = messages
+            .iter()
+            .map(|(id, text)| SourceMessage { id: *id, text: text.clone(), timestamp: None })
+            .collect();
+        self.ingest_dated_messages(graph, session_id, &messages, batch_chars, embedder).await
+    }
+
+    /// Extract from a session's messages, in batches, and write the results
+    /// into `graph`.
+    ///
+    /// Each message is shown to the model under a label, and the model is
+    /// asked to cite the label for every relationship, so each fact records
+    /// the exact message it came from and is dated from that message (or
+    /// from the date the text gives). Embedding happens once, at the end. A
+    /// batch whose extraction fails is skipped and counted in
+    /// `llm_failures`, and the rest still go in; only if every batch fails
+    /// is the (last) error returned.
+    pub async fn ingest_dated_messages(
+        &self,
+        graph: &mut KnowledgeGraph,
+        session_id: Uuid,
+        messages: &[SourceMessage],
+        batch_chars: usize,
+        embedder: Option<&dyn Embedder>,
+    ) -> Result<IngestReport> {
         let mut provenance = Provenance::new(session_id);
         let mut report = IngestReport::default();
         let mut last_error = None;
+        let mut next_label = 0;
         for batch in batches(messages, batch_chars.max(1)) {
-            provenance.source_message_id = batch.first().map(|(id, _)| *id);
-            let text = batch.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>().join("\n\n");
+            provenance.source_message_id = batch.first().map(|m| m.id);
+            provenance.sources.clear();
+            let mut lines = Vec::with_capacity(batch.len());
+            for message in batch {
+                let label = format!("m{next_label}");
+                next_label += 1;
+                lines.push(format!("[{label}] {}", message.text));
+                provenance.sources.insert(label, message.clone());
+            }
+            let text = lines.join("\n\n");
             report.llm_calls += 1;
             report.llm_input_chars += text.len();
             match self.extractor.extract_from_text(&text).await {
@@ -394,12 +461,30 @@ impl GraphIngestor {
     }
 }
 
+/// A date or datetime as a model writes it: RFC 3339, `YYYY-MM-DDTHH:MM:SS`,
+/// or a plain `YYYY-MM-DD` (taken as midnight UTC).
+fn parse_when(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
+    let text = text.trim();
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(text) {
+        return Some(parsed.with_timezone(&Utc));
+    }
+    if let Ok(parsed) = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S") {
+        return Some(Utc.from_utc_datetime(&parsed));
+    }
+    NaiveDate::parse_from_str(text, "%Y-%m-%d")
+        .ok()
+        .and_then(|date| date.and_hms_opt(0, 0, 0))
+        .map(|naive| Utc.from_utc_datetime(&naive))
+}
+
 /// Split messages into consecutive groups of at most `max_chars` characters
 /// (a single longer message is a group of its own).
-fn batches(messages: &[(Uuid, String)], max_chars: usize) -> Vec<&[(Uuid, String)]> {
+fn batches(messages: &[SourceMessage], max_chars: usize) -> Vec<&[SourceMessage]> {
     let mut out = Vec::new();
     let (mut start, mut size) = (0, 0);
-    for (index, (_, text)) in messages.iter().enumerate() {
+    for (index, message) in messages.iter().enumerate() {
+        let text = &message.text;
         if index > start && size + text.len() > max_chars {
             out.push(&messages[start..index]);
             start = index;
@@ -470,8 +555,18 @@ mod tests {
     }
 
     #[test]
+    fn dates_are_read_in_the_forms_models_write() {
+        let day = parse_when("2023-07-15").unwrap();
+        assert_eq!(day.to_rfc3339(), "2023-07-15T00:00:00+00:00");
+        assert_eq!(parse_when(" 2023-07-15T09:30:00 ").unwrap().to_rfc3339(), "2023-07-15T09:30:00+00:00");
+        assert_eq!(parse_when("2023-07-15T09:30:00+02:00").unwrap().to_rfc3339(), "2023-07-15T07:30:00+00:00");
+        assert!(parse_when("last weekend").is_none());
+        assert!(parse_when("").is_none());
+    }
+
+    #[test]
     fn batches_respect_the_size_limit() {
-        let message = |text: &str| (Uuid::new_v4(), text.to_string());
+        let message = |text: &str| SourceMessage { id: Uuid::new_v4(), text: text.to_string(), timestamp: None };
         let messages = vec![message("aaaa"), message("bbbb"), message("cccccccccccc"), message("dd")];
         let sizes: Vec<usize> = batches(&messages, 8).iter().map(|b| b.len()).collect();
         assert_eq!(sizes, vec![2, 1, 1], "an oversized message stands alone");

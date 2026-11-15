@@ -67,6 +67,13 @@ For each entity, determine its temporal relevance:
 - "short_term": Current project details (e.g., "Working on API v2")
 - "temporary": Transient info (e.g., "Busy this afternoon")
 
+Messages in the text may start with a label in square brackets, such as [m3],
+and may show the date they were sent. For each relationship:
+- "source": the label of the one message that most directly states it.
+- "when": the date the fact became true, if the text says or implies it. Work
+  out relative expressions ("last weekend", "two years ago") from the date of
+  the message they appear in. Use null when the text gives no time.
+
 Output STRICTLY as JSON with this structure:
 {
   "entities": [
@@ -84,7 +91,9 @@ Output STRICTLY as JSON with this structure:
       "predicate": "relationship type (uses|knows|works_at|created|located_in|part_of|etc)",
       "object": "entity name",
       "confidence": 0.0-1.0,
-      "temporal_type": "permanent|temporary"
+      "temporal_type": "permanent|temporary",
+      "source": "label of the message that states this, e.g. m3, or null",
+      "when": "ISO8601 date the fact became true, or null"
     }
   ],
   "events": [
@@ -140,6 +149,10 @@ struct LlmRelationship {
     confidence: f32,
     #[serde(default)]
     temporal_type: String,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    when: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,7 +181,7 @@ fn default_confidence() -> f32 {
 fn lenient_items<T: serde::de::DeserializeOwned>(root: &serde_json::Value, key: &str) -> Vec<T> {
     const TEXT_FIELDS: &[&str] = &[
         "name", "type", "entity_type", "event_type", "subject", "predicate", "object",
-        "temporal_relevance", "temporal_type", "timestamp",
+        "temporal_relevance", "temporal_type", "timestamp", "source", "when",
     ];
     let Some(items) = root.get(key).and_then(serde_json::Value::as_array) else {
         return Vec::new();
@@ -307,6 +320,8 @@ impl KgExtractionService {
                     object: rel.object,
                     confidence: rel.confidence,
                     temporal_type: parse_temporal_relevance(&rel.temporal_type),
+                    source: rel.source.map(|s| s.trim().trim_matches(|c| c == '[' || c == ']').to_string()),
+                    when: rel.when.filter(|w| !w.trim().is_empty()),
                 });
             }
         }

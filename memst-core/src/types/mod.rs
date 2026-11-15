@@ -1164,6 +1164,14 @@ pub struct ExtractedRelationship {
     /// Temporal type
     #[serde(default)]
     pub temporal_type: TemporalRelevance,
+    /// Label of the message that states this fact (for example `"m3"`),
+    /// when the extractor was given labelled messages and cited one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// When the fact became true, as the text states or implies it
+    /// (an ISO 8601 date or datetime), if the extractor could tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
 }
 
 /// Result of KG extraction from text.

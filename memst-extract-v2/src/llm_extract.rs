@@ -101,6 +101,8 @@ pub fn parse_response(response: &str, ontology_id: &str) -> Result<KgExtractionR
                 .map(|c| (c as f32).clamp(0.0, 1.0))
                 .unwrap_or(overall),
             temporal_type: TemporalRelevance::default(),
+            source: None,
+            when: None,
         });
     }
 

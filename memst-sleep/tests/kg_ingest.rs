@@ -8,7 +8,7 @@ use memst_core::graph::conformance::KeywordEmbedder;
 use memst_core::graph::{EntitySearch, KnowledgeGraph};
 use memst_core::types::{EntityQuery, RelationshipQuery};
 use memst_sleep::kg_extract::KgExtractionService;
-use memst_sleep::kg_ingest::{GraphIngestor, IngestReport, PARTICIPATED_IN, RUN_ATTRIBUTE};
+use memst_sleep::kg_ingest::{GraphIngestor, IngestReport, SourceMessage, PARTICIPATED_IN, RUN_ATTRIBUTE};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -80,7 +80,7 @@ async fn extraction_lands_in_the_graph_searchable() {
             entities_embedded: 3,
             llm_calls: 1,
             llm_failures: 0,
-            llm_input_chars: 51,
+            llm_input_chars: 56,
         }
     );
 
@@ -135,7 +135,7 @@ async fn extraction_lands_in_the_graph_searchable() {
             entities_embedded: 2,
             llm_calls: 1,
             llm_failures: 0,
-            llm_input_chars: 48,
+            llm_input_chars: 53,
         }
     );
 
@@ -286,4 +286,49 @@ async fn imperfect_model_output_is_read_item_by_item() {
     assert_eq!(report.relationships_created, 3);
     let lyon = graph.find_entities(EntityQuery::new().with_type("city")).unwrap().remove(0);
     assert_eq!(lyon.confidence, 0.9);
+}
+
+/// Each fact records the message that states it and when it became true.
+#[tokio::test]
+async fn facts_cite_their_message_and_carry_a_date() {
+    let (mut graph, _dir) = graph();
+    let at = |day: u32| chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2023, 7, day, 12, 0, 0).unwrap();
+    let messages = vec![
+        SourceMessage { id: Uuid::new_v4(), text: "Hi! I use Rust at work.".into(), timestamp: Some(at(10)) },
+        SourceMessage { id: Uuid::new_v4(), text: "I joined a mentorship program last weekend.".into(), timestamp: Some(at(17)) },
+        SourceMessage { id: Uuid::new_v4(), text: "I also like hiking.".into(), timestamp: Some(at(18)) },
+    ];
+    // m0: no date in the text. m1: the model resolves "last weekend".
+    // The third relation cites a label that does not exist; the fourth cites none.
+    let answer = r#"{"entities": [
+        {"name": "Alice", "type": "person"}, {"name": "Rust", "type": "language"},
+        {"name": "Mentorship program", "type": "program"}, {"name": "Hiking", "type": "activity"},
+        {"name": "Acme", "type": "organization"}],
+      "relationships": [
+        {"subject": "Alice", "predicate": "uses", "object": "Rust", "source": "m0", "when": null},
+        {"subject": "Alice", "predicate": "joined", "object": "Mentorship program", "source": "[m1]", "when": "2023-07-15"},
+        {"subject": "Alice", "predicate": "likes", "object": "Hiking", "source": "m9"},
+        {"subject": "Alice", "predicate": "works at", "object": "Acme"}],
+      "events": []}"#;
+    let llm = Arc::new(MockLlmProvider::new(vec![answer.to_string()]));
+    let ingestor = GraphIngestor::new(KgExtractionService::new(llm.clone()));
+    ingestor.ingest_dated_messages(&mut graph, Uuid::new_v4(), &messages, 4000, None).await.unwrap();
+
+    // The model was shown each message under its label.
+    let prompt = &llm.get_calls()[0].messages[0].content;
+    assert!(prompt.contains("[m0] Hi! I use Rust at work.") && prompt.contains("[m2] I also like hiking."));
+
+    let fact = |predicate: &str| {
+        graph.find_relationships(RelationshipQuery::new().with_predicate(predicate)).unwrap().remove(0).0
+    };
+    // Cited, no date in the text: dated from when it was said.
+    assert_eq!(fact("uses").source_message_id, Some(messages[0].id));
+    assert_eq!(fact("uses").valid_from, Some(at(10)));
+    // Cited, with a date the model worked out: that date, not the message's.
+    assert_eq!(fact("joined").source_message_id, Some(messages[1].id));
+    assert_eq!(fact("joined").valid_from.unwrap().to_rfc3339(), "2023-07-15T00:00:00+00:00");
+    // Unknown or missing citation: attributed to the batch, undated.
+    assert_eq!(fact("likes").source_message_id, Some(messages[0].id));
+    assert_eq!(fact("likes").valid_from, None);
+    assert_eq!(fact("works_at").valid_from, None);
 }

@@ -85,25 +85,32 @@ evidence coverage, prompt tokens, retrieval latency, write-path cost and an
 oracle-router bound. A pilot on 138 LoCoMo questions is in
 `benchmarks/results/harness/`.
 
-The pilot's finding: **the graph alone is well below raw-history retrieval,
-and adds nothing measurable on top of it.** See
-`benchmarks/harness/README.md`. Running against a real model also exposed
-three engine faults, now fixed: the extraction output budget was too small for
-reasoning models, the parser threw away a whole batch over one malformed item,
-and the LLM client did not retry dropped connections.
+The pilot's finding: **the graph alone is below raw-history retrieval, and
+the graph with raw turns is level with it, not ahead.** Figures and caveats are
+in `benchmarks/harness/README.md`.
+
+Running against a real model exposed engine faults, now fixed: the extraction
+output budget was too small for reasoning models, the parser threw away a
+whole batch over one malformed item, the LLM client did not retry dropped
+connections, and facts carried neither a date nor a link to the message that
+states them. Fixing the last one raised the graph from 32 to 39 F1 and the
+graph with raw turns from 47 to 52.
 
 Not done: LongMemEval and other benchmarks, repeated or independent judging,
 a full-dataset run, and any measurement of consolidation, decay or the memory
 tiers.
 
-What the pilot says to do next, before more evaluation:
+What the pilot says to look at next:
 
-1. Put dates on facts: fill `valid_from` from the source message at
-   ingestion, and show it in the context. Temporal questions score 10 F1
-   without it.
-2. Keep the source text reachable from a fact (the message id is already
-   stored) and return it with the fact, instead of the bare triple.
-3. Then re-run, and only then extend to LongMemEval.
+1. Retrieval over the graph finds the right entities but seldom the fact
+   asked for (the answer's message is reached for 28% of questions). Search
+   over relationships, not only entities, is the obvious thing to try; it
+   exists (`search_relationships`) and the harness does not use it yet.
+2. Whether extraction should be this fine-grained at all, given that raw
+   retrieval matches it at no write-path cost. A cheaper design keeps raw
+   turns as the memory and uses the graph only to link them.
+3. Re-run on LongMemEval, where conversations do not fit in context, before
+   drawing conclusions about memory in general.
 
 **6. Security and MCP.** Connect the MCP tool handlers to a real store (they
 are placeholders today). Write gating, ownership checks and authentication.

@@ -68,12 +68,11 @@ unreviewed preprints and are marked there.
 
 `benchmarks/harness` has the baselines the field asks for. A pilot (138 LoCoMo
 questions, one model) puts numbers on the concern above: full context 59 F1,
-raw-history retrieval 53, MemSt's knowledge graph 32, and the graph plus raw
-turns 47. The graph does not yet earn its extraction cost on this task, and
-its facts carry no dates. Details and caveats are in
-`benchmarks/harness/README.md`. The older tables under `benchmarks/` were
-produced through the server with different category labels and are not
-comparable.
+raw-history retrieval 53, MemSt's knowledge graph 39, and the graph plus raw
+turns 52. The graph does not yet earn its extraction cost on this task.
+Details and caveats are in `benchmarks/harness/README.md`. The older tables
+under `benchmarks/` were produced through the server with different category
+labels and are not comparable.
 
 ## Recommended order of work
 
