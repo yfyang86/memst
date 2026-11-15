@@ -62,17 +62,21 @@ unreviewed preprints and are marked there.
 | Raw evidence | Messages are kept in the session store | Good: the raw episodes exist. They are not offered as a retrieval strategy alongside the consolidated ones. |
 | Skills | Procedural memory with lookup | No update / deprecate path, flat retrieval, no import or export in the common `SKILL.md` layout. |
 | Security | None | No provenance beyond `session_id` / `source_message_id`, no write gating, no ownership check at retrieval, MCP adapter unauthenticated. |
-| Graph substrate | Embedded HelixDB (graph + vector + BM25). Entity search uses its BM25 and vector indexes, fused by reciprocal rank, with MemSt's substring matching as fallback | Matches the hybrid substrate the field converged on. Entities are embedded only on request, and relationships are not indexed for search; see [graph-backend-helix.md](../graph-backend-helix.md). |
+| Graph substrate | Embedded HelixDB (graph + vector + BM25). Entity search uses its BM25 and vector indexes, fused by reciprocal rank, with MemSt's substring matching as fallback | Matches the hybrid substrate the field converged on. Relationships are searchable by BM25. Entities are embedded only on request; see [graph-backend-helix.md](../graph-backend-helix.md). |
 
 ## What MemSt's own evaluation now shows
 
-`benchmarks/harness` has the baselines the field asks for. A pilot (138 LoCoMo
-questions, one model) puts numbers on the concern above: full context 59 F1,
-raw-history retrieval 53, MemSt's knowledge graph 39, and the graph plus raw
-turns 52. The graph does not yet earn its extraction cost on this task.
-Details and caveats are in `benchmarks/harness/README.md`. The older tables
-under `benchmarks/` were produced through the server with different category
-labels and are not comparable.
+`benchmarks/harness` has the baselines the field asks for, on LoCoMo and
+LongMemEval-S, with retrieval as a configurable pipeline. A pilot (one model)
+puts numbers on the concern above. On 138 LoCoMo questions: full context 59
+F1, raw-history retrieval 53, MemSt's graph searched by relationship 46, and
+the default pipeline (graph facts, their source messages and raw turns) 54.
+On 12 LongMemEval-S questions, where histories are about 127,000 tokens,
+retrieval matches full context at 4% of the prompt tokens, but the sample is
+too small to rank pipelines. The graph does not yet earn its extraction cost
+on its own. Details and caveats are in `benchmarks/harness/README.md`. The
+older tables under `benchmarks/` were produced through the server with
+different category labels and are not comparable.
 
 ## Recommended order of work
 

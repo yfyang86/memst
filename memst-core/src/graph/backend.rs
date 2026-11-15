@@ -97,6 +97,16 @@ pub trait GraphBackend: Send {
     /// Fetch one relationship.
     fn get_relationship(&self, id: RelationshipId) -> Result<Option<Relationship>>;
 
+    /// Fetch several relationships at once. Unknown ids are skipped; order
+    /// is unspecified.
+    fn get_relationships(&self, ids: &[RelationshipId]) -> Result<Vec<Relationship>> {
+        let mut found = Vec::with_capacity(ids.len());
+        for id in ids {
+            found.extend(self.get_relationship(*id)?);
+        }
+        Ok(found)
+    }
+
     /// Delete a relationship. Returns whether it existed.
     fn delete_relationship(&mut self, id: RelationshipId) -> Result<bool>;
 

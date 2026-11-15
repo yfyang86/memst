@@ -108,3 +108,7 @@ manuscript/arXiv-2504.19413v1
 manuscript/arXiv-2504.19413v1/*
 
 benchmarks/.harness-work/
+
+## Evaluation datasets and work
+third/longmemeval
+benchmarks/.harness-work

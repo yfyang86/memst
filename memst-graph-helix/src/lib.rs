@@ -637,6 +637,21 @@ impl GraphBackend for HelixGraphBackend {
         .transpose()
     }
 
+    fn get_relationships(&self, ids: &[RelationshipId]) -> Result<Vec<Relationship>> {
+        let uids: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        let mut out = Vec::with_capacity(ids.len());
+        for chunk in uids.chunks(PAGE) {
+            let rows = self.cypher(
+                "MATCH (:Entity%N)-[r:REL]->(:Entity) WHERE r.uid IN $uids RETURN properties(r) AS r",
+                json!({ "uids": chunk }),
+            )?;
+            for row in rows {
+                out.push(codec::relationship_from_row(row)?);
+            }
+        }
+        Ok(out)
+    }
+
     fn delete_relationship(&mut self, id: RelationshipId) -> Result<bool> {
         self.writable()?;
         let deleted = self.count(

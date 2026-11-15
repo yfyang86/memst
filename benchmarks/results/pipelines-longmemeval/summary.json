@@ -1,0 +1,890 @@
+{
+  "settings": {
+    "dataset": "LongMemEval-S",
+    "reader_and_judge_model": "deepseek-flash",
+    "thinking": "off",
+    "embedder": "local",
+    "conversations": 2,
+    "questions_per_category_per_conversation": 2,
+    "seed": 7,
+    "questions": 12
+  },
+  "pipelines": {
+    "full-context": {
+      "n": 12,
+      "f1": 0.5336,
+      "f1_low": 0.2781,
+      "f1_high": 0.7781,
+      "judged_accuracy": 0.5833,
+      "evidence_in_context": 1.0,
+      "prompt_tokens_mean": 111886,
+      "retrieval_p50_ms": 0.9,
+      "retrieval_p95_ms": 1.2,
+      "by_category": {
+        "abstention": {
+          "n": 1,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 113103,
+          "retrieval_p50_ms": 1.0,
+          "retrieval_p95_ms": 1.0
+        },
+        "knowledge-update": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 112416,
+          "retrieval_p50_ms": 0.9,
+          "retrieval_p95_ms": 0.9
+        },
+        "multi-session": {
+          "n": 2,
+          "f1": 0.1053,
+          "f1_low": 0.0,
+          "f1_high": 0.2105,
+          "judged_accuracy": 0.5,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 111001,
+          "retrieval_p50_ms": 1.1,
+          "retrieval_p95_ms": 1.1
+        },
+        "single-session-assistant": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 112424,
+          "retrieval_p50_ms": 1.0,
+          "retrieval_p95_ms": 1.0
+        },
+        "single-session-preference": {
+          "n": 2,
+          "f1": 0.0965,
+          "f1_low": 0.0659,
+          "f1_high": 0.127,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 111986,
+          "retrieval_p50_ms": 0.9,
+          "retrieval_p95_ms": 0.9
+        },
+        "single-session-user": {
+          "n": 2,
+          "f1": 0.5,
+          "f1_low": 0.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 0.5,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 111281,
+          "retrieval_p50_ms": 0.9,
+          "retrieval_p95_ms": 0.9
+        },
+        "temporal-reasoning": {
+          "n": 1,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 111316,
+          "retrieval_p50_ms": 1.2,
+          "retrieval_p95_ms": 1.2
+        }
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "all_turns",
+          "reached_evidence": 1.0,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 504.8,
+          "p50_ms": 0.2
+        }
+      ],
+      "definition": {
+        "name": "full-context",
+        "description": "The whole conversation.",
+        "stages": [
+          {
+            "stage": "all_turns"
+          }
+        ]
+      }
+    },
+    "raw-bm25": {
+      "n": 12,
+      "f1": 0.5833,
+      "f1_low": 0.3333,
+      "f1_high": 0.8333,
+      "judged_accuracy": 0.5833,
+      "evidence_in_context": 0.75,
+      "prompt_tokens_mean": 4299,
+      "retrieval_p50_ms": 1.5,
+      "retrieval_p95_ms": 2.8,
+      "by_category": {
+        "abstention": {
+          "n": 1,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3933,
+          "retrieval_p50_ms": 1.3,
+          "retrieval_p95_ms": 1.3
+        },
+        "knowledge-update": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3808,
+          "retrieval_p50_ms": 1.9,
+          "retrieval_p95_ms": 1.9
+        },
+        "multi-session": {
+          "n": 2,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4966,
+          "retrieval_p50_ms": 1.4,
+          "retrieval_p95_ms": 1.4
+        },
+        "single-session-assistant": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4258,
+          "retrieval_p50_ms": 2.8,
+          "retrieval_p95_ms": 2.8
+        },
+        "single-session-preference": {
+          "n": 2,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 4726,
+          "retrieval_p50_ms": 1.9,
+          "retrieval_p95_ms": 1.9
+        },
+        "single-session-user": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3048,
+          "retrieval_p50_ms": 1.2,
+          "retrieval_p95_ms": 1.2
+        },
+        "temporal-reasoning": {
+          "n": 1,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 6049,
+          "retrieval_p50_ms": 2.1,
+          "retrieval_p95_ms": 2.1
+        }
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "turns (method=bm25, k=20)",
+          "reached_evidence": 0.75,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 20.0,
+          "p50_ms": 1.4
+        }
+      ],
+      "definition": {
+        "name": "raw-bm25",
+        "description": "No memory construction: BM25 over the raw turns.",
+        "stages": [
+          {
+            "stage": "turns",
+            "method": "bm25",
+            "k": 20
+          }
+        ]
+      }
+    },
+    "raw-dense": {
+      "n": 12,
+      "f1": 0.5972,
+      "f1_low": 0.3333,
+      "f1_high": 0.8333,
+      "judged_accuracy": 0.5833,
+      "evidence_in_context": 1.0,
+      "prompt_tokens_mean": 3805,
+      "retrieval_p50_ms": 32.3,
+      "retrieval_p95_ms": 43.8,
+      "by_category": {
+        "abstention": {
+          "n": 1,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4312,
+          "retrieval_p50_ms": 25.3,
+          "retrieval_p95_ms": 25.3
+        },
+        "knowledge-update": {
+          "n": 2,
+          "f1": 0.8333,
+          "f1_low": 0.6667,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4392,
+          "retrieval_p50_ms": 43.0,
+          "retrieval_p95_ms": 43.0
+        },
+        "multi-session": {
+          "n": 2,
+          "f1": 0.25,
+          "f1_low": 0.0,
+          "f1_high": 0.5,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4373,
+          "retrieval_p50_ms": 34.4,
+          "retrieval_p95_ms": 34.4
+        },
+        "single-session-assistant": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 2996,
+          "retrieval_p50_ms": 33.0,
+          "retrieval_p95_ms": 33.0
+        },
+        "single-session-preference": {
+          "n": 2,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3668,
+          "retrieval_p50_ms": 25.4,
+          "retrieval_p95_ms": 25.4
+        },
+        "single-session-user": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3934,
+          "retrieval_p50_ms": 32.3,
+          "retrieval_p95_ms": 32.3
+        },
+        "temporal-reasoning": {
+          "n": 1,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 2626,
+          "retrieval_p50_ms": 43.8,
+          "retrieval_p95_ms": 43.8
+        }
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "turns (method=dense, k=20)",
+          "reached_evidence": 1.0,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 20.0,
+          "p50_ms": 32.2
+        }
+      ],
+      "definition": {
+        "name": "raw-dense",
+        "description": "No memory construction: embeddings over the raw turns.",
+        "stages": [
+          {
+            "stage": "turns",
+            "method": "dense",
+            "k": 20
+          }
+        ]
+      }
+    },
+    "raw-hybrid": {
+      "n": 12,
+      "f1": 0.625,
+      "f1_low": 0.375,
+      "f1_high": 0.875,
+      "judged_accuracy": 0.5833,
+      "evidence_in_context": 0.75,
+      "prompt_tokens_mean": 4027,
+      "retrieval_p50_ms": 29.0,
+      "retrieval_p95_ms": 45.9,
+      "by_category": {
+        "abstention": {
+          "n": 1,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4814,
+          "retrieval_p50_ms": 26.8,
+          "retrieval_p95_ms": 26.8
+        },
+        "knowledge-update": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3488,
+          "retrieval_p50_ms": 45.5,
+          "retrieval_p95_ms": 45.5
+        },
+        "multi-session": {
+          "n": 2,
+          "f1": 0.25,
+          "f1_low": 0.0,
+          "f1_high": 0.5,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4664,
+          "retrieval_p50_ms": 30.4,
+          "retrieval_p95_ms": 30.4
+        },
+        "single-session-assistant": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3835,
+          "retrieval_p50_ms": 45.9,
+          "retrieval_p95_ms": 45.9
+        },
+        "single-session-preference": {
+          "n": 2,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 4532,
+          "retrieval_p50_ms": 27.6,
+          "retrieval_p95_ms": 27.6
+        },
+        "single-session-user": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3559,
+          "retrieval_p50_ms": 26.4,
+          "retrieval_p95_ms": 26.4
+        },
+        "temporal-reasoning": {
+          "n": 1,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 3357,
+          "retrieval_p50_ms": 37.7,
+          "retrieval_p95_ms": 37.7
+        }
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "turns (method=hybrid, k=20)",
+          "reached_evidence": 0.75,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 20.0,
+          "p50_ms": 28.9
+        }
+      ],
+      "definition": {
+        "name": "raw-hybrid",
+        "description": "No memory construction: BM25 and embeddings over the raw turns, fused.",
+        "stages": [
+          {
+            "stage": "turns",
+            "method": "hybrid",
+            "k": 20
+          }
+        ]
+      }
+    },
+    "graph-entities": {
+      "n": 12,
+      "f1": 0.325,
+      "f1_low": 0.0833,
+      "f1_high": 0.575,
+      "judged_accuracy": 0.25,
+      "evidence_in_context": 0.5,
+      "prompt_tokens_mean": 2626,
+      "retrieval_p50_ms": 83.1,
+      "retrieval_p95_ms": 139.3,
+      "by_category": {
+        "abstention": {
+          "n": 1,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 2762,
+          "retrieval_p50_ms": 83.1,
+          "retrieval_p95_ms": 83.1
+        },
+        "knowledge-update": {
+          "n": 2,
+          "f1": 0.2,
+          "f1_low": 0.0,
+          "f1_high": 0.4,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3170,
+          "retrieval_p50_ms": 139.3,
+          "retrieval_p95_ms": 139.3
+        },
+        "multi-session": {
+          "n": 2,
+          "f1": 0.25,
+          "f1_low": 0.0,
+          "f1_high": 0.5,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.5,
+          "prompt_tokens_mean": 4590,
+          "retrieval_p50_ms": 85.0,
+          "retrieval_p95_ms": 85.0
+        },
+        "single-session-assistant": {
+          "n": 2,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 1272,
+          "retrieval_p50_ms": 86.7,
+          "retrieval_p95_ms": 86.7
+        },
+        "single-session-preference": {
+          "n": 2,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 1836,
+          "retrieval_p50_ms": 85.0,
+          "retrieval_p95_ms": 85.0
+        },
+        "single-session-user": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 2002,
+          "retrieval_p50_ms": 78.3,
+          "retrieval_p95_ms": 78.3
+        },
+        "temporal-reasoning": {
+          "n": 1,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 3006,
+          "retrieval_p50_ms": 76.0,
+          "retrieval_p95_ms": 76.0
+        }
+      },
+      "write_llm_calls_per_conversation": 46.9,
+      "write_llm_input_tokens_per_conversation_estimate": 128445,
+      "write_seconds_per_conversation": 379.7,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "entities (k=8, expand=True)",
+          "reached_evidence": 0.5,
+          "facts_added_mean": 46.9,
+          "turns_added_mean": 0.0,
+          "p50_ms": 83.0
+        },
+        {
+          "stage": "fact_sources (max=12)",
+          "reached_evidence": 0.5,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 7.6,
+          "p50_ms": 0.0
+        }
+      ],
+      "definition": {
+        "name": "graph-entities",
+        "description": "The graph only, searched by entity, with the facts around each hit and their source messages.",
+        "stages": [
+          {
+            "stage": "entities",
+            "k": 8,
+            "expand": true
+          },
+          {
+            "stage": "fact_sources",
+            "max": 12
+          }
+        ],
+        "context": {
+          "max_facts": 60,
+          "max_turns": 12
+        }
+      }
+    },
+    "graph-facts": {
+      "n": 12,
+      "f1": 0.5139,
+      "f1_low": 0.2639,
+      "f1_high": 0.7639,
+      "judged_accuracy": 0.5,
+      "evidence_in_context": 0.5,
+      "prompt_tokens_mean": 4136,
+      "retrieval_p50_ms": 127.1,
+      "retrieval_p95_ms": 153.8,
+      "by_category": {
+        "abstention": {
+          "n": 1,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4872,
+          "retrieval_p50_ms": 130.2,
+          "retrieval_p95_ms": 130.2
+        },
+        "knowledge-update": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3414,
+          "retrieval_p50_ms": 110.8,
+          "retrieval_p95_ms": 110.8
+        },
+        "multi-session": {
+          "n": 2,
+          "f1": 0.25,
+          "f1_low": 0.0,
+          "f1_high": 0.5,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.5,
+          "prompt_tokens_mean": 4780,
+          "retrieval_p50_ms": 138.2,
+          "retrieval_p95_ms": 138.2
+        },
+        "single-session-assistant": {
+          "n": 2,
+          "f1": 0.5,
+          "f1_low": 0.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 0.5,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 4613,
+          "retrieval_p50_ms": 128.3,
+          "retrieval_p95_ms": 128.3
+        },
+        "single-session-preference": {
+          "n": 2,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 3523,
+          "retrieval_p50_ms": 153.8,
+          "retrieval_p95_ms": 153.8
+        },
+        "single-session-user": {
+          "n": 2,
+          "f1": 0.8333,
+          "f1_low": 0.6667,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 3960,
+          "retrieval_p50_ms": 144.5,
+          "retrieval_p95_ms": 144.5
+        },
+        "temporal-reasoning": {
+          "n": 1,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 4180,
+          "retrieval_p50_ms": 111.8,
+          "retrieval_p95_ms": 111.8
+        }
+      },
+      "write_llm_calls_per_conversation": 46.9,
+      "write_llm_input_tokens_per_conversation_estimate": 128445,
+      "write_seconds_per_conversation": 379.7,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "facts (method=hybrid, k=30)",
+          "reached_evidence": 0.5,
+          "facts_added_mean": 30.0,
+          "turns_added_mean": 0.0,
+          "p50_ms": 127.0
+        },
+        {
+          "stage": "fact_sources (max=12)",
+          "reached_evidence": 0.5,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 12.0,
+          "p50_ms": 0.0
+        }
+      ],
+      "definition": {
+        "name": "graph-facts",
+        "description": "The graph only, searched by relationship, with the source messages of the facts found.",
+        "stages": [
+          {
+            "stage": "facts",
+            "method": "hybrid",
+            "k": 30
+          },
+          {
+            "stage": "fact_sources",
+            "max": 12
+          }
+        ],
+        "context": {
+          "max_facts": 30,
+          "max_turns": 12
+        }
+      }
+    },
+    "default": {
+      "n": 12,
+      "f1": 0.5972,
+      "f1_low": 0.3472,
+      "f1_high": 0.8472,
+      "judged_accuracy": 0.5833,
+      "evidence_in_context": 0.75,
+      "prompt_tokens_mean": 5017,
+      "retrieval_p50_ms": 146.5,
+      "retrieval_p95_ms": 179.8,
+      "by_category": {
+        "abstention": {
+          "n": 1,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 5209,
+          "retrieval_p50_ms": 146.5,
+          "retrieval_p95_ms": 146.5
+        },
+        "knowledge-update": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4254,
+          "retrieval_p50_ms": 147.5,
+          "retrieval_p95_ms": 147.5
+        },
+        "multi-session": {
+          "n": 2,
+          "f1": 0.25,
+          "f1_low": 0.0,
+          "f1_high": 0.5,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 6440,
+          "retrieval_p50_ms": 179.8,
+          "retrieval_p95_ms": 179.8
+        },
+        "single-session-assistant": {
+          "n": 2,
+          "f1": 1.0,
+          "f1_low": 1.0,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4734,
+          "retrieval_p50_ms": 159.3,
+          "retrieval_p95_ms": 159.3
+        },
+        "single-session-preference": {
+          "n": 2,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 5152,
+          "retrieval_p50_ms": 143.3,
+          "retrieval_p95_ms": 143.3
+        },
+        "single-session-user": {
+          "n": 2,
+          "f1": 0.8333,
+          "f1_low": 0.6667,
+          "f1_high": 1.0,
+          "judged_accuracy": 1.0,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 4344,
+          "retrieval_p50_ms": 164.1,
+          "retrieval_p95_ms": 164.1
+        },
+        "temporal-reasoning": {
+          "n": 1,
+          "f1": 0.0,
+          "f1_low": 0.0,
+          "f1_high": 0.0,
+          "judged_accuracy": 0.0,
+          "evidence_in_context": 0.0,
+          "prompt_tokens_mean": 5151,
+          "retrieval_p50_ms": 138.4,
+          "retrieval_p95_ms": 138.4
+        }
+      },
+      "write_llm_calls_per_conversation": 46.9,
+      "write_llm_input_tokens_per_conversation_estimate": 128445,
+      "write_seconds_per_conversation": 379.7,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "facts (method=hybrid, k=30)",
+          "reached_evidence": 0.5,
+          "facts_added_mean": 30.0,
+          "turns_added_mean": 0.0,
+          "p50_ms": 117.1
+        },
+        {
+          "stage": "fact_sources (max=8)",
+          "reached_evidence": 0.5,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 8.0,
+          "p50_ms": 0.0
+        },
+        {
+          "stage": "turns (method=hybrid, k=12)",
+          "reached_evidence": 0.25,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 9.8,
+          "p50_ms": 31.0
+        }
+      ],
+      "definition": {
+        "name": "default",
+        "description": "Search the graph by relationship, bring the messages those facts were stated in, and add raw-turn retrieval.",
+        "stages": [
+          {
+            "stage": "facts",
+            "method": "hybrid",
+            "k": 30
+          },
+          {
+            "stage": "fact_sources",
+            "max": 8
+          },
+          {
+            "stage": "turns",
+            "method": "hybrid",
+            "k": 12
+          }
+        ],
+        "context": {
+          "max_facts": 30,
+          "max_turns": 20
+        }
+      }
+    }
+  },
+  "categories": [
+    "abstention",
+    "knowledge-update",
+    "multi-session",
+    "single-session-assistant",
+    "single-session-preference",
+    "single-session-user",
+    "temporal-reasoning"
+  ],
+  "oracle_router": {
+    "over": [
+      "raw-bm25",
+      "raw-dense",
+      "raw-hybrid",
+      "graph-entities",
+      "graph-facts",
+      "default"
+    ],
+    "f1": 0.625,
+    "best_single_pipeline_f1": 0.625
+  },
+  "full_context_prompt_tokens": 111886,
+  "conversation_tokens_estimate_mean": 127303
+}

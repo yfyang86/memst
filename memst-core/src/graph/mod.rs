@@ -335,20 +335,24 @@ impl KnowledgeGraph {
         // Ask for spare hits: superseded facts are dropped after ranking.
         let (ranked, method, fallback_reason) =
             search::run_relationships(self.backend.as_ref(), text, wanted * 2)?;
-        let mut hits = Vec::with_capacity(ranked.len());
-        for (id, score) in ranked {
-            if hits.len() == wanted {
-                break;
-            }
-            if let Some(relationship) = self.backend.get_relationship(id)? {
-                if !relationship.is_current() {
-                    continue;
-                }
-                if let Some(triple) = self.join_endpoints(vec![relationship])?.pop() {
-                    hits.push((triple, score));
-                }
-            }
-        }
+        // One lookup for all hits, and one for their endpoints.
+        let ids: Vec<RelationshipId> = ranked.iter().map(|(id, _)| *id).collect();
+        let current: Vec<Relationship> = self
+            .backend
+            .get_relationships(&ids)?
+            .into_iter()
+            .filter(Relationship::is_current)
+            .collect();
+        let mut triples: HashMap<RelationshipId, Triple> = self
+            .join_endpoints(current)?
+            .into_iter()
+            .map(|triple| (triple.0.id, triple))
+            .collect();
+        let hits: Vec<(Triple, f32)> = ranked
+            .into_iter()
+            .filter_map(|(id, score)| Some((triples.remove(&id)?, score)))
+            .take(wanted)
+            .collect();
         Ok(RelationshipSearchResult { hits, method, fallback_reason })
     }
 

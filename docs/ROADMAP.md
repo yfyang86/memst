@@ -23,7 +23,7 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 2 | One graph per store | **Done** | Conformance suite passes on the store-level graph; old stores migrate; a query scoped to one owner never returns another's entities |
 | 3 | Extraction into HelixDB | **Done**, two items carried into sprint 4 | Extracting a conversation makes its entities searchable with no manual step; the server has no separate graph store |
 | 4 | Non-destructive, time-aware graph | **Done**, one item moved to sprint 5 | A corrected fact outranks and hides the stale one; an entity merge can be undone |
-| 5 | Evaluation harness | **Done** (pilot run; LongMemEval not yet) | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
+| 5 | Evaluation harness | **Done** (pilots on LoCoMo and LongMemEval-S) | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
 | 6 | Security and MCP | Next | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
 
 The manuscript update follows sprint 5.
@@ -78,39 +78,47 @@ Carried into sprint 4:
 Moved to sprint 5: raw messages as a retrieval strategy. That is the
 raw-history baseline the evaluation needs, so it is built there.
 
-**5. Evaluation harness.** Done: `benchmarks/harness` runs six systems
-(full context, three raw-history retrievers, the MemSt graph, the graph plus
-raw turns) under one reader, and reports F1 with intervals, judged accuracy,
-evidence coverage, prompt tokens, retrieval latency, write-path cost and an
-oracle-router bound. A pilot on 138 LoCoMo questions is in
-`benchmarks/results/harness/`.
+**5. Evaluation harness.** Done: `benchmarks/harness` runs retrieval
+pipelines under one reader on LoCoMo and LongMemEval-S, and reports F1 with
+intervals, judged accuracy, evidence coverage, prompt tokens, retrieval
+latency, write-path cost and an oracle-router bound.
 
-The pilot's finding: **the graph alone is below raw-history retrieval, and
-the graph with raw turns is level with it, not ahead.** Figures and caveats are
-in `benchmarks/harness/README.md`.
+Retrieval is a configurable pipeline of stages (`facts`, `entities`,
+`fact_sources`, `turns`, `all_turns`), defined in JSON, and every question
+leaves a trace of what each stage returned and whether it reached the answer.
+The default pipeline searches the graph by relationship, follows the facts to
+the messages they were stated in, and adds raw turns.
+
+Findings so far (figures and caveats in `benchmarks/harness/README.md`):
+
+- LoCoMo, 138 questions: the default pipeline is at 54 F1, level with the
+  best raw-history baseline (53) and below full context (59). The graph alone
+  is at 46, up from 39 when it was searched by entity.
+- LongMemEval-S, 12 questions with 127k-token histories: retrieval pipelines
+  match full context at 4% of the prompt tokens, but the sample is too small
+  to rank them.
 
 Running against a real model exposed engine faults, now fixed: the extraction
 output budget was too small for reasoning models, the parser threw away a
 whole batch over one malformed item, the LLM client did not retry dropped
-connections, and facts carried neither a date nor a link to the message that
-states them. Fixing the last one raised the graph from 32 to 39 F1 and the
-graph with raw turns from 47 to 52.
+connections, facts carried neither a date nor a link to the message that
+states them, and relationship search fetched its hits one at a time (0.9 s
+per query, now 0.04 s).
 
-Not done: LongMemEval and other benchmarks, repeated or independent judging,
-a full-dataset run, and any measurement of consolidation, decay or the memory
-tiers.
+Not done: a LongMemEval run large enough to rank pipelines, other benchmarks,
+repeated or independent judging, and any measurement of consolidation, decay
+or the memory tiers.
 
-What the pilot says to look at next:
+What the results say to look at next:
 
-1. Retrieval over the graph finds the right entities but seldom the fact
-   asked for (the answer's message is reached for 28% of questions). Search
-   over relationships, not only entities, is the obvious thing to try; it
-   exists (`search_relationships`) and the harness does not use it yet.
-2. Whether extraction should be this fine-grained at all, given that raw
-   retrieval matches it at no write-path cost. A cheaper design keeps raw
-   turns as the memory and uses the graph only to link them.
-3. Re-run on LongMemEval, where conversations do not fit in context, before
-   drawing conclusions about memory in general.
+1. The graph is not yet worth its extraction cost on its own: it ties raw
+   retrieval only when raw turns are added. A larger LongMemEval run is
+   needed before deciding whether that holds where histories are long.
+2. A cheaper design keeps raw turns as the memory and uses the graph to link
+   and date them. The pipeline makes this testable without engine changes.
+3. Reranking is the stage most likely to help: the right turn is retrieved
+   for 72% of LoCoMo questions by the default pipeline, but judged accuracy
+   is 64%.
 
 **6. Security and MCP.** Connect the MCP tool handlers to a real store (they
 are placeholders today). Write gating, ownership checks and authentication.

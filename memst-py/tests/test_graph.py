@@ -51,6 +51,12 @@ def test_entities_are_shared_across_sessions(store):
     assert len(graph.relationships(session_id=second)) == 0
     assert len(graph.relationships(entity_id=rust["id"])) == 1
 
+    found = graph.search_relationships("alice uses")
+    assert found["method"] in ("native", "fallback")
+    assert [(h["subject"], h["predicate"], h["object"]) for h in found["hits"]] == [("Alice", "uses", "Rust")]
+    assert found["hits"][0]["score"] > 0
+    assert graph.search_relationships("zzz-nothing")["hits"] == []
+
     near = graph.neighbors(alice["id"], hops=1, direction="out")
     assert [(n["name"], n["hops"]) for n in near] == [("Rust", 1)]
 

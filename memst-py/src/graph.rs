@@ -349,6 +349,38 @@ impl Graph {
         )
     }
 
+    /// Search relationships by keywords, matched against "subject predicate
+    /// object". Superseded facts are left out.
+    ///
+    /// Returns ``{"method": "native" | "fallback", "fallback_reason": str | None,
+    /// "hits": [{..relationship.., "score": float}]}``.
+    #[pyo3(signature = (text, limit=10))]
+    fn search_relationships(&self, py: Python<'_>, text: &str, limit: usize) -> PyResult<PyObject> {
+        let result = py
+            .allow_threads(|| self.locked(|graph| graph.search_relationships(text, limit)))
+            .map_err(to_py_err)?;
+        let hits: Vec<Value> = result
+            .hits
+            .iter()
+            .map(|(triple, score)| {
+                let mut row = triple_json(triple);
+                row["score"] = json!(score);
+                row
+            })
+            .collect();
+        json_to_py(
+            py,
+            &json!({
+                "method": match result.method {
+                    SearchMethod::Native => "native",
+                    SearchMethod::Fallback => "fallback",
+                },
+                "fallback_reason": result.fallback_reason,
+                "hits": hits,
+            }),
+        )
+    }
+
     /// Entities within ``hops`` of an entity, nearest first, each with
     /// ``"hops"``. ``direction`` is ``"out"``, ``"in"`` or ``"both"``.
     #[pyo3(signature = (entity_id, hops=2, direction="both"))]
