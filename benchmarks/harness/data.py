@@ -109,6 +109,7 @@ def load_longmemeval(path: Path, per_type: int = 0, seed: int = 7) -> List[Conve
 
     `per_type` > 0 keeps that many questions of each type, chosen by `seed`
     before any history is built, since each history is expensive to prepare.
+    A larger `per_type` with the same seed extends the smaller sample.
     """
     import random
     from datetime import datetime, timezone
@@ -122,11 +123,18 @@ def load_longmemeval(path: Path, per_type: int = 0, seed: int = 7) -> List[Conve
 
     samples = json.loads(Path(path).read_text())
     if per_type > 0:
-        rng = random.Random(seed)
         by_type = {}
         for sample in samples:
             by_type.setdefault(sample["question_type"], []).append(sample)
-        samples = [s for t in sorted(by_type) for s in rng.sample(by_type[t], min(per_type, len(by_type[t])))]
+        chosen = []
+        for name in sorted(by_type):
+            # Each type is shuffled on its own and a prefix taken, so a larger
+            # sample contains the smaller one and reuses the histories
+            # already built for it.
+            pool = sorted(by_type[name], key=lambda s: s["question_id"])
+            random.Random(f"{seed}:{name}").shuffle(pool)
+            chosen.extend(pool[:per_type])
+        samples = chosen
 
     conversations = []
     for sample in samples:

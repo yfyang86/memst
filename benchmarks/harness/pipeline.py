@@ -28,6 +28,7 @@ is what tells you which stage is doing the work.
 """
 
 import json
+import os
 import shutil
 import time
 import uuid
@@ -170,7 +171,9 @@ class Memory:
                 messages,
                 llm_api_url=self.llm["api_url"],
                 llm_model=self.llm["model"],
-                llm_api_key=self.llm.get("api_key", "proxy-injected"),
+                # Same variable as the reader. Where a proxy injects the key,
+                # any placeholder works.
+                llm_api_key=self.llm.get("api_key") or os.environ.get("MEMST_EVAL_API_KEY", "proxy-injected"),
                 embedder="none",
                 batch_chars=self.batch_chars,
                 llm_extra=json.dumps(self.llm["extra"]) if self.llm.get("extra") else None,

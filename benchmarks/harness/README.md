@@ -11,6 +11,10 @@ python -m benchmarks.harness.run --dataset longmemeval --per-category 2   # Long
 python -m benchmarks.harness.run --list-pipelines
 ```
 
+To run the complete evaluation on your own machine (setup, model access,
+embeddings on CPU or a GPU server, cost, resuming), see
+[RUNNING.md](RUNNING.md) and `run_all.sh`.
+
 Results go to `--out` (default `benchmarks/results/harness/`): `REPORT.md`
 (the tables), `summary.json`, `answers.jsonl` (every question, answer and
 score) and `traces.jsonl` (what each stage retrieved for every question).
@@ -158,7 +162,8 @@ those, not F1.
 ## Model access
 
 `--api-url` and `--model` name any OpenAI-compatible endpoint. The key is read
-from `MEMST_EVAL_API_KEY`. Embeddings use the local BGE-M3 model by default
+from `MEMST_EVAL_API_KEY`, for the reader, the judge and extraction, and is
+not written to the caches or results. Embeddings use the local BGE-M3 model by default
 (`--embedder local`), so no embedding API is needed.
 
 ## Results (15 November 2026)
@@ -269,6 +274,9 @@ Reading it:
   relationship (51) below the default (60).
 - Building the graph costs about 47 extraction calls and 6 minutes per
   history. The raw baselines cost only embeddings.
+- The 12 questions were drawn with an earlier sampler; the current one picks
+  a different 12 for the same settings (and lets a larger sample extend a
+  smaller one).
 - A larger run needs time, not code: each further question takes about 6
   minutes of extraction (several run in parallel) and 4 minutes of CPU
   embedding. `--per-category 10` (60 questions) is roughly five hours on a

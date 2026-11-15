@@ -140,6 +140,18 @@ def main():
             list(pool.map(build, conversations))
 
     rows, traces, write_costs = [], [], []
+
+    def save(final=False):
+        # Written after every conversation, so a long run that is stopped
+        # leaves a report of what it had finished. Restarting continues from
+        # the caches and overwrites it.
+        (out / "answers.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        (out / "traces.jsonl").write_text("".join(json.dumps(t) + "\n" for t in traces))
+        summary = summarise(rows, write_costs, wanted, args, dataset_name, traces, pipelines)
+        summary["settings"]["complete"] = final
+        (out / "summary.json").write_text(json.dumps(summary, indent=2))
+        (out / "REPORT.md").write_text(render(summary))
+
     for conversation, questions in work_items:
         conversation_tokens = sum(len(t.render()) for t in conversation.turns) // 4
         print(f"conversation {conversation.id}: {len(conversation.turns)} turns (~{conversation_tokens} tokens), {len(questions)} questions", flush=True)
@@ -225,13 +237,13 @@ def main():
             failed = sum(1 for r in done if r.get("error"))
             print(f"  {name}: F1 {sum(r['f1'] for r in done) / len(done):.3f} over {len(done)} questions" + (f" ({failed} reader errors)" if failed else ""), flush=True)
         memory.close()
+        done_count = work_items.index((conversation, questions)) + 1
+        if done_count < len(work_items):
+            save()
+            print(f"saved: {done_count} of {len(work_items)} done", flush=True)
 
-    (out / "answers.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    (out / "traces.jsonl").write_text("".join(json.dumps(t) + "\n" for t in traces))
-    summary = summarise(rows, write_costs, wanted, args, dataset_name, traces, pipelines)
-    (out / "summary.json").write_text(json.dumps(summary, indent=2))
-    (out / "REPORT.md").write_text(render(summary))
-    print(render(summary))
+    save(final=True)
+    print(render(summarise(rows, write_costs, wanted, args, dataset_name, traces, pipelines)))
 
 
 def stage_summary(traces, name):
@@ -333,6 +345,7 @@ def render(summary):
         "# Evaluation report",
         "",
         f"Dataset: {s['dataset']}. {s['questions']} questions (seed {s['seed']}); histories average about {summary['conversation_tokens_estimate_mean']:,} tokens.",
+        *([] if s.get("complete", True) else ["", "**Partial: the run was still going when this was written.**", ""]),
         f"Reader, judge and extraction model: `{s['reader_and_judge_model']}` (reasoning {s['thinking']}). Embeddings: `{s['embedder']}`.",
         "",
         "| Pipeline | F1 (95% interval) | Judged correct | Answer turn in context | Prompt tokens | Retrieval p50 / p95 | Write-path LLM calls |",
