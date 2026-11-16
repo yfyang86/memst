@@ -10,7 +10,7 @@ from benchmarks.harness import scoring
 from benchmarks.harness.data import Conversation, Question, Turn, load_locomo, load_longmemeval
 from benchmarks.harness.llm import ChatClient
 from benchmarks.harness.pipeline import Memory, load_pipelines, retrieve, uses_embeddings, uses_graph, validate
-from benchmarks.harness.retrieval import BM25, cosine_rank, rrf
+from benchmarks.harness.retrieval import BM25, CachedEmbedder, cosine_rank, rrf
 
 
 def test_token_f1_and_abstention():
@@ -40,6 +40,28 @@ def test_rank_fusion_and_cosine():
     assert rrf([[1, 2, 3], [2, 1, 4]])[:2] in ([1, 2], [2, 1])
     assert rrf([[5], [5], [6]])[0] == 5
     assert [i for i, _ in cosine_rank([1, 0], [[0, 1], [1, 0.1]])] == [1, 0]
+
+
+def test_cached_embedder_retries_and_reuses_disk_cache(tmp_path, monkeypatch):
+    calls = []
+
+    class FlakyEmbedder:
+        id = "flaky"
+
+        def embed(self, texts):
+            calls.append(texts)
+            if len(calls) == 1:
+                raise RuntimeError("connection closed before message completed")
+            return [[float(len(text))] for text in texts]
+
+    monkeypatch.setattr("benchmarks.harness.retrieval.time.sleep", lambda _: None)
+    cache = tmp_path / "embeddings.jsonl"
+    embedder = CachedEmbedder(FlakyEmbedder(), cache)
+    assert [list(v) for v in embedder.embed(["a", "bb"])] == [[1.0], [2.0]]
+
+    resumed = CachedEmbedder(FlakyEmbedder(), cache)
+    assert [list(v) for v in resumed.embed(["a", "bb"])] == [[1.0], [2.0]]
+    assert len(calls) == 2
 
 
 def conversation():

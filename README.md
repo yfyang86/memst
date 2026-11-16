@@ -190,6 +190,66 @@ uv pip install target/wheels/memst_py-*.whl
 python -c "import memst; print(memst.__version__)"
 ```
 
+## Mac Build
+
+This is the verified macOS approach for the Rust engine and benchmark harness.
+It does not build the FastAPI server, React UI, or Tauri shell under `apps/`.
+Use Rust 1.95 for the current pinned HelixDB sources, and Python 3.13 because
+PyO3 0.22 does not support the system Python 3.14. Setting
+`RUSTUP_TOOLCHAIN` is important: `maturin` invokes Cargo in a subprocess.
+
+When GitHub is slow or unreachable, keep the proxy enabled for both Cargo and
+`maturin`: dependencies and the ONNX Runtime build download from GitHub.
+
+```bash
+# Run from the repository root.
+rustup toolchain install 1.95
+export RUSTUP_TOOLCHAIN=1.95
+export https_proxy="http://127.0.0.1:7897"
+export HTTPS_PROXY="$https_proxy"
+
+uv venv --python 3.13 .venv
+uv pip install --python .venv/bin/python maturin pytest
+export VIRTUAL_ENV="$PWD/.venv"
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+export PYO3_PYTHON="$VIRTUAL_ENV/bin/python"
+unset CONDA_PREFIX
+
+cargo build --release --workspace
+(cd memst-py && maturin develop --release)
+```
+
+Use the repository-local artifacts explicitly if another MemSt version is
+installed globally:
+
+```bash
+./target/release/memst --version
+.venv/bin/python -c "import memst; print(memst.Graph, memst.Embedder)"
+.venv/bin/python -m pytest benchmarks/harness/test_harness.py -v
+cargo test --release -p memst-lib -p memst-graph-helix -p memst-embed
+```
+
+For the harness, use the local 1,024-dimensional BGE-M3 HTTP embedder instead
+of downloading the optional 2.2 GB ONNX model:
+
+```bash
+export MEMST_EMBEDDING_API_URL="http://127.0.0.1:1378/v1"
+export MEMST_EMBEDDING_MODEL="text-embedding-bge_m3"
+export EMBEDDER=http
+export HELIX_TELEMETRY_LEVEL=off
+
+# Required separately for the reader, judge, and graph extraction model.
+# Reuse the existing zsh variable without writing the key to a file.
+export MEMST_EVAL_API_KEY="$DEEPSEEK_API_KEY"
+export MEMST_EVAL_API_URL="https://api.deepseek.com"
+export MEMST_EVAL_MODEL="deepseek-flash"
+benchmarks/harness/run_all.sh
+```
+
+See [`benchmarks/harness/RUNNING.md`](benchmarks/harness/RUNNING.md) for dataset
+sampling, runtime and cost estimates, and resuming. Keep the API key out of
+repository files.
+
 ## Configuration
 
 MemSt loads LLM + embedding settings from `config.toml` by default (and falls back to environment variables if no config is found).

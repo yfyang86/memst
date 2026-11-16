@@ -92,7 +92,16 @@ class CachedEmbedder:
         missing = sorted(dict.fromkeys(t for t in texts if t not in self.vectors), key=len)
         for start in range(0, len(missing), 16):
             batch = missing[start : start + 16]
-            for text, vector in zip(batch, self.embedder.embed([t[: self.max_chars] for t in batch])):
+            inputs = [t[: self.max_chars] for t in batch]
+            for attempt in range(4):
+                try:
+                    embedded = self.embedder.embed(inputs)
+                    break
+                except (RuntimeError, OSError):
+                    if attempt == 3:
+                        raise
+                    time.sleep(0.25 * 2**attempt)
+            for text, vector in zip(batch, embedded):
                 self.vectors[text] = array("f", vector)
                 if self.cache_path:
                     with self.cache_path.open("a") as handle:
