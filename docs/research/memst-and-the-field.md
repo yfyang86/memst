@@ -140,12 +140,23 @@ a backend for the file-style memory tool command set, next to MCP.
 
 ## Manuscript
 
-`manuscript/memst/memst-yifan.tex` has **not** been edited. Refreshing it is
-more than adding citations: the evaluation critique above bears on the paper's
-central claim, and that is the author's call. Candidate references are in
-`manuscript/memst/cite-2026-candidates.bib`. Their author lists are truncated
-and must be completed, and venues checked, before any are cited.
+`manuscript/memst/memst-yifan.tex` was rewritten on 18 November 2026 around
+the results above. The earlier text claimed 49.2% F1 for query-adaptive
+routing; the new one reports the like-for-like evaluation, the negative
+result for the graph and for routing, the reader finding and the fault in
+how facts were dated, and positions MemSt as a versioned store. Its tables
+and every number in its evaluation are generated from the result files by
+`manuscript/memst/make_tables.py`.
 
-The limitations section says conflict-aware three-way merge is not
-implemented. That is still accurate: `memst-repo` detects conflicts between
-memories and fast-forwards, but does not yet load memories from commits.
+Claims of the earlier text that had no evidence in the repository were
+removed and not replaced: the importance-score weights "chosen by grid
+search", the comparison with an exact integer-programming solution, 87%
+extraction precision "by manual analysis", the 12–18% deduplication saving,
+the per-message cost and latency figures, and the GPT-4o-mini judge. The six
+figures of the earlier evaluation are no longer used.
+
+References added in the rewrite were checked against arXiv metadata. Five
+older entries that the new text cites were wrong (a placeholder arXiv number,
+wrong author names, a wrong title) and were corrected. The other entries in
+`cite.bib` are not cited by the new text and have not been checked;
+`cite-2026-candidates.bib` still has truncated author lists.

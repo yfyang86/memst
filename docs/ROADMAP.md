@@ -28,7 +28,7 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 5c | A narrower job for the graph | **Done**: not passed, reported as a negative result | The graph beats raw retrieval on temporal and knowledge-update questions by a paired test, or is reported as a negative result |
 | 6 | Security and MCP | **Done** | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
 
-The manuscript update follows sprint 5.
+The manuscript was rewritten after sprint 6, around these results (see `docs/research/memst-and-the-field.md`, "Manuscript").
 
 ## Sprint detail
 
