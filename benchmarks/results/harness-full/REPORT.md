@@ -18,7 +18,7 @@ Both evaluations are complete: 2,046 questions and 14,322 pipeline answers. The 
 
 Oracle router: F1 73.3, against 60.6 for the best single retrieval pipeline.
 
-Category results, stage details, answers, and traces are in [`locomo/`](locomo/).
+Category results, stage details, answers, and traces are in [`../full-locomo/`](../full-locomo/).
 
 ## LongMemEval-S
 
@@ -36,7 +36,7 @@ Category results, stage details, answers, and traces are in [`locomo/`](locomo/)
 
 Oracle router: F1 56.8, against 51.4 for the best single retrieval pipeline.
 
-Category results, stage details, answers, and traces are in [`longmemeval/`](longmemeval/).
+Category results, stage details, answers, and traces are in [`../full-longmemeval/`](../full-longmemeval/).
 
 ## Published SOTA context
 
@@ -65,15 +65,19 @@ Our results are not directly comparable with these claims:
 - The reader and judge are `deepseek-flash`, rather than the stronger readers or official GPT-4o judge used by many leaders.
 - Token F1 is not interchangeable with LLM-judged answer accuracy.
 
-We therefore do **not** claim SOTA. The default graph pipeline remains below the best raw retrieval pipeline on both datasets. Its clearest category-level advantage is temporal reasoning: LoCoMo **52.8 F1** for `default` versus **44.5** for `raw-dense`, and LongMemEval-S **40.6 F1** versus **30.2** for `raw-hybrid`.
+We therefore do **not** claim SOTA. The default graph pipeline is below the best raw retrieval pipeline on LoCoMo (3.0 points of judged accuracy behind `raw-dense` on the same questions, interval 0.9 to 4.9) and level with it on LongMemEval-S.
+
+Temporal questions are the one category where it leads on F1: LoCoMo **52.8** for `default` against **44.5** for `raw-dense`, and LongMemEval-S **40.6** against **30.2** for `raw-hybrid`. On LoCoMo the judge does not confirm this (58.6% against 60.1% judged correct), so that lead is mostly answer format: the pipeline shows the reader dates written the way the references are. On LongMemEval-S the judge agrees in direction (56% against 44%), on 9 questions.
 
 A meaningful follow-up comparison should run all 500 LongMemEval-S questions and LoCoMo Categories 1–4 with the official judge and identical prompts, while also retaining the current full-suite results. Evaluation-target choices can themselves reverse conclusions; see [TIAP's ACL 2026 analysis](https://aclanthology.org/2026.findings-emnlp.1305/).
 
 ## Result files
 
 - `result.json`: both complete summaries, configuration, source dataset hashes, and artifact paths.
-- `locomo/REPORT.md` and `longmemeval/REPORT.md`: full per-dataset reports.
-- `locomo/answers.jsonl` and `longmemeval/answers.jsonl`: every answer and score.
-- `locomo/traces.jsonl` and `longmemeval/traces.jsonl`: retrieval traces.
+The per-dataset files are in `../full-locomo/` and `../full-longmemeval/` (they were duplicated here before):
+
+- `REPORT.md`: the full report, rebuilt on 18 November 2026 with answerable-only figures, paired differences and judged accuracy by category.
+- `answers.jsonl`: every answer and score.
+- `traces.jsonl`: retrieval traces.
 
 Judged correctness is a same-model cross-check, not an independent evaluation. LongMemEval preference scores should be read primarily through the judged column.

@@ -13,6 +13,9 @@
 #   LME_PER_TYPE         LongMemEval questions per type, 0 = all 500      (default 10)
 #   DATASETS             "locomo longmemeval"         (default both)
 #   PIPELINES            comma-separated names        (default: all built-in)
+#   PIPELINE_FILE        JSON file with more pipelines, e.g. benchmarks/harness/experiments/read-path.json
+#   MEMST_JUDGE_MODEL    grade with a different model than the reader (recommended)
+#   MEMST_JUDGE_API_URL  its endpoint (default: the reader's); its key is MEMST_JUDGE_API_KEY
 #   WORK                 caches and built graphs      (default benchmarks/.harness-work)
 #   OUT                  results                      (default benchmarks/results)
 #   BUILD_WORKERS        graphs extracted in parallel (default 6)
@@ -44,6 +47,9 @@ export HELIX_TELEMETRY_LEVEL="${HELIX_TELEMETRY_LEVEL:-off}"
 common=(--api-url "$API_URL" --model "$MODEL" --embedder "$EMBEDDER"
         --workers "${WORKERS:-8}" --build-workers "${BUILD_WORKERS:-6}")
 if [ -n "${PIPELINES:-}" ]; then common+=(--pipelines "$PIPELINES"); fi
+if [ -n "${PIPELINE_FILE:-}" ]; then common+=(--pipeline-file "$PIPELINE_FILE"); fi
+if [ -n "${MEMST_JUDGE_MODEL:-}" ]; then common+=(--judge-model "$MEMST_JUDGE_MODEL"); fi
+if [ -n "${MEMST_JUDGE_API_URL:-}" ]; then common+=(--judge-api-url "$MEMST_JUDGE_API_URL"); fi
 
 fetch() { # path url
   if [ ! -s "$1" ]; then

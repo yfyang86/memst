@@ -110,7 +110,9 @@ def test_pipeline_definitions_are_checked(tmp_path):
     assert uses_embeddings(pipelines["raw-dense"]) and not uses_embeddings(pipelines["raw-bm25"])
     for bad in (
         {"name": "x", "stages": []},
-        {"name": "x", "stages": [{"stage": "rerank"}]},
+        {"name": "x", "stages": [{"stage": "summarise"}]},
+        {"name": "x", "stages": [{"stage": "all_turns"}], "reader": {"mode": "guess"}},
+        {"name": "x", "stages": [{"stage": "all_turns"}], "router": {}},
         {"name": "x", "stages": [{"stage": "turns", "method": "magic"}]},
         {"name": "x", "stages": [{"stage": "turns", "top": 3}]},
         {"name": "x", "stages": [{"stage": "all_turns"}], "context": {"budget": 1}},
@@ -241,3 +243,128 @@ def test_chat_client_caches_and_records_usage(tmp_path):
         assert len(calls) == 2
     finally:
         server.shutdown()
+
+
+def long_conversation():
+    turns = [Turn(f"D1:{i}", "Alice" if i % 2 else "Bob", text, "1 May 2023", "session_1") for i, text in enumerate(
+        ["We adopted a dog.", "Its name is Rex.", "I moved to Lyon last month.", "The flat is near the river.", "Rust is fun."], 1)]
+    turns.append(Turn("D2:1", "Bob", "Lyon again next week.", "9 May 2023", "session_2"))
+    return Conversation("c", turns, [Question("c:0", "Where does Alice live? Lyon", "Lyon", "single-hop", ["D1:3"])])
+
+
+class FakeReranker:
+    def __init__(self, reply):
+        self.reply, self.prompts = reply, []
+
+    def complete(self, messages, max_tokens=200):
+        from benchmarks.harness.llm import Completion
+
+        self.prompts.append(messages[0]["content"])
+        return Completion(self.reply, 321, 5, 0.0, False)
+
+
+def test_neighbors_stay_inside_the_session(tmp_path):
+    conv = long_conversation()
+    memory = Memory(conv, WordEmbedder(), tmp_path, llm={}, batch_chars=6000)
+    pipeline = {"name": "n", "stages": [{"stage": "turns", "method": "bm25", "k": 2}, {"stage": "neighbors", "window": 1}]}
+    validate(pipeline)
+    _, shown, trace = retrieve(pipeline, memory, conv.questions[0])
+    # BM25 finds the two Lyon turns (D1:3 and D2:1); neighbours come only from D1:3's session.
+    assert [t.id for t in shown] == ["D1:2", "D1:3", "D1:4", "D2:1"]
+    assert trace[1]["stage"] == "neighbors" and trace[1]["turns_added"] == 2
+
+
+def test_rerank_keeps_the_models_choice_first_and_counts_the_call(tmp_path):
+    conv = long_conversation()
+    base = [{"stage": "all_turns"}]
+    for reply, fill, expected in (
+        ("[3, 6]", False, ["D1:3", "D2:1"]),
+        ("[3, 6]", True, ["D1:1", "D1:3", "D2:1"]),  # filled up to keep=3 in the earlier order
+        ("no idea", False, ["D1:1", "D1:2", "D1:3"]),  # unreadable reply: earlier order
+    ):
+        reranker = FakeReranker(reply)
+        memory = Memory(conv, WordEmbedder(), tmp_path, llm={}, batch_chars=6000, reranker=reranker)
+        pipeline = {"name": "r", "stages": base + [{"stage": "rerank", "keep": 3, "fill": fill}]}
+        validate(pipeline)
+        _, shown, trace = retrieve(pipeline, memory, conv.questions[0])
+        assert [t.id for t in shown] == expected, reply
+        assert (trace[1]["llm_calls"], trace[1]["prompt_tokens"]) == (1, 321)
+        assert "[3] [1 May 2023] Alice: I moved to Lyon" in reranker.prompts[0]
+    with pytest.raises(ValueError):
+        retrieve(pipeline, Memory(conv, WordEmbedder(), tmp_path, llm={}, batch_chars=6000), conv.questions[0])
+
+
+def test_reader_prompts_and_reasoned_answers():
+    from benchmarks.harness.run import final_answer, reader_prompt
+
+    question = Question("q", "Where do I live?", "Lyon", "knowledge-update", date="2023/06/01 (Thu) 10:00")
+    direct = reader_prompt("longmemeval", "direct", "CONTEXT", question)
+    assert direct.endswith("Question: Where do I live?\nAnswer:") and "Today's date: 2023/06/01" in direct and "suggestion" in direct
+    assert "suggestion" not in reader_prompt("locomo", "direct", "CONTEXT", question)
+    reasoned = reader_prompt("locomo", "reason", "CONTEXT", question)
+    assert reasoned.endswith("Reasoning:") and "Question: Where do I live?" in reasoned
+    assert final_answer("Paris in May, Lyon in June.\nAnswer: Lyon", "reason") == "Lyon"
+    assert final_answer("Answer: Lyon", "direct") == "Answer: Lyon"
+    assert final_answer("so it is Lyon", "reason") == "so it is Lyon"
+
+
+def test_judge_rules_by_question_type():
+    class Judge:
+        def __init__(self, reply):
+            self.reply, self.prompt = reply, None
+
+        def complete(self, messages, max_tokens=10):
+            from benchmarks.harness.llm import Completion
+
+            self.prompt = messages[0]["content"]
+            return Completion(self.reply, 1, 1, 0.0, False)
+
+    judge = Judge("The dates differ by one day, which is allowed.\nCORRECT")
+    assert scoring.judge(judge, "q", "19 days", "18 days", category="temporal-reasoning")
+    assert "off by one" in judge.prompt
+    plain = Judge("INCORRECT")
+    assert not scoring.judge(plain, "q", "a", "b") and "off by one" not in plain.prompt
+    assert not scoring.judge(Judge(""), "q", "a", "b")
+
+
+def test_report_has_answerable_subset_and_paired_differences():
+    from benchmarks.harness.report import render, summarise
+
+    def row(pipeline, qid, category, f1, judged):
+        return {"pipeline": pipeline, "question_id": qid, "category": category, "f1": f1, "judged_correct": judged,
+                "evidence_in_context": True, "prompt_tokens": 100, "retrieval_seconds": 0.01}
+
+    rows = []
+    for i in range(20):
+        rows.append(row("raw-dense", f"q{i}", "single-hop", 0.5, 1.0))
+        rows.append(row("mine", f"q{i}", "single-hop", 1.0, 0.0))
+    rows += [row("raw-dense", "a", "adversarial", 1.0, 1.0), row("mine", "a", "adversarial", 0.0, 0.0)]
+    rows[1]["stage_llm_calls"], rows[1]["stage_prompt_tokens"] = 1, 2100
+    summary = summarise(rows, [], ["raw-dense", "mine"], {}, {"dataset": "LoCoMo", "reader_and_judge_model": "m"}, {}, 1000)
+    mine = summary["pipelines"]["mine"]
+    assert (mine["answerable"]["n"], mine["answerable"]["f1"], mine["n"]) == (20, 1.0, 21)
+    assert mine["prompt_tokens_mean"] == 200 and mine["read_llm_calls_mean"] == 1.05
+    assert summary["paired_with"] == "raw-dense"
+    difference = summary["paired"]["mine"]["judged"]
+    assert difference[0] == -1.0 and difference[2] < 0, "a difference whose interval excludes zero"
+    assert summary["oracle_router"]["judged"] == 1.0
+    text = render(summary)
+    assert "Answerable questions only (20; without adversarial)" in text and "Difference from `raw-dense`" in text
+    assert "the same model as the reader" in text
+
+
+def test_route_analysis_finds_a_router_only_where_question_kind_predicts_the_winner():
+    from benchmarks.harness.route_analysis import analyse, kind_of
+
+    assert (kind_of("When did she move?"), kind_of("How many dogs?"), kind_of("Tell me")) == ("when", "how many", "other")
+    rows = []
+    for i in range(40):
+        when = i % 2 == 0
+        question = f"When was event {i}?" if when else f"Who did thing {i}?"
+        # Pipeline a is right on "when" questions only, b on the others only.
+        rows.append({"pipeline": "a", "question_id": f"q{i}", "question": question, "judged_correct": float(when)})
+        rows.append({"pipeline": "b", "question_id": f"q{i}", "question": question, "judged_correct": float(not when)})
+        rows.append({"pipeline": "full-context", "question_id": f"q{i}", "question": question, "judged_correct": 1.0})
+    result = analyse(rows)
+    assert result["pipelines"] == ["a", "b"] and result["best_single_score"] == 0.5
+    assert result["routed_score"] == 1.0 and result["share_of_oracle_gain"] == 1.0

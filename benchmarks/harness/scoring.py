@@ -59,12 +59,40 @@ different fact, is missing the fact, or says the information is unavailable.
 Reply with exactly one word: CORRECT or WRONG."""
 
 
-def judge(client, question: str, gold: str, prediction: str, max_tokens: int = 10) -> bool:
-    reply = client.complete(
-        [{"role": "user", "content": JUDGE_PROMPT.format(question=question, gold=gold, prediction=prediction)}],
-        max_tokens=max_tokens,
-    )
-    return reply.text.strip().upper().startswith("CORRECT")
+# LongMemEval grades some question types by their own rule; these follow the
+# rules of its published evaluation script, in our words.
+JUDGE_RULES = {
+    "temporal-reasoning": (
+        "Do not mark an answer WRONG for being off by one in a count of days, weeks, months or years "
+        "(for example 18 days against a reference of 19)."
+    ),
+    "knowledge-update": (
+        "The reference is the most recent value. An answer that also mentions earlier values is CORRECT "
+        "as long as it gives the reference as the current one."
+    ),
+    "single-session-preference": (
+        "Here the reference is not a fact but a description of what a good personalised response looks like. "
+        "The answer is CORRECT if it uses the user's preferences or circumstances in the way the reference "
+        "describes; it need not cover every point. A generic response that ignores them is WRONG."
+    ),
+}
+
+
+def judge(client, question: str, gold: str, prediction: str, max_tokens: int = 10, category: str = "") -> bool:
+    prompt = JUDGE_PROMPT.format(question=question, gold=gold, prediction=prediction)
+    if category in JUDGE_RULES:
+        prompt = prompt.replace("Reply with exactly one word", JUDGE_RULES[category] + "\nReply with exactly one word")
+    try:
+        reply = client.complete([{"role": "user", "content": prompt}], max_tokens=max_tokens)
+    except RuntimeError as error:
+        if "no answer within max_tokens" not in str(error):
+            raise
+        # A reasoning judge now and then thinks past its budget; give it one
+        # more try with room to finish.
+        reply = client.complete([{"role": "user", "content": prompt}], max_tokens=max_tokens * 4)
+    # A reasoning judge may explain first; the verdict is the last word it gives.
+    verdicts = re.findall(r"\b(CORRECT|WRONG|INCORRECT)\b", reply.text.upper())
+    return bool(verdicts) and verdicts[-1] == "CORRECT"
 
 
 def mean_with_interval(values: Sequence[float], samples: int = 1000, seed: int = 0) -> Tuple[float, float, float]:

@@ -21,6 +21,14 @@ Stages:
                   top `k`; with `expand`, also the facts around them
 - `fact_sources`  the turns that the facts selected so far were stated in;
                   at most `max`
+- `neighbors`     the turns just before and after each turn selected so far,
+                  within the same session; `window` turns each way
+- `rerank`        a model reads the turns selected so far and keeps the `keep`
+                  most useful, best first (one extra model call per question)
+
+A pipeline may also set how the reader answers: `"reader": {"mode": "reason"}`
+has it work through the evidence before giving its answer; the default,
+`"direct"`, asks for the answer alone.
 
 For every question the pipeline records a trace: what each stage returned,
 how long it took, and whether it reached a turn that holds the answer. That
@@ -29,6 +37,7 @@ is what tells you which stage is doing the work.
 
 import json
 import os
+import re
 import shutil
 import time
 import uuid
@@ -63,7 +72,10 @@ STAGES = {
     "facts": {"method", "k"},
     "entities": {"k", "expand"},
     "fact_sources": {"max"},
+    "neighbors": {"window"},
+    "rerank": {"keep", "fill"},
 }
+READER_MODES = {"direct", "reason"}
 METHODS = {"bm25", "dense", "hybrid"}
 
 
@@ -80,6 +92,12 @@ def validate(pipeline: dict) -> None:
             raise ValueError(f"pipeline {name}: stage {kind} does not take {sorted(unknown)}")
         if "method" in stage and stage["method"] not in METHODS:
             raise ValueError(f"pipeline {name}: unknown method {stage['method']!r} (known: {', '.join(sorted(METHODS))})")
+    reader = pipeline.get("reader", {})
+    if set(reader) - {"mode"} or reader.get("mode", "direct") not in READER_MODES:
+        raise ValueError(f"pipeline {name}: reader takes only mode, one of {', '.join(sorted(READER_MODES))}")
+    unknown = set(pipeline) - {"name", "description", "stages", "context", "reader"}
+    if unknown:
+        raise ValueError(f"pipeline {name}: unknown setting(s) {sorted(unknown)}")
     unknown = set(pipeline.get("context", {})) - {"max_facts", "max_turns"}
     if unknown:
         raise ValueError(f"pipeline {name}: context does not take {sorted(unknown)}")
@@ -87,6 +105,11 @@ def validate(pipeline: dict) -> None:
 
 def uses_graph(pipeline: dict) -> bool:
     return any(s["stage"] in ("facts", "entities", "fact_sources") for s in pipeline["stages"])
+
+
+def uses_model(pipeline: dict) -> bool:
+    """Whether retrieval itself calls a model (beyond the reader)."""
+    return any(s["stage"] == "rerank" for s in pipeline["stages"])
 
 
 def uses_embeddings(pipeline: dict) -> bool:
@@ -108,7 +131,9 @@ class Memory:
     """Everything prepared once per conversation. Each part is built the
     first time a stage asks for it, so a pipeline pays only for what it uses."""
 
-    def __init__(self, conversation: Conversation, embedder, work_dir: Path, llm: dict, batch_chars: int):
+    def __init__(self, conversation: Conversation, embedder, work_dir: Path, llm: dict, batch_chars: int, reranker=None):
+        # `reranker` is a chat client (see llm.ChatClient) for the rerank stage.
+        self.reranker = reranker
         self.conversation = conversation
         self.turns: List[Turn] = conversation.turns
         self.embedder, self.work_dir, self.llm, self.batch_chars = embedder, Path(work_dir), llm, batch_chars
@@ -306,6 +331,7 @@ def run_stage(stage: dict, memory: Memory, question: Question, selection: Select
     found_turns: List[int] = []
     found_facts: List[dict] = []
     detail: List[str] = []
+    model_calls = model_tokens = 0
 
     if kind == "all_turns":
         found_turns = selection.add_turns(range(len(memory.turns)))
@@ -336,6 +362,22 @@ def run_stage(stage: dict, memory: Memory, question: Question, selection: Select
         found_turns = selection.add_turns(list(dict.fromkeys(sources))[: stage.get("max", 8)])
         detail = [memory.turns[i].id for i in found_turns[:10]]
 
+    elif kind == "neighbors":
+        window = stage.get("window", 1)
+        nearby = []
+        for index in list(selection.turns):
+            for other in range(index - window, index + window + 1):
+                if 0 <= other < len(memory.turns) and memory.turns[other].session == memory.turns[index].session:
+                    nearby.append(other)
+        found_turns = selection.add_turns(nearby)
+        detail = [memory.turns[i].id for i in found_turns[:10]]
+    elif kind == "rerank":
+        kept, usage = rerank(memory, question, selection.turns, stage.get("keep", 20), stage.get("fill", True))
+        selection.turns = kept
+        found_turns = kept  # for a rerank, "added" means "kept"
+        detail = [memory.turns[i].id for i in kept[:10]]
+        model_calls, model_tokens = usage
+
     # Did this stage reach a turn holding the answer: directly, or through
     # the message one of its facts was stated in?
     reached = [memory.turns[i] for i in found_turns]
@@ -348,7 +390,46 @@ def run_stage(stage: dict, memory: Memory, question: Question, selection: Select
         "turns_added": len(found_turns),
         "reached_evidence": question.evidence_among(reached) if question.has_evidence() else None,
         "top": detail,
+        **({"llm_calls": model_calls, "prompt_tokens": model_tokens} if model_calls else {}),
     }
+
+
+RERANK_PROMPT = """Question: {question}
+{today}
+Below are numbered excerpts from a long conversation history. Choose the excerpts that help answer the question, most useful first. Include every excerpt that contributes: for a question about how many, how often or what changed, that is all the excerpts that mention an instance. Leave out excerpts that do not help.
+
+{excerpts}
+
+Reply with only a JSON list of excerpt numbers, at most {keep}, for example [12, 3, 7]."""
+
+
+def rerank(memory: Memory, question: Question, candidates: List[int], keep: int, fill: bool):
+    """Ask the model which of `candidates` (turn indices) to keep, best first.
+
+    Returns `(kept, (model calls, prompt tokens))`. With `fill`, turns the
+    model did not choose follow in their earlier order until `keep` is
+    reached, so a cautious model cannot shrink the context to nothing. If the
+    reply cannot be read, the earlier order is kept.
+    """
+    if memory.reranker is None:
+        raise ValueError("this pipeline has a rerank stage, which needs a model")
+    if len(candidates) <= 1:
+        return candidates[:keep], (0, 0)
+    excerpts = "\n".join(f"[{n}] {memory.turns[i].render()[:500]}" for n, i in enumerate(candidates, 1))
+    today = f"Today's date: {question.date}\n" if question.date else ""
+    reply = memory.reranker.complete(
+        [{"role": "user", "content": RERANK_PROMPT.format(question=question.text, today=today, excerpts=excerpts, keep=keep)}],
+        max_tokens=400,
+    )
+    chosen = []
+    for number in re.findall(r"\d+", reply.text):
+        index = int(number) - 1
+        if 0 <= index < len(candidates) and candidates[index] not in chosen:
+            chosen.append(candidates[index])
+    chosen = chosen[:keep]
+    if fill or not chosen:
+        chosen += [i for i in candidates if i not in chosen][: keep - len(chosen)]
+    return chosen, (1, reply.prompt_tokens)
 
 
 def retrieve(pipeline: dict, memory: Memory, question: Question):

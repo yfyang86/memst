@@ -758,10 +758,10 @@
         "sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4"
       },
       "artifacts": {
-        "report": "locomo/REPORT.md",
-        "summary": "locomo/summary.json",
-        "answers": "locomo/answers.jsonl",
-        "traces": "locomo/traces.jsonl"
+        "report": "../full-locomo/REPORT.md",
+        "summary": "../full-locomo/summary.json",
+        "answers": "../full-locomo/answers.jsonl",
+        "traces": "../full-locomo/traces.jsonl"
       }
     },
     "longmemeval": {
@@ -1663,10 +1663,10 @@
         "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
       },
       "artifacts": {
-        "report": "longmemeval/REPORT.md",
-        "summary": "longmemeval/summary.json",
-        "answers": "longmemeval/answers.jsonl",
-        "traces": "longmemeval/traces.jsonl"
+        "report": "../full-longmemeval/REPORT.md",
+        "summary": "../full-longmemeval/summary.json",
+        "answers": "../full-longmemeval/answers.jsonl",
+        "traces": "../full-longmemeval/traces.jsonl"
       }
     }
   }

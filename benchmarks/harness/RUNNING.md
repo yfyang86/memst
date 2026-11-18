@@ -94,8 +94,8 @@ for a whole run: the cache is keyed by text, not by model, so use a new
 benchmarks/harness/run_all.sh
 ```
 
-That downloads both datasets if they are missing, then runs every built-in
-pipeline on all of LoCoMo and on 10 LongMemEval-S questions of each type
+That downloads both datasets if they are missing, then runs the default set
+of built-in pipelines on all of LoCoMo and on 10 LongMemEval-S questions of each type
 (60). Reports are written to `benchmarks/results/full-locomo/` and
 `benchmarks/results/full-longmemeval/`.
 
@@ -116,6 +116,38 @@ PIPELINES=default,raw-dense,full-context benchmarks/harness/run_all.sh
 All settings are listed at the top of [`run_all.sh`](run_all.sh). For your
 own pipelines, call `python -m benchmarks.harness.run` directly with
 `--pipeline-file` (see the README).
+
+### Runs worth doing next
+
+All 500 LongMemEval-S questions for the pipelines that need no graph. There
+is no extraction, so the cost is embeddings plus reader calls (leave out
+`full-context` to avoid 500 prompts of 112,000 tokens):
+
+```bash
+DATASETS=longmemeval LME_PER_TYPE=0 PIPELINES=raw-bm25,raw-dense,raw-hybrid,dense-wide-reason,rerank-reason benchmarks/harness/run_all.sh
+```
+
+The read-path pipelines on all of LoCoMo. The baselines come from the cache
+of the earlier run if `WORK` is the same:
+
+```bash
+DATASETS=locomo PIPELINES=raw-dense,default,dense-wide-reason,rerank-reason benchmarks/harness/run_all.sh
+```
+
+Grade a finished run again with a second judge. Nothing is retrieved or
+answered again; only the saved answers are graded:
+
+```bash
+python -m benchmarks.harness.rescore benchmarks/results/full-locomo --judge-model deepseek-v4-pro --out benchmarks/results/full-locomo-pro-judge
+```
+
+For a judge at another provider, add `--judge-api-url` and put its key in
+`MEMST_JUDGE_API_KEY`. To use a second judge during a run, set
+`MEMST_JUDGE_MODEL` (and `MEMST_JUDGE_API_URL`) before `run_all.sh`.
+
+Note that the LongMemEval reader prompt changed on 18 November 2026 (it now
+allows a suggestion where the question asks for one), so LongMemEval answers
+from before that are not reused from the cache. LoCoMo's prompt is unchanged.
 
 ### Stopping and resuming
 

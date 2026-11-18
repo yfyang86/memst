@@ -30,6 +30,8 @@ built-in pipelines are in [`pipelines.json`](pipelines.json):
 | `default` | Search the graph **by relationship** (30 facts) → the messages those facts were stated in (up to 8) → top 12 raw turns | LLM extraction into the graph; embeddings |
 | `graph-facts` | Search the graph by relationship → the messages those facts were stated in | LLM extraction; embeddings |
 | `graph-entities` | Search the graph by entity, take the facts around each hit → their source messages | LLM extraction; embeddings |
+| `rerank-reason` | 60 candidate turns (BM25 and embeddings fused) → a model keeps the 20 most useful; the reader works through the evidence | Turn embeddings |
+| `dense-wide-reason` | Top 40 turns by embedding; the reader works through the evidence | Turn embeddings |
 | `raw-hybrid` | Top 20 turns, BM25 and embeddings fused | Turn embeddings |
 | `raw-dense` | Top 20 turns by embedding similarity | Turn embeddings |
 | `raw-bm25` | Top 20 turns by BM25 | None |
@@ -59,6 +61,10 @@ A pipeline is JSON, so a new combination needs no code:
 python -m benchmarks.harness.run --pipeline-file mine.json --pipelines default,facts-then-dense
 ```
 
+Pipelines that are being tried out live in
+[`experiments/`](experiments/); `experiments/read-path.json` has the wider,
+reranked and reasoning variants reported below.
+
 The file holds one pipeline or a list; a name that matches a built-in one
 replaces it. Unknown stages, methods or options are rejected before anything
 runs.
@@ -70,6 +76,13 @@ runs.
 | `fact_sources` | The turns that the facts selected so far were stated in | `max` (8) |
 | `turns` | Raw turns ranked against the question | `method`: `bm25`, `dense` or `hybrid` (default); `k` (20) |
 | `all_turns` | Every turn | none |
+| `neighbors` | The turns just before and after each turn selected so far, within the same session | `window` (1): turns each way |
+| `rerank` | A model reads the turns selected so far and keeps the most useful, best first. One extra model call per question, counted in the report | `keep` (20); `fill` (true): if the model chooses fewer, the rest follow in their earlier order |
+
+`"reader": {"mode": "reason"}` on a pipeline has the reader work through the
+evidence (list the dated statements, count, do date arithmetic) before a
+final `Answer:` line; the default, `"direct"`, asks for the answer alone.
+It works with any model, with or without built-in reasoning.
 
 `context` caps what reaches the reader: `max_facts` fact lines (60) and
 `max_turns` turns (no cap). Turns are always shown in conversation order.
@@ -101,16 +114,31 @@ is doing the work.
 ## What is reported
 
 - **F1** against the reference answer, with a 95% bootstrap interval.
-- **Judged correct**: a second model call grading each answer. It is one pass
-  with the same model as the reader, so treat it as a cross-check on F1, not
-  as an independent measurement.
+- **Judged correct**, with an interval: a model grades each answer against
+  the reference. By default the judge is the reader's model, which makes it a
+  cross-check and not an independent measurement; `--judge-model` (and
+  `--judge-api-url`, key in `MEMST_JUDGE_API_KEY`) names another. LongMemEval's
+  temporal, knowledge-update and preference questions are graded by the rules
+  of its own evaluation script.
+- **Answerable questions only**: the same figures without the questions that
+  have no answer (LoCoMo's adversarial category, LongMemEval's abstention
+  ones). For LoCoMo this is the 1,540-question subset most published figures
+  use.
+- **Difference from `raw-dense` on the same questions**, with an interval.
+  Two pipelines whose separate intervals overlap can still differ reliably;
+  this table says whether they do.
 - **Answer turn in context**: whether a turn the dataset marks as holding the
   answer was among the turns in the context.
   This separates "the evidence was not retrieved" from "the reader did not use
   it".
-- **Prompt tokens** per question, as reported by the API.
-- **Retrieval latency**, p50 and p95, excluding the reader call.
+- **Prompt tokens** per question, as reported by the API, including the
+  prompts of stages that call a model, and **model calls per question**.
+- **Retrieval latency**, p50 and p95, excluding the reader call. A rerank
+  stage's model call is included, but only when it is actually made: once its
+  answer is cached the time is near zero, so read rerank latency from a fresh
+  run (about 1.2 s here).
 - **Write-path LLM calls** per conversation: what building the memory cost.
+- **By category**, judged and F1.
 - **Oracle router**: the score if, for each question, the best of the
   retrieval pipelines had been picked. The gap to the best single one is the
   most a per-question router could gain.
@@ -123,6 +151,27 @@ Category names follow the LoCoMo paper: 1 multi-hop, 2 temporal, 3 open-domain,
 4 single-hop, 5 adversarial. The older `benchmarks/locomo_loader.py` labels
 them differently, so category columns in the older results are not comparable
 with these.
+
+## Working from saved answers
+
+Two tools read a result directory and run nothing again:
+
+```bash
+python -m benchmarks.harness.rescore benchmarks/results/full-locomo
+```
+
+rebuilds `REPORT.md` and `summary.json` from the saved answers, which is how
+an older result gets the newer tables. With `--judge-model NAME` (and
+`--judge-api-url`, `--out`) it first grades every saved answer again with
+that model.
+
+```bash
+python -m benchmarks.harness.route_analysis benchmarks/results/full-locomo
+```
+
+measures how much of the oracle router's gain a real router would get: it
+fits the simplest one (the best pipeline for each kind of question) on four
+fifths of the questions and scores it on the rest.
 
 ## Choices that affect the numbers
 
@@ -166,146 +215,171 @@ from `MEMST_EVAL_API_KEY`, for the reader, the judge and extraction, and is
 not written to the caches or results. Embeddings use the local BGE-M3 model by default
 (`--embedder local`), so no embedding API is needed.
 
-## Results (15 November 2026)
+## Results (18 November 2026)
 
-`deepseek-flash` with reasoning off as reader, judge and extractor; local
-BGE-M3 embeddings. Both are small samples: read them as a pilot.
+Reader and extractor: `deepseek-flash` with reasoning off. BGE-M3 embeddings.
 
-### LoCoMo
+### Full runs
 
-3 conversations, 138 questions (up to 10 per category from each). Full output
-in `benchmarks/results/pipelines-locomo/`.
+All of LoCoMo (1,986 questions) and 60 LongMemEval-S questions, seven
+pipelines. Output and full reports: `benchmarks/results/full-locomo/` and
+`benchmarks/results/full-longmemeval/`.
 
-| Pipeline | F1 (95% interval) | Judged correct | Answer turn in context | Prompt tokens | Retrieval p50 / p95 | Write-path LLM calls |
-|---|---|---|---|---|---|---|
-| full-context | 59.2 (52.3–66.0) | 71.0% | 100.0% | 24,698 | 0.2 / 0.3 ms | 0.0 |
-| raw-bm25 | 45.5 (38.2–52.6) | 54.4% | 61.8% | 1,132 | 0.4 / 0.8 ms | 0.0 |
-| raw-dense | 53.3 (46.1–60.0) | 66.7% | 77.2% | 1,074 | 20.6 / 32.7 ms | 0.0 |
-| raw-hybrid | 51.3 (44.5–58.3) | 61.6% | 69.8% | 1,116 | 21.5 / 41.8 ms | 0.0 |
-| graph-entities | 39.7 (32.6–46.9) | 44.9% | 27.9% | 830 | 36.8 / 62.6 ms | 15.3 |
-| graph-facts | 45.7 (38.7–52.7) | 52.9% | 48.5% | 1,132 | 50.7 / 76.8 ms | 15.3 |
-| default | 54.2 (47.4–60.7) | 64.5% | 72.1% | 1,439 | 76.4 / 113.2 ms | 15.3 |
+LoCoMo:
 
-F1 by category:
-
-| Pipeline | adversarial | multi-hop | open-domain | single-hop | temporal |
-|---|---|---|---|---|---|
-| full-context | 90.0 (n=30) | 53.4 (n=30) | 13.6 (n=18) | 68.6 (n=30) | 52.2 (n=30) |
-| raw-bm25 | 90.0 (n=30) | 28.0 (n=30) | 2.2 (n=18) | 49.7 (n=30) | 40.4 (n=30) |
-| raw-dense | 93.3 (n=30) | 34.7 (n=30) | 16.0 (n=18) | 54.5 (n=30) | 52.8 (n=30) |
-| raw-hybrid | 90.0 (n=30) | 31.4 (n=30) | 14.8 (n=18) | 50.2 (n=30) | 55.5 (n=30) |
-| graph-entities | 90.0 (n=30) | 28.5 (n=30) | 7.8 (n=18) | 22.8 (n=30) | 36.6 (n=30) |
-| graph-facts | 90.0 (n=30) | 42.1 (n=30) | 6.5 (n=18) | 21.8 (n=30) | 52.5 (n=30) |
-| default | 93.3 (n=30) | 43.6 (n=30) | 12.2 (n=18) | 44.1 (n=30) | 60.8 (n=30) |
-
-Oracle router over raw-bm25, raw-dense, raw-hybrid, graph-entities, graph-facts, default: F1 67.5, against 54.2 for the best single one. That gap is the most a per-question router could add.
-
-What the stages of the graph pipelines contributed:
-
-| Pipeline | Stage | Reached the answer | Facts added | Turns added | p50 |
-|---|---|---|---|---|---|
-| graph-entities | entities (k=8, expand=True) | 31.6% | 23.8 | 0.0 | 36.7 ms |
-| graph-entities | fact_sources (max=12) | 27.9% | 0.0 | 7.6 | 0.0 ms |
-| graph-facts | facts (method=hybrid, k=30) | 53.7% | 30.0 | 0.0 | 50.5 ms |
-| graph-facts | fact_sources (max=12) | 48.5% | 0.0 | 12.0 | 0.0 ms |
-| default | facts (method=hybrid, k=30) | 53.7% | 30.0 | 0.0 | 53.7 ms |
-| default | fact_sources (max=8) | 44.1% | 0.0 | 8.0 | 0.0 ms |
-| default | turns (method=hybrid, k=12) | 33.1% | 0.0 | 10.7 | 23.5 ms |
-
-Reading it:
-
-- **Searching the graph by relationship finds the answer far more often than
-  searching by entity**: the facts returned lead to a turn holding the answer
-  for 54% of questions, against 32%. With the graph alone that is 46 F1
-  against 40, and 53% judged correct against 45%.
-- **The default pipeline (54 F1) is level with the best raw baseline
-  (`raw-dense`, 53)**; the intervals overlap almost entirely, and the judge
-  puts it slightly behind (64.5% against 66.7%). It is ahead on multi-hop (44
-  against 35) and temporal questions (61 against 53) and behind on single-hop
-  ones (44 against 55); with 30 questions per category none of these
-  differences is established.
-- **The graph alone is still below raw retrieval** (46 against 53), at 15
-  extraction calls per conversation that the raw baselines do not need.
-- **Full context is the strongest** (59), at 17 times the prompt tokens.
-  These conversations fit in the reader's context, which is the known
-  weakness of LoCoMo as a test of memory.
-- **A per-question router has about 13 points of headroom** over the best
-  single pipeline. That is an upper bound.
-
-### LongMemEval-S
-
-12 questions (2 of each type; one of them is an abstention question), each
-with its own history of about 127,000 tokens. Full output in
-`benchmarks/results/pipelines-longmemeval/`.
-
-| Pipeline | F1 (95% interval) | Judged correct | Answer turn in context | Prompt tokens | Retrieval p50 / p95 | Write-path LLM calls |
-|---|---|---|---|---|---|---|
-| full-context | 53.4 (27.8–77.8) | 58.3% | 100.0% | 111,886 | 0.9 / 1.2 ms | 0.0 |
-| raw-bm25 | 58.3 (33.3–83.3) | 58.3% | 75.0% | 4,299 | 1.5 / 2.8 ms | 0.0 |
-| raw-dense | 59.7 (33.3–83.3) | 58.3% | 100.0% | 3,805 | 32.3 / 43.8 ms | 0.0 |
-| raw-hybrid | 62.5 (37.5–87.5) | 58.3% | 75.0% | 4,027 | 29.0 / 45.9 ms | 0.0 |
-| graph-entities | 32.5 (8.3–57.5) | 25.0% | 50.0% | 2,626 | 83.1 / 139.3 ms | 46.9 |
-| graph-facts | 51.4 (26.4–76.4) | 50.0% | 50.0% | 4,136 | 127.1 / 153.8 ms | 46.9 |
-| default | 59.7 (34.7–84.7) | 58.3% | 75.0% | 5,017 | 146.5 / 179.8 ms | 46.9 |
-
-F1 by category:
-
-| Pipeline | abstention | knowledge-update | multi-session | single-session-assistant | single-session-preference | single-session-user | temporal-reasoning |
+| Pipeline | F1 (95% interval) | Judged correct (95% interval) | Answer turn in context | Prompt tokens | Model calls per question | Retrieval p50 / p95 | Write-path LLM calls |
 |---|---|---|---|---|---|---|---|
-| full-context | 100.0 (n=1) | 100.0 (n=2) | 10.5 (n=2) | 100.0 (n=2) | 9.7 (n=2) | 50.0 (n=2) | 0.0 (n=1) |
-| raw-bm25 | 100.0 (n=1) | 100.0 (n=2) | 0.0 (n=2) | 100.0 (n=2) | 0.0 (n=2) | 100.0 (n=2) | 0.0 (n=1) |
-| raw-dense | 100.0 (n=1) | 83.3 (n=2) | 25.0 (n=2) | 100.0 (n=2) | 0.0 (n=2) | 100.0 (n=2) | 0.0 (n=1) |
-| raw-hybrid | 100.0 (n=1) | 100.0 (n=2) | 25.0 (n=2) | 100.0 (n=2) | 0.0 (n=2) | 100.0 (n=2) | 0.0 (n=1) |
-| graph-entities | 100.0 (n=1) | 20.0 (n=2) | 25.0 (n=2) | 0.0 (n=2) | 0.0 (n=2) | 100.0 (n=2) | 0.0 (n=1) |
-| graph-facts | 100.0 (n=1) | 100.0 (n=2) | 25.0 (n=2) | 50.0 (n=2) | 0.0 (n=2) | 83.3 (n=2) | 0.0 (n=1) |
-| default | 100.0 (n=1) | 100.0 (n=2) | 25.0 (n=2) | 100.0 (n=2) | 0.0 (n=2) | 83.3 (n=2) | 0.0 (n=1) |
+| full-context | 63.9 (62.2–65.7) | 75.5% (73.7–77.4) | 99.8% | 29,172 | 1.0 | 0.2 / 0.3 ms | 0.0 |
+| raw-bm25 | 54.7 (52.7–56.7) | 63.5% (61.5–65.7) | 68.7% | 1,120 | 1.0 | 0.6 / 0.9 ms | 0.0 |
+| raw-dense | 60.6 (58.7–62.4) | 72.2% (70.3–74.1) | 76.5% | 1,067 | 1.0 | 63.1 / 70.2 ms | 0.0 |
+| raw-hybrid | 59.9 (57.9–61.7) | 70.1% (68.0–72.0) | 77.0% | 1,125 | 1.0 | 44.5 / 46.9 ms | 0.0 |
+| graph-entities | 38.9 (37.1–41.0) | 43.5% (41.3–45.7) | 24.8% | 904 | 1.0 | 24.8 / 35.5 ms | 17.8 |
+| graph-facts | 46.3 (44.4–48.4) | 53.0% (50.8–55.2) | 42.0% | 1,168 | 1.0 | 38.3 / 47.6 ms | 17.8 |
+| default | 59.7 (57.9–61.6) | 69.2% (67.2–71.2) | 77.3% | 1,475 | 1.0 | 84.0 / 94.3 ms | 17.8 |
 
-Oracle router over raw-bm25, raw-dense, raw-hybrid, graph-entities, graph-facts, default: F1 62.5, against 62.5 for the best single one. That gap is the most a per-question router could add.
-
-Reading it:
-
-- **Twelve questions cannot separate these pipelines.** Every interval spans
-  about 50 points, and five of the seven pipelines get the same 7 of 12
-  judged correct.
-- What can be said: the retrieval pipelines answer **about as well as full
-  context with 4% of its prompt tokens** (4–5 thousand against 112 thousand).
-  That is the regime memory is for, and LoCoMo cannot show it.
-- The ordering among graph pipelines matches LoCoMo: by entity (33) below by
-  relationship (51) below the default (60).
-- Building the graph costs about 47 extraction calls and 6 minutes per
-  history. The raw baselines cost only embeddings.
-- The 12 questions were drawn with an earlier sampler; the current one picks
-  a different 12 for the same settings (and lets a larger sample extend a
-  smaller one).
-- A larger run needs time, not code: each further question takes about 6
-  minutes of extraction (several run in parallel) and 4 minutes of CPU
-  embedding. `--per-category 10` (60 questions) is roughly five hours on a
-  4-core machine.
-
-### History of the LoCoMo numbers
-
-| Run | Graph alone, F1 (judged) | Graph with raw turns, F1 (judged) |
+| Pipeline | F1 | Judged correct |
 |---|---|---|
-| Facts with no date or source (`benchmarks/results/harness-before-dated-facts/`) | 32.3 | 47.0 |
-| Facts cite their message and date; search by entity (`benchmarks/results/harness/`) | 39.0 (44.9%) | 51.7 (60.9%) |
-| Search by relationship; dates written out (`benchmarks/results/pipelines-locomo/`) | 45.7 (52.9%) | 54.2 (64.5%) |
+| full-context | +3.4 (+2.0 to +4.9) | +3.3 (+1.5 to +5.2) |
+| raw-bm25 | -5.9 (-7.5 to -4.3) | -8.7 (-10.5 to -6.8) |
+| raw-hybrid | -0.7 (-2.0 to +0.6) | -2.1 (-3.6 to -0.5) |
+| graph-entities | -21.7 (-23.7 to -19.7) | -28.7 (-31.0 to -26.4) |
+| graph-facts | -14.3 (-16.2 to -12.4) | -19.2 (-21.5 to -16.9) |
+| default | -0.9 (-2.3 to +0.7) | -3.0 (-4.9 to -0.9) |
 
-The baselines are the same in all three (their answers are cached). Part of
-the last step is scoring, not retrieval: writing dates as "8 May 2023"
-instead of "2023-05-08" in fact lines raised the two pipelines by about 6 F1
-and 1–2 points of judged accuracy, because the reader copies the format it is
-shown and token F1 scores a correct ISO date as wrong.
+LongMemEval-S:
 
-Limits: small samples, one model, reasoning off, a stratified sample (overall
-figures are not comparable with published scores), one judging pass by the
-same model, extraction that is not deterministic, pipeline settings (k, caps)
-chosen once and not tuned, and only the knowledge-graph part of MemSt.
+| Pipeline | F1 (95% interval) | Judged correct (95% interval) | Answer turn in context | Prompt tokens | Model calls per question | Retrieval p50 / p95 | Write-path LLM calls |
+|---|---|---|---|---|---|---|---|
+| full-context | 44.8 (33.5–55.7) | 58.3% (46.7–70.0) | 100.0% | 111,534 | 1.0 | 0.4 / 0.5 ms | 0.0 |
+| raw-bm25 | 51.4 (40.2–61.5) | 65.0% (53.3–76.7) | 90.0% | 4,897 | 1.0 | 0.9 / 2.5 ms | 0.0 |
+| raw-dense | 49.5 (38.4–59.4) | 65.0% (53.3–76.7) | 100.0% | 4,100 | 1.0 | 63.8 / 77.7 ms | 0.0 |
+| raw-hybrid | 50.4 (39.4–60.0) | 68.3% (56.7–80.0) | 95.0% | 4,587 | 1.0 | 54.2 / 65.6 ms | 0.0 |
+| graph-entities | 38.2 (28.1–48.5) | 51.7% (40.0–63.3) | 63.3% | 2,615 | 1.0 | 84.3 / 101.0 ms | 46.7 |
+| graph-facts | 36.6 (25.9–46.5) | 46.7% (33.3–58.3) | 68.3% | 4,360 | 1.0 | 87.9 / 110.4 ms | 46.7 |
+| default | 48.9 (38.3–59.2) | 66.7% (55.0–78.3) | 93.3% | 5,336 | 1.0 | 129.2 / 150.1 ms | 46.7 |
+
+Reading them:
+
+- **The knowledge graph does not beat retrieval over raw turns.** On LoCoMo
+  the default pipeline (graph facts, their source messages, raw turns) is 3.0
+  points of judged accuracy behind `raw-dense` on the same questions, and the
+  interval excludes zero. It costs about 18 extraction calls per conversation
+  that `raw-dense` does not need. On LongMemEval-S the two are level.
+- **The graph's lead on temporal questions is mostly answer format.** On
+  LoCoMo it is 8 points ahead on F1 and 1.5 behind on judged accuracy.
+- **Retrieval is not what limits LongMemEval-S.** `raw-dense` has a turn
+  holding the answer in its context for all 60 questions and is judged
+  correct on 65%. Full context, at 27 times the tokens, does worse (58%).
+- **A router by kind of question gains nothing.** The oracle router is 13
+  points above the best single pipeline on LoCoMo; a router fitted on
+  question kind (`route_analysis`) scores 72.0% against 72.2% for always
+  using `raw-dense`. Which pipeline wins a question is not predictable from
+  how the question is worded.
+- **231 LoCoMo questions (12%) are answered wrong by every pipeline**,
+  including full context.
+
+### Is the judge trustworthy?
+
+The answers were graded again by a stronger model, `deepseek-v4-pro`, with
+reasoning on.
+
+| Answers | Agreement with the original grades | Effect |
+|---|---|---|
+| LongMemEval-S full run, 420 | 98.3% | None on the ordering; preference questions lose 3 grades, temporal ones gain 2 |
+| LongMemEval-S read-path experiment, 180 | 100% | None |
+| LoCoMo read-path experiment, 1,932 | 92.0% | Every pipeline drops 6 to 10 points; 154 answers pass only the original judge, 1 only the stricter one |
+
+So the reader's own model is a lenient judge on LoCoMo. The ordering of
+pipelines survives, and differences between them shrink by about a third.
+All of LoCoMo has not been re-graded (about 10,000 calls to a reasoning
+model); the command is in [RUNNING.md](RUNNING.md). The second judge is from
+the same provider, so this is a check on leniency, not a fully independent
+judge.
+
+### Read-path experiments
+
+Since the reader, not retrieval, loses most of the points, these vary what
+the reader is given and how it answers. LoCoMo pilot (3 conversations, 138
+questions); output in `benchmarks/results/read-path-locomo/`, and graded by
+the stricter judge in `benchmarks/results/read-path-locomo-pro-judge/`.
+
+| Pipeline | What it does | Judged correct | Stricter judge | Prompt tokens | Model calls |
+|---|---|---|---|---|---|
+| raw-dense | Top 20 turns by embedding | 66.7% | 60.9% | 1,074 | 1 |
+| dense-wide | Top 40 turns | 71.7% | 63.8% | 2,053 | 1 |
+| dense+neighbors | Top 12 turns with the turn before and after each | 67.4% | 59.4% | 1,670 | 1 |
+| rerank | 60 candidates, a model keeps 20 | 72.5% | 63.0% | 4,468 | 2 |
+| rerank-strict | The same, keeping only what the model chose | 65.9% | 56.5% | 3,788 | 2 |
+| dense-reason | Top 20 turns; the reader works through the evidence | 72.5% | 63.0% | 1,130 | 1 |
+| **dense-wide-reason** | Top 40 turns; reasoning reader | 76.1% | 65.9% | 2,109 | 1 |
+| **rerank-reason** | Rerank; reasoning reader | 76.8% | 67.4% | 4,524 | 2 |
+| default | Graph facts, their sources, raw turns | 64.5% | 56.5% | 1,439 | 1 |
+| default-reason | The same with a reasoning reader | 71.0% | 63.0% | 1,495 | 1 |
+| full-context | The whole conversation | 71.0% | 64.5% | 24,698 | 1 |
+| full-context-reason | The whole conversation; reasoning reader | 77.5% | 71.0% | 24,754 | 1 |
+
+LongMemEval-S, 18 questions (3 per type), with the reader prompt and judging
+rules described above; output in `benchmarks/results/read-path-longmemeval/`.
+Both judges give the same grades.
+
+| Pipeline | F1 (95% interval) | Judged correct (95% interval) | Answer turn in context | Prompt tokens | Model calls per question | Retrieval p50 / p95 | Write-path LLM calls |
+|---|---|---|---|---|---|---|---|
+| full-context | 54.8 (35.8–74.4) | 77.8% (55.6–94.4) | 100.0% | 111,646 | 1.0 | 0.7 / 1.6 ms | 0.0 |
+| raw-dense | 57.2 (36.8–78.0) | 66.7% (44.4–88.9) | 100.0% | 4,244 | 1.0 | 112.3 / 185.4 ms | 0.0 |
+| raw-hybrid | 57.2 (36.8–78.1) | 72.2% (50.0–88.9) | 94.4% | 4,495 | 1.0 | 47.2 / 76.5 ms | 0.0 |
+| dense-wide | 57.4 (36.8–78.2) | 72.2% (50.0–88.9) | 100.0% | 7,701 | 1.0 | 46.1 / 84.2 ms | 0.0 |
+| dense-reason | 62.7 (43.3–80.0) | 83.3% (61.1–100.0) | 100.0% | 4,300 | 1.0 | 45.3 / 85.4 ms | 0.0 |
+| dense-wide-reason | 62.7 (43.2–80.0) | 83.3% (61.1–100.0) | 100.0% | 7,757 | 1.0 | 45.2 / 79.3 ms | 0.0 |
+| rerank | 57.2 (36.8–78.0) | 66.7% (44.4–88.9) | 100.0% | 10,160 | 2.0 | 1219.9 / 2496.5 ms | 0.0 |
+| rerank-reason | 68.8 (50.8–85.6) | 88.9% (72.2–100.0) | 100.0% | 10,216 | 2.0 | 47.3 / 77.5 ms | 0.0 |
+| full-context-reason | 62.4 (43.0–79.6) | 83.3% (61.1–100.0) | 100.0% | 111,702 | 1.0 | 0.9 / 1.2 ms | 0.0 |
+
+Reading them:
+
+- **Letting the reader work through the evidence is the largest gain**, on
+  both datasets and at almost no cost: about 6 points on LoCoMo for the same
+  turns (2 by the stricter judge), 17 on LongMemEval-S, where both temporal
+  questions go from wrong to right. It costs a few points on LoCoMo's
+  unanswerable questions (93% to 87%), where a reader that reasons is more
+  willing to guess.
+- **More turns help on LoCoMo** (40 instead of 20: 5 points) and do nothing
+  on LongMemEval-S, where the answer turn is already retrieved.
+- **Reranking alone is not worth its extra call**, and trusting the reranker
+  to cut the context hurts. With a reasoning reader it is the best retrieval
+  pipeline on both datasets, by a margin too small to separate from
+  `dense-wide-reason` on these samples.
+- **`dense-wide-reason` and `rerank-reason` match or beat reading the whole
+  history directly**: on LoCoMo 76–77% against 71% with 9–18% of the tokens;
+  on LongMemEval-S 83–89% against 78% with 7–9%.
+- **The graph still does not help.** With the same reasoning reader the
+  default pipeline is 5 points behind `dense-wide-reason` on LoCoMo.
+- These are small samples. On LoCoMo the gain of `rerank-reason` over
+  `raw-dense` is 10.1 points (interval 3.6 to 17.4); by the stricter judge
+  6.5 (0.0 to 13.0). On LongMemEval-S it is 22 points (6 to 44) on 18
+  questions. The direction is consistent; the sizes need the full runs.
+
+`dense-wide-reason` and `rerank-reason` are now built-in pipelines and part
+of the default set, so the next full run measures them at scale.
+
+### Earlier pilots
+
+`benchmarks/results/pipelines-locomo/`, `pipelines-longmemeval/`, `harness/`
+and `harness-before-dated-facts/` are the pilots that led here: graph alone
+32 F1 with undated facts, 39 once facts cite their message and date, 46 when
+searched by relationship. `pipelines-longmemeval/` used an earlier sampler
+and reader prompt.
+
+Limits: one reader model with reasoning off, one embedding model, judges from
+one provider, extraction that is not deterministic, pipeline settings chosen
+on the 138-question pilot and not tuned further, a 60-question LongMemEval
+sample, and only the knowledge-graph part of MemSt.
 
 ## Not covered yet
 
-- A LongMemEval run large enough to separate pipelines, and the other
-  benchmarks in the research notes.
-- Repeated judging, and a judge independent of the reader.
-- Reranking and query rewriting stages.
-- Sleep-time consolidation, decay and the memory tiers: only the knowledge
-  graph path of MemSt is measured here.
+- All 500 LongMemEval-S questions (for the raw pipelines this needs no
+  extraction; see RUNNING.md), and the other benchmarks in the research notes.
+- A judge from a different provider, and the official LongMemEval judge.
+- The read-path pipelines at full scale.
+- A narrower job for the graph (dates and superseded facts) with a pass/fail
+  test against raw retrieval.
+- Sleep-time consolidation, decay and the memory tiers.

@@ -19,7 +19,8 @@ from pathlib import Path
 from . import scoring
 from .data import load_locomo, load_longmemeval
 from .llm import ChatClient
-from .pipeline import Memory, load_pipelines, retrieve, uses_graph
+from .pipeline import Memory, load_pipelines, retrieve, uses_graph, uses_model
+from .report import render, summarise
 from .retrieval import CachedEmbedder
 
 READER_PROMPT = """Answer the question using only the information below.
@@ -31,12 +32,65 @@ If the information below does not contain the answer, reply exactly: No informat
 {today}Question: {question}
 Answer:"""
 
+# LongMemEval also asks for advice ("any tips for my trip?"), where the right
+# answer is a suggestion that uses what the user said earlier, not a short
+# fact. One prompt serves every question; it does not see the question type.
+READER_PROMPT_LONGMEMEVAL = """Answer the question using only the information below, which comes from the user's earlier conversations with an assistant.
+If the question asks for a fact, give the shortest answer that is complete: a name, a date, a number, a few words. For dates and durations, resolve relative expressions ("last week") against the date of the message they appear in.
+If the question asks for a suggestion or advice, give a short one that uses what the information says about the user's preferences and circumstances.
+If the information below does not contain what is needed, reply exactly: No information available.
+
+{context}
+
+{today}Question: {question}
+Answer:"""
+
+# For "reader": {"mode": "reason"}: the model works through the evidence
+# first. The answer is whatever follows the last "Answer:".
+REASON_INSTRUCTION = """Before answering, work through it briefly: list the relevant statements with their dates; if the question needs counting, comparing or date arithmetic, do it step by step, counting each distinct item once. Then finish with one line starting with "Answer:" that follows the instructions above.
+Reasoning:"""
+
+
+def reader_prompt(dataset, mode, context, question):
+    today = f"Today's date: {question.date}\n" if question.date else ""
+    template = READER_PROMPT_LONGMEMEVAL if dataset == "longmemeval" else READER_PROMPT
+    prompt = template.format(context=context, today=today, question=question.text)
+    if mode == "reason":
+        prompt = prompt[: -len("Answer:")] + REASON_INSTRUCTION
+    return prompt
+
+
+def final_answer(text, mode):
+    if mode != "reason":
+        return text
+    return text.rsplit("Answer:", 1)[-1].strip() if "Answer:" in text else text.strip().splitlines()[-1].strip() if text.strip() else ""
+
 DATASETS = {
     "locomo": ("LoCoMo", "third/locomo/data/locomo10.json", 6000),
     # Histories are about 120k tokens each, so batches are larger to keep the
     # number of extraction calls down.
     "longmemeval": ("LongMemEval-S", "third/longmemeval/longmemeval_s_cleaned.json", 12000),
 }
+
+
+def make_judge(args, work, extra, judge_tokens):
+    """The judge client and its output budget.
+
+    A judge that is a different model gets no provider-specific fields (they
+    belong to the reader's provider) and room to reason before its verdict.
+    Its key is MEMST_JUDGE_API_KEY, or the reader's key if that is not set.
+    """
+    import os
+
+    if not args.judge_model and not args.judge_api_url:
+        return ChatClient(args.api_url, args.model, work / "judge-cache.jsonl", extra=extra), judge_tokens
+    client = ChatClient(
+        args.judge_api_url or args.api_url,
+        args.judge_model or args.model,
+        work / "judge-cache.jsonl",
+        api_key=os.environ.get("MEMST_JUDGE_API_KEY"),
+    )
+    return client, 8000
 
 
 def pick_questions(conversation, per_category, rng):
@@ -63,13 +117,15 @@ def main():
     )
     parser.add_argument(
         "--pipelines",
-        default="full-context,raw-bm25,raw-dense,raw-hybrid,graph-entities,graph-facts,default",
+        default="full-context,raw-bm25,raw-dense,raw-hybrid,dense-wide-reason,rerank-reason,graph-entities,graph-facts,default",
         help="comma-separated pipeline names",
     )
     parser.add_argument("--pipeline-file", help="JSON file with more pipelines (a list, or one object)")
     parser.add_argument("--list-pipelines", action="store_true", help="print the known pipelines and exit")
     parser.add_argument("--api-url", default="https://api.deepseek.com")
     parser.add_argument("--model", default="deepseek-flash")
+    parser.add_argument("--judge-model", help="grade with a different model than the reader (recommended)")
+    parser.add_argument("--judge-api-url", help="endpoint of the judge model (default: --api-url)")
     parser.add_argument("--embedder", default="local", help="local, http or auto")
     parser.add_argument("--out", default="benchmarks/results/harness")
     parser.add_argument("--work", default="benchmarks/.harness-work", help="caches and built stores")
@@ -107,7 +163,7 @@ def main():
     extra = {"thinking": {"type": "disabled"}} if args.thinking == "off" else {}
     answer_tokens, judge_tokens = (200, 10) if args.thinking == "off" else (4000, 2000)
     reader = ChatClient(args.api_url, args.model, work / "reader-cache.jsonl", extra=extra)
-    judge_client = ChatClient(args.api_url, args.model, work / "judge-cache.jsonl", extra=extra)
+    judge_client, judge_tokens = make_judge(args, work, extra, judge_tokens)
     embedder = CachedEmbedder(memst.Embedder(args.embedder), work / "embedding-cache.jsonl")
     llm = {"api_url": args.api_url, "model": args.model, "extra": extra}
 
@@ -122,8 +178,11 @@ def main():
         conversations = load_longmemeval(data, args.per_category, args.seed)
         work_items = [(c, c.questions) for c in conversations]
 
+    # Reranking is part of answering, so it uses the reader's model.
+    reranker = ChatClient(args.api_url, args.model, work / "rerank-cache.jsonl", extra=extra)
+
     def memory_for(conversation):
-        return Memory(conversation, embedder, work, llm, args.batch_chars or default_batch)
+        return Memory(conversation, embedder, work, llm, args.batch_chars or default_batch, reranker)
 
     if any(uses_graph(pipelines[name]) for name in wanted):
         # Extraction is the slow part and each conversation is independent,
@@ -141,16 +200,41 @@ def main():
 
     rows, traces, write_costs = [], [], []
 
+    def summary(final):
+        costs = {}
+        for name in wanted:
+            mine = [c for c in write_costs if c["pipeline"] == name]
+            n = max(1, len(mine))
+            costs[name] = {
+                "write_llm_calls_per_conversation": round(sum(c["llm_calls"] for c in mine) / n, 1),
+                "write_llm_input_tokens_per_conversation_estimate": round(sum(c["llm_input_tokens_estimate"] for c in mine) / n),
+                "write_seconds_per_conversation": round(sum(c["seconds"] for c in mine) / n, 1),
+            }
+        tokens = [c["conversation_tokens_estimate"] for c in write_costs]
+        settings = {
+            "dataset": dataset_name,
+            "dataset_key": args.dataset,
+            "reader_and_judge_model": args.model,
+            "judge_model": args.judge_model or args.model,
+            "thinking": args.thinking,
+            "embedder": args.embedder,
+            "conversations": args.conversations,
+            "questions_per_category_per_conversation": args.per_category,
+            "seed": args.seed,
+            "complete": final,
+        }
+        return summarise(rows, traces, wanted, pipelines, settings, costs, round(sum(tokens) / max(1, len(tokens))))
+
     def save(final=False):
         # Written after every conversation, so a long run that is stopped
         # leaves a report of what it had finished. Restarting continues from
         # the caches and overwrites it.
         (out / "answers.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
         (out / "traces.jsonl").write_text("".join(json.dumps(t) + "\n" for t in traces))
-        summary = summarise(rows, write_costs, wanted, args, dataset_name, traces, pipelines)
-        summary["settings"]["complete"] = final
-        (out / "summary.json").write_text(json.dumps(summary, indent=2))
-        (out / "REPORT.md").write_text(render(summary))
+        result = summary(final)
+        (out / "summary.json").write_text(json.dumps(result, indent=2))
+        (out / "REPORT.md").write_text(render(result))
+        return result
 
     for conversation, questions in work_items:
         conversation_tokens = sum(len(t.render()) for t in conversation.turns) // 4
@@ -182,11 +266,13 @@ def main():
                         },
                     }
                 )
-                retrieved.append((question, context, in_context, seconds))
+                stage_calls = sum(stage.get("llm_calls", 0) for stage in trace)
+                stage_tokens = sum(stage.get("prompt_tokens", 0) for stage in trace)
+                retrieved.append((question, context, in_context, seconds, stage_calls, stage_tokens))
 
             def answer(item, name=name, conversation=conversation):
-                question, context, in_context, retrieval_seconds = item
-                today = f"Today's date: {question.date}\n" if question.date else ""
+                question, context, in_context, retrieval_seconds, stage_calls, stage_tokens = item
+                mode = pipelines[name].get("reader", {}).get("mode", "direct")
                 row = {
                     "pipeline": name,
                     "conversation": conversation.id,
@@ -197,27 +283,31 @@ def main():
                     # Was a turn holding the answer in the context at all?
                     "evidence_in_context": in_context,
                     "retrieval_seconds": retrieval_seconds,
+                    # Model calls made by retrieval stages (reranking).
+                    "stage_llm_calls": stage_calls,
+                    "stage_prompt_tokens": stage_tokens,
                 }
                 try:
                     reply = reader.complete(
-                        [{"role": "user", "content": READER_PROMPT.format(context=context, today=today, question=question.text)}],
-                        max_tokens=answer_tokens,
+                        [{"role": "user", "content": reader_prompt(args.dataset, mode, context, question)}],
+                        max_tokens=answer_tokens + (700 if mode == "reason" else 0),
                     )
                 except Exception as error:  # e.g. the context does not fit the model
                     return {**row, "prediction": "", "error": str(error)[:300], "f1": 0.0, "judged_correct": None if args.no_judge else 0.0,
                             "abstained": False, "prompt_tokens": len(context) // 4, "completion_tokens": 0, "reader_seconds": 0.0}
-                abstained = scoring.is_abstention(reply.text)
+                prediction = final_answer(reply.text, mode)
+                abstained = scoring.is_abstention(prediction)
                 if question.abstain:
                     f1 = correct = float(abstained)
                 else:
-                    f1 = 0.0 if abstained else scoring.token_f1(reply.text, question.answer)
+                    f1 = 0.0 if abstained else scoring.token_f1(prediction, question.answer)
                     correct = None
                     if not args.no_judge:
                         correct = float(
                             (not abstained)
-                            and scoring.judge(judge_client, question.text, question.answer, reply.text, judge_tokens)
+                            and scoring.judge(judge_client, question.text, question.answer, prediction, judge_tokens, question.category)
                         )
-                return {**row, "prediction": reply.text, "f1": f1, "judged_correct": correct, "abstained": abstained,
+                return {**row, "prediction": prediction, "f1": f1, "judged_correct": correct, "abstained": abstained,
                         "prompt_tokens": reply.prompt_tokens, "completion_tokens": reply.completion_tokens, "reader_seconds": reply.seconds}
 
             with ThreadPoolExecutor(max_workers=args.workers) as pool:
@@ -242,149 +332,7 @@ def main():
             save()
             print(f"saved: {done_count} of {len(work_items)} done", flush=True)
 
-    save(final=True)
-    print(render(summarise(rows, write_costs, wanted, args, dataset_name, traces, pipelines)))
-
-
-def stage_summary(traces, name):
-    """Per stage of one pipeline: how often it reached a turn holding the
-    answer, what it added, and how long it took."""
-    selected = [t["stages"] for t in traces if t["pipeline"] == name]
-    stages = []
-    for position in range(len(selected[0]) if selected else 0):
-        entries = [stages_[position] for stages_ in selected]
-        reached = [float(e["reached_evidence"]) for e in entries if e["reached_evidence"] is not None]
-        params = ", ".join(f"{k}={v}" for k, v in entries[0]["params"].items())
-        stages.append(
-            {
-                "stage": entries[0]["stage"] + (f" ({params})" if params else ""),
-                "reached_evidence": round(sum(reached) / len(reached), 4) if reached else None,
-                "facts_added_mean": round(sum(e["facts_added"] for e in entries) / len(entries), 1),
-                "turns_added_mean": round(sum(e["turns_added"] for e in entries) / len(entries), 1),
-                "p50_ms": round(scoring.percentile([e["ms"] for e in entries], 0.5), 1),
-            }
-        )
-    return stages
-
-
-def summarise(rows, write_costs, systems, args, dataset_name, traces, pipelines):
-    def stats(selected):
-        f1 = scoring.mean_with_interval([r["f1"] for r in selected])
-        judged = [r["judged_correct"] for r in selected if r["judged_correct"] is not None]
-        coverage = [float(r["evidence_in_context"]) for r in selected if r["evidence_in_context"] is not None]
-        return {
-            "n": len(selected),
-            "f1": round(f1[0], 4),
-            "f1_low": round(f1[1], 4),
-            "f1_high": round(f1[2], 4),
-            "judged_accuracy": round(sum(judged) / len(judged), 4) if judged else None,
-            "evidence_in_context": round(sum(coverage) / len(coverage), 4) if coverage else None,
-            "prompt_tokens_mean": round(sum(r["prompt_tokens"] for r in selected) / max(1, len(selected))),
-            "retrieval_p50_ms": round(1000 * scoring.percentile([r["retrieval_seconds"] for r in selected], 0.5), 1),
-            "retrieval_p95_ms": round(1000 * scoring.percentile([r["retrieval_seconds"] for r in selected], 0.95), 1),
-        }
-
-    categories = sorted({r["category"] for r in rows})
-    per_system = {}
-    for name in systems:
-        selected = [r for r in rows if r["pipeline"] == name]
-        if not selected:
-            continue
-        entry = stats(selected)
-        entry["by_category"] = {c: stats([r for r in selected if r["category"] == c]) for c in categories}
-        costs = [c for c in write_costs if c["pipeline"] == name]
-        entry["write_llm_calls_per_conversation"] = round(sum(c["llm_calls"] for c in costs) / max(1, len(costs)), 1)
-        entry["write_llm_input_tokens_per_conversation_estimate"] = round(
-            sum(c["llm_input_tokens_estimate"] for c in costs) / max(1, len(costs))
-        )
-        entry["write_seconds_per_conversation"] = round(sum(c["seconds"] for c in costs) / max(1, len(costs)), 1)
-        entry["errors"] = sum(1 for r in selected if r.get("error"))
-        entry["stages"] = stage_summary(traces, name)
-        entry["definition"] = pipelines[name]
-        per_system[name] = entry
-
-    # Oracle router: for each question, the best of the retrieval systems
-    # (everything except full context). No router can beat this with these
-    # systems; a real router gets some fraction of the gap above the best
-    # single system.
-    routed = [n for n in per_system if n != "full-context"]
-    by_question = defaultdict(dict)
-    for r in rows:
-        if r["pipeline"] in routed:
-            by_question[r["question_id"]][r["pipeline"]] = r["f1"]
-    oracle = [max(scores.values()) for scores in by_question.values() if scores]
-    best_single = max((per_system[n]["f1"] for n in routed), default=0.0)
-    full = per_system.get("full-context")
-    conversation_tokens = [c["conversation_tokens_estimate"] for c in write_costs]
-    return {
-        "settings": {
-            "dataset": dataset_name,
-            "reader_and_judge_model": args.model,
-            "thinking": args.thinking,
-            "embedder": args.embedder,
-            "conversations": args.conversations,
-            "questions_per_category_per_conversation": args.per_category,
-            "seed": args.seed,
-            "questions": len({r["question_id"] for r in rows}),
-        },
-        "pipelines": per_system,
-        "categories": categories,
-        "oracle_router": {
-            "over": routed,
-            "f1": round(sum(oracle) / len(oracle), 4) if oracle else None,
-            "best_single_pipeline_f1": best_single,
-        },
-        "full_context_prompt_tokens": full["prompt_tokens_mean"] if full else None,
-        "conversation_tokens_estimate_mean": round(sum(conversation_tokens) / max(1, len(conversation_tokens))),
-    }
-
-
-def render(summary):
-    s = summary["settings"]
-    lines = [
-        "# Evaluation report",
-        "",
-        f"Dataset: {s['dataset']}. {s['questions']} questions (seed {s['seed']}); histories average about {summary['conversation_tokens_estimate_mean']:,} tokens.",
-        *([] if s.get("complete", True) else ["", "**Partial: the run was still going when this was written.**", ""]),
-        f"Reader, judge and extraction model: `{s['reader_and_judge_model']}` (reasoning {s['thinking']}). Embeddings: `{s['embedder']}`.",
-        "",
-        "| Pipeline | F1 (95% interval) | Judged correct | Answer turn in context | Prompt tokens | Retrieval p50 / p95 | Write-path LLM calls |",
-        "|---|---|---|---|---|---|---|",
-    ]
-
-    def cell(value, as_percent=True):
-        if value is None:
-            return "n/a"
-        return f"{100 * value:.1f}%" if as_percent else str(value)
-
-    for name, e in summary["pipelines"].items():
-        lines.append(
-            f"| {name} | {100 * e['f1']:.1f} ({100 * e['f1_low']:.1f}–{100 * e['f1_high']:.1f}) | {cell(e['judged_accuracy'])} | "
-            f"{cell(e['evidence_in_context'])} | {e['prompt_tokens_mean']:,} | {e['retrieval_p50_ms']} / {e['retrieval_p95_ms']} ms | "
-            f"{e['write_llm_calls_per_conversation']} |"
-        )
-    lines += ["", "F1 by category:", "", "| Pipeline | " + " | ".join(summary["categories"]) + " |", "|---|" + "---|" * len(summary["categories"])]
-    for name, e in summary["pipelines"].items():
-        lines.append(f"| {name} | " + " | ".join(f"{100 * e['by_category'][c]['f1']:.1f} (n={e['by_category'][c]['n']})" for c in summary["categories"]) + " |")
-    o = summary["oracle_router"]
-    if o["f1"] is not None:
-        lines += [
-            "",
-            f"Oracle router over {', '.join(o['over'])}: F1 {100 * o['f1']:.1f}, against {100 * o['best_single_pipeline_f1']:.1f} for the best single one. "
-            "That gap is the most a per-question router could add.",
-        ]
-    lines += ["", "What each stage contributed (\"reached the answer\" = the stage returned a turn holding the answer, or a fact stated in one):", ""]
-    lines += ["| Pipeline | Stage | Reached the answer | Facts added | Turns added | p50 |", "|---|---|---|---|---|---|"]
-    for name, e in summary["pipelines"].items():
-        for stage in e["stages"]:
-            lines.append(
-                f"| {name} | {stage['stage']} | {cell(stage['reached_evidence'])} | {stage['facts_added_mean']} | {stage['turns_added_mean']} | {stage['p50_ms']} ms |"
-            )
-    errors = {name: e["errors"] for name, e in summary["pipelines"].items() if e["errors"]}
-    if errors:
-        lines += ["", "Reader calls that failed and were scored as wrong (usually a context too large for the model): " + ", ".join(f"{n}: {c}" for n, c in errors.items()) + "."]
-    lines += ["", "\"Adversarial\" and \"abstention\" questions have no answer in the history; they are scored on whether the pipeline says so.", ""]
-    return "\n".join(lines)
+    print(render(save(final=True)))
 
 
 if __name__ == "__main__":

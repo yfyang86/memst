@@ -66,17 +66,28 @@ unreviewed preprints and are marked there.
 
 ## What MemSt's own evaluation now shows
 
-`benchmarks/harness` has the baselines the field asks for, on LoCoMo and
-LongMemEval-S, with retrieval as a configurable pipeline. A pilot (one model)
-puts numbers on the concern above. On 138 LoCoMo questions: full context 59
-F1, raw-history retrieval 53, MemSt's graph searched by relationship 46, and
-the default pipeline (graph facts, their source messages and raw turns) 54.
-On 12 LongMemEval-S questions, where histories are about 127,000 tokens,
-retrieval matches full context at 4% of the prompt tokens, but the sample is
-too small to rank pipelines. The graph does not yet earn its extraction cost
-on its own. Details and caveats are in `benchmarks/harness/README.md`. The
-older tables under `benchmarks/` were produced through the server with
-different category labels and are not comparable.
+`benchmarks/harness` has the baselines the field asks for, on all of LoCoMo
+(1,986 questions) and a 60-question LongMemEval-S sample, with one model.
+
+- **The graph does not beat raw-history retrieval.** LoCoMo judged accuracy:
+  full context 75.5%, embedding retrieval over raw turns 72.2%, the graph
+  with raw turns 69.2% (3.0 points behind on the same questions, interval 0.9
+  to 4.9), the graph alone 53.0%. On LongMemEval-S, raw retrieval 65–68%, the
+  graph with raw turns 66.7%, the graph alone 47–52%, full context 58.3%.
+- **Per-question routing realises none of its headroom**, as the field
+  reports: the oracle is 13 points above the best single pipeline, a router
+  by kind of question is 0.2 below it.
+- **The reader is the bottleneck on long histories.** On LongMemEval-S the
+  answer turn is retrieved for every question and 65% are answered correctly.
+  A reader that works through the evidence, over a wider or reranked context,
+  gains 9 to 10 points on a LoCoMo pilot and 17 to 22 on a LongMemEval-S
+  pilot, and matches full context at under a fifth of the tokens.
+- **The reader's own model is a lenient judge on LoCoMo** (6 to 10 points
+  above a stricter one), consistent with the audit cited above.
+
+Details and caveats are in `benchmarks/harness/README.md`. The older tables
+under `benchmarks/` were produced through the server with different category
+labels and are not comparable.
 
 ## Recommended order of work
 

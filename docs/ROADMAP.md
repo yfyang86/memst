@@ -24,7 +24,9 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 3 | Extraction into HelixDB | **Done**, two items carried into sprint 4 | Extracting a conversation makes its entities searchable with no manual step; the server has no separate graph store |
 | 4 | Non-destructive, time-aware graph | **Done**, one item moved to sprint 5 | A corrected fact outranks and hides the stale one; an entity merge can be undone |
 | 5 | Evaluation harness | **Done** (pilots on LoCoMo and LongMemEval-S) | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
-| 6 | Security and MCP | Next | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
+| 5b | Full evaluation and read path | **Done** | Full runs reported with paired tests and a second judge; a read path that beats plain retrieval on the pilots |
+| 5c | A narrower job for the graph | Next | The graph beats raw retrieval on temporal and knowledge-update questions by a paired test, or is reported as a negative result |
+| 6 | Security and MCP | After 5c | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
 
 The manuscript update follows sprint 5.
 
@@ -109,16 +111,52 @@ Not done: a LongMemEval run large enough to rank pipelines, other benchmarks,
 repeated or independent judging, and any measurement of consolidation, decay
 or the memory tiers.
 
-What the results say to look at next:
+**5b. Full evaluation and the read path (18 November 2026).** Done. The full
+runs (1,986 LoCoMo questions, 60 LongMemEval-S questions) settle the earlier
+question: **the knowledge graph does not beat retrieval over raw turns.** On
+LoCoMo the default graph pipeline is 3.0 points of judged accuracy behind
+`raw-dense` on the same questions (interval 0.9 to 4.9); on LongMemEval-S they
+are level. A router by kind of question recovers none of the oracle router's
+13 points.
 
-1. The graph is not yet worth its extraction cost on its own: it ties raw
-   retrieval only when raw turns are added. A larger LongMemEval run is
-   needed before deciding whether that holds where histories are long.
-2. A cheaper design keeps raw turns as the memory and uses the graph to link
-   and date them. The pipeline makes this testable without engine changes.
-3. Reranking is the stage most likely to help: the right turn is retrieved
-   for 72% of LoCoMo questions by the default pipeline, but judged accuracy
-   is 64%.
+The reader loses more points than retrieval does, so the read path was
+worked on next:
+
+- Reports now give answerable-only figures (the 1,540-question LoCoMo subset
+  others publish), intervals on judged accuracy, and paired differences.
+- A second judge can grade a run (`--judge-model`, or `rescore` on saved
+  answers). A stricter judge agrees with the original on 98–100% of
+  LongMemEval answers and 92% of LoCoMo ones, where the reader's own model is
+  lenient by 6 to 10 points; the ordering of pipelines holds.
+- LongMemEval's preference questions were being asked for a short fact and
+  graded as one; the reader prompt and the judge now follow the dataset's own
+  rules.
+- New pipeline stages `rerank` and `neighbors`, and a reader that works
+  through the evidence before answering. On the pilots, a wider context with
+  that reader (`dense-wide-reason`) and reranking with it (`rerank-reason`)
+  gain 9 to 10 points of judged accuracy over `raw-dense` on LoCoMo and 17 to
+  22 on LongMemEval-S, and match or beat reading the whole history at under a
+  fifth of the tokens. Both are built in.
+
+Not done: those two pipelines at full scale, all 500 LongMemEval-S questions,
+and a judge from another provider. The commands are in
+`benchmarks/harness/RUNNING.md`.
+
+**5c. A narrower job for the graph (next).** The graph is not a better
+general retriever, with either reader. Test whether it earns its extraction
+cost where it should: dates and superseded facts (LongMemEval's
+knowledge-update and temporal questions, LoCoMo's temporal ones), with the
+reasoning reader, at 100 questions or more per category.
+
+- Show only the source turns of the facts found, without the fact lines:
+  with the answer turn in context, the reader is right 80% of the time
+  without fact lines and 75% with them.
+- Use validity in time at retrieval: when two facts conflict, show which is
+  current.
+- Cut extraction cost (larger batches, fewer calls).
+- Pass: a reliable gain over `dense-wide-reason` on those categories by the
+  paired test. Fail: report it as a negative result and position MemSt on
+  the versioned store.
 
 **6. Security and MCP.** Connect the MCP tool handlers to a real store (they
 are placeholders today). Write gating, ownership checks and authentication.
