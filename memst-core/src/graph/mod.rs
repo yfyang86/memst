@@ -426,7 +426,7 @@ impl KnowledgeGraph {
         }
         // Write the new fact first: if that fails, the old one still stands.
         self.backend.put_relationship(&new)?;
-        old.valid_to = Some(new.valid_from.unwrap_or_else(chrono::Utc::now));
+        old.valid_to = Some(new.valid_from.or(new.stated_at).unwrap_or_else(chrono::Utc::now));
         old.superseded_by = Some(new.id);
         self.backend.put_relationship(&old)?;
         Ok(new)
@@ -466,7 +466,7 @@ impl KnowledgeGraph {
         }
 
         self.backend.put_relationship(&fact)?;
-        let ended_at = fact.valid_from.unwrap_or_else(chrono::Utc::now);
+        let ended_at = fact.valid_from.or(fact.stated_at).unwrap_or_else(chrono::Utc::now);
         let mut superseded = Vec::new();
         for mut old in current {
             old.valid_to = Some(ended_at);

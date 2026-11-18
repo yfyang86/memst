@@ -12,7 +12,7 @@
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use memst_core::error::{Error, Result};
-use memst_core::types::{Entity, Relationship};
+use memst_core::types::{DatePrecision, Entity, Relationship};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -86,6 +86,8 @@ pub fn relationship_props(relationship: &Relationship, search_text: &str) -> Val
         "valid_from": relationship.valid_from.map(timestamp),
         "valid_to": relationship.valid_to.map(timestamp),
         "superseded_by": relationship.superseded_by.map(|id| id.to_string()),
+        "valid_precision": relationship.valid_precision.map(DatePrecision::as_str),
+        "stated_at": relationship.stated_at.map(timestamp),
     })
 }
 
@@ -134,6 +136,8 @@ pub fn relationship_from_row(row: Vec<Value>) -> Result<Relationship> {
         valid_from: props.optional_timestamp("valid_from")?,
         valid_to: props.optional_timestamp("valid_to")?,
         superseded_by: props.optional_uuid("superseded_by")?,
+        valid_precision: props.optional_string("valid_precision").and_then(|p| DatePrecision::parse(&p)),
+        stated_at: props.optional_timestamp("stated_at")?,
     })
 }
 

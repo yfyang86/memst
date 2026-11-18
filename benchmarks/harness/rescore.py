@@ -38,6 +38,7 @@ def main():
     parser.add_argument("--judge-model", help="grade every answer again with this model")
     parser.add_argument("--judge-api-url", default="https://api.deepseek.com")
     parser.add_argument("--work", default="benchmarks/.harness-work", help="where the judge's answers are cached")
+    parser.add_argument("--reference", help="pipeline the others are compared with, question by question")
     parser.add_argument("--workers", type=int, default=8)
     args = parser.parse_args()
 
@@ -48,6 +49,8 @@ def main():
     rows = [json.loads(line) for line in (source / "answers.jsonl").read_text().splitlines() if line.strip()]
     traces = [json.loads(line) for line in (source / "traces.jsonl").read_text().splitlines() if line.strip()]
     settings = dict(old["settings"])
+    if args.reference:
+        settings["reference"] = args.reference
 
     if args.judge_model:
         Path(args.work).mkdir(parents=True, exist_ok=True)

@@ -70,9 +70,13 @@ For each entity, determine its temporal relevance:
 Messages in the text may start with a label in square brackets, such as [m3],
 and may show the date they were sent. For each relationship:
 - "source": the label of the one message that most directly states it.
-- "when": the date the fact became true, if the text says or implies it. Work
-  out relative expressions ("last weekend", "two years ago") from the date of
-  the message they appear in. Use null when the text gives no time.
+- "when": the date the thing happened or the fact became true, if the text
+  says or implies it. This is not the date of the message, unless it happened
+  that day. Work out relative expressions ("yesterday", "last weekend", "two
+  years ago") from the date of the message they appear in. Give only as much
+  as the text supports: "2023-07-15" for a day, "2023-07" for a month, "2022"
+  for a year. Use null when the text gives no time, or only a vague one
+  ("a while ago", "recently").
 
 Output STRICTLY as JSON with this structure:
 {
@@ -93,7 +97,7 @@ Output STRICTLY as JSON with this structure:
       "confidence": 0.0-1.0,
       "temporal_type": "permanent|temporary",
       "source": "label of the message that states this, e.g. m3, or null",
-      "when": "ISO8601 date the fact became true, or null"
+      "when": "YYYY-MM-DD, YYYY-MM or YYYY: when it happened or became true, or null"
     }
   ],
   "events": [

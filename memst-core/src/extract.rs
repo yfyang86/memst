@@ -589,6 +589,8 @@ impl MemoryExtractor for LlmExtractor {
                     valid_from: None,
                     valid_to: None,
                     superseded_by: None,
+                    valid_precision: None,
+                    stated_at: None,
                 });
             }
         }
@@ -747,6 +749,8 @@ impl MemoryExtractor for RuleBasedExtractor {
                         valid_from: None,
                         valid_to: None,
                         superseded_by: None,
+                        valid_precision: None,
+                        stated_at: None,
                     });
                 }
                 prev_entity = Some(entity);

@@ -98,9 +98,12 @@ def validate(pipeline: dict) -> None:
     unknown = set(pipeline) - {"name", "description", "stages", "context", "reader"}
     if unknown:
         raise ValueError(f"pipeline {name}: unknown setting(s) {sorted(unknown)}")
-    unknown = set(pipeline.get("context", {})) - {"max_facts", "max_turns"}
+    context = pipeline.get("context", {})
+    unknown = set(context) - {"max_facts", "max_turns", "facts_as"}
     if unknown:
         raise ValueError(f"pipeline {name}: context does not take {sorted(unknown)}")
+    if context.get("facts_as", "lines") not in ("lines", "timeline"):
+        raise ValueError(f"pipeline {name}: facts_as is lines or timeline")
 
 
 def uses_graph(pipeline: dict) -> bool:
@@ -246,12 +249,9 @@ class Memory:
 
     @staticmethod
     def fact_text(fact) -> str:
-        since = ""
-        if fact.get("valid_from"):
-            # Written out ("8 May 2023"), the way the conversation writes dates.
-            day = datetime.fromisoformat(fact["valid_from"][:10])
-            since = f" (since {day.day} {day.strftime('%B %Y')})"
-        return f"{fact['subject']} {fact['predicate'].replace('_', ' ')} {fact['object']}{since}"
+        text = f"{fact['subject']} {fact['predicate'].replace('_', ' ')} {fact['object']}"
+        when = fact_date(fact)
+        return f"{text} ({when})" if when else text
 
     @property
     def entity_vectors(self):
@@ -432,6 +432,72 @@ def rerank(memory: Memory, question: Question, candidates: List[int], keep: int,
     return chosen, (1, reply.prompt_tokens)
 
 
+def written_date(iso: str, precision: Optional[str] = None) -> str:
+    """A date the way the conversations write it, no more exact than it is
+    known: "8 May 2023", "May 2023" or "2023"."""
+    day = datetime.fromisoformat(iso[:10])
+    if precision == "year":
+        return str(day.year)
+    if precision == "month":
+        return day.strftime("%B %Y")
+    return f"{day.day} {day.strftime('%B %Y')}"
+
+
+def fact_date(fact) -> str:
+    """What is known about a fact's time, in words.
+
+    When it happened and when it was said are different things: a message
+    sent in September about a trip "two weeks ago" is said in September and
+    happened in August. Graphs built before the two were stored apart have
+    only `valid_from`, shown as "since".
+    """
+    if fact.get("valid_from"):
+        when = written_date(fact["valid_from"], fact.get("valid_precision"))
+        if "stated_at" not in fact:
+            return f"since {when}"
+        return f"{'on' if fact.get('valid_precision') in (None, 'day') else 'in'} {when}"
+    if fact.get("stated_at"):
+        return f"said on {written_date(fact['stated_at'])}; date of the event not given"
+    return ""
+
+
+def fact_timeline(memory: Memory, facts: List[dict]) -> List[str]:
+    """Facts in time order, one per line, those with no time last.
+
+    A fact is placed by when it happened, or else by when it was said, and
+    the line says which. Where the same subject and predicate has several
+    objects over time (a job, a home, a count), each line says whether it is
+    the latest, so the reader does not have to work out which is current.
+    """
+    moment = lambda f: f.get("valid_from") or f.get("stated_at")
+    versions: Dict[tuple, List[dict]] = {}
+    for fact in facts:
+        if moment(fact):
+            versions.setdefault((fact["subject_id"], fact["predicate"]), []).append(fact)
+    latest = {}
+    for group in versions.values():
+        if len({f["object_id"] for f in group}) > 1:
+            newest = max(group, key=moment)
+            for fact in group:
+                latest[fact["id"]] = fact["id"] == newest["id"]
+    lines = []
+    for fact in sorted(facts, key=lambda f: (moment(f) is None, moment(f) or "")):
+        text = f"{fact['subject']} {fact['predicate'].replace('_', ' ')} {fact['object']}"
+        if fact.get("valid_from"):
+            when = written_date(fact["valid_from"], fact.get("valid_precision"))
+        elif fact.get("stated_at"):
+            when = f"said on {written_date(fact['stated_at'])}"
+        else:
+            when = "undated"
+        note = ""
+        if fact.get("valid_to"):
+            note = f" (no longer true from {written_date(fact['valid_to'])})"
+        elif fact["id"] in latest:
+            note = " (latest)" if latest[fact["id"]] else " (earlier; see the later entry)"
+        lines.append(f"{when}: {text}{note}")
+    return lines
+
+
 def retrieve(pipeline: dict, memory: Memory, question: Question):
     """Run a pipeline for one question.
 
@@ -443,14 +509,20 @@ def retrieve(pipeline: dict, memory: Memory, question: Question):
         selection.trace.append(run_stage(stage, memory, question, selection))
 
     limits = pipeline.get("context", {})
-    lines = selection.lines[: limits.get("max_facts", 60)]
+    max_facts = limits.get("max_facts", 60)
     chosen = selection.turns[: limits["max_turns"]] if "max_turns" in limits else selection.turns
     # Turns are shown in conversation order, whatever order they were found in.
     shown = [memory.turns[i] for i in sorted(chosen)]
     parts = []
-    if lines:
-        parts.append("Known facts:\n" + "\n".join(lines))
+    if limits.get("facts_as", "lines") == "timeline":
+        timeline = fact_timeline(memory, selection.facts[:max_facts])
+        if timeline:
+            parts.append("Timeline of known facts (a plain date is when it happened; \"said on\" is only when it was mentioned):\n" + "\n".join(timeline))
+    else:
+        lines = selection.lines[:max_facts]
+        if lines:
+            parts.append("Known facts:\n" + "\n".join(lines))
     if shown:
-        heading = "Conversation excerpts:\n" if lines else ""
+        heading = "Conversation excerpts:\n" if parts else ""
         parts.append(heading + "\n".join(t.render() for t in shown))
     return "\n\n".join(parts), shown, selection.trace

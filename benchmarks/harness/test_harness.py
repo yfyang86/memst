@@ -368,3 +368,48 @@ def test_route_analysis_finds_a_router_only_where_question_kind_predicts_the_win
     result = analyse(rows)
     assert result["pipelines"] == ["a", "b"] and result["best_single_score"] == 0.5
     assert result["routed_score"] == 1.0 and result["share_of_oracle_gain"] == 1.0
+
+
+def test_fact_timeline_orders_by_date_and_marks_the_latest_value():
+    from benchmarks.harness.pipeline import fact_timeline
+
+    def fact(i, obj, when, valid_to=None, predicate="works_at"):
+        return {"id": f"f{i}", "subject_id": "alice", "subject": "Alice", "predicate": predicate,
+                "object_id": obj, "object": obj, "valid_from": when, "valid_to": valid_to}
+
+    lines = fact_timeline(None, [
+        fact(1, "Globex", "2023-06-01T00:00:00+00:00"),
+        fact(2, "Acme", "2023-01-10T00:00:00+00:00"),
+        fact(3, "tea", None, predicate="likes"),
+        fact(4, "Lyon", "2023-02-01T00:00:00+00:00", valid_to="2023-05-01T00:00:00+00:00", predicate="lives_in"),
+    ])
+    assert lines == [
+        "10 January 2023: Alice works at Acme (earlier; see the later entry)",
+        "1 February 2023: Alice lives in Lyon (no longer true from 1 May 2023)",
+        "1 June 2023: Alice works at Globex (latest)",
+        "undated: Alice likes tea",
+    ]
+    # When it happened and when it was said are told apart, and a date is
+    # written no more exactly than it is known.
+    said = {**fact(5, "park", None, predicate="visited"), "stated_at": "2023-09-09T10:00:00+00:00"}
+    in_2022 = {**fact(6, "pottery", "2022-01-01T00:00:00+00:00", predicate="started"), "valid_precision": "year", "stated_at": "2023-09-09T10:00:00+00:00"}
+    assert fact_timeline(None, [said, in_2022]) == ["2022: Alice started pottery", "said on 9 September 2023: Alice visited park"]
+    assert Memory.fact_text(said) == "Alice visited park (said on 9 September 2023; date of the event not given)"
+    assert Memory.fact_text(in_2022) == "Alice started pottery (in 2022)"
+    assert Memory.fact_text({**in_2022, "valid_precision": "day"}) == "Alice started pottery (on 1 January 2022)"
+    assert Memory.fact_text(fact(7, "Acme", "2023-01-10T00:00:00+00:00")) == "Alice works at Acme (since 10 January 2023)"
+    validate({"name": "t", "stages": [{"stage": "all_turns"}], "context": {"facts_as": "timeline", "max_facts": 0}})
+    with pytest.raises(ValueError):
+        validate({"name": "t", "stages": [{"stage": "all_turns"}], "context": {"facts_as": "table"}})
+
+
+def test_longmemeval_can_be_limited_to_types_or_ids(tmp_path):
+    def sample(qid, kind):
+        return {"question_id": qid, "question_type": kind, "question": "q", "answer": "a", "haystack_dates": ["2023/05/01 (Mon) 09:00"],
+                "haystack_session_ids": ["s1"], "haystack_sessions": [[{"role": "user", "content": "hi"}]], "answer_session_ids": ["s1"]}
+
+    path = tmp_path / "lme.json"
+    path.write_text(json.dumps([sample("a", "knowledge-update"), sample("b", "temporal-reasoning"), sample("c", "multi-session"), sample("d", "knowledge-update")]))
+    assert sorted(c.id for c in load_longmemeval(path, types=["knowledge-update"])) == ["a", "d"]
+    assert [c.id for c in load_longmemeval(path, per_type=1, ids=["b", "c"])] == ["b", "c"]
+    assert len(load_longmemeval(path, per_type=1, types=["knowledge-update", "temporal-reasoning"])) == 2

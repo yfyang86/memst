@@ -16,7 +16,8 @@ use crate::kg_extract::KgExtractionService;
 use memst_core::embed::Embedder;
 use memst_core::graph::KnowledgeGraph;
 use memst_core::types::{
-    Entity, EntityId, EntityQuery, KgExtractionResult, Relationship, RelationshipQuery, TemporalRelevance,
+    DatePrecision, Entity, EntityId, EntityQuery, KgExtractionResult, Relationship, RelationshipQuery,
+    TemporalRelevance,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -262,11 +263,17 @@ pub fn ingest_extraction_with(
         }));
 
     for (subject, predicate, object, confidence, temporal, source, when) in triples {
-        // Where and when: the cited message if there is one, otherwise the
-        // batch; the date the text gives, otherwise when it was said.
+        // Where: the cited message if there is one, otherwise the batch.
+        // When it became true: only what the text gives. When it was said
+        // is kept apart (`stated_at`): a message sent today about last
+        // month must not date the fact to today.
         let cited = source.and_then(|label| provenance.sources.get(label));
         let source_message_id = cited.map(|m| m.id).or(provenance.source_message_id);
-        let valid_from = when.and_then(parse_when).or_else(|| cited.and_then(|m| m.timestamp));
+        let stated_at = cited.and_then(|m| m.timestamp);
+        let (valid_from, valid_precision) = match when.and_then(parse_when) {
+            Some((date, precision)) => (Some(date), Some(precision)),
+            None => (None, None),
+        };
         let predicate = normalise_predicate(predicate);
         let predicate = predicate.as_str();
         let (Some(subject_id), Some(object_id)) = (
@@ -282,6 +289,8 @@ pub fn ingest_extraction_with(
                 .with_confidence(confidence);
             fact.source_message_id = source_message_id;
             fact.valid_from = valid_from;
+            fact.valid_precision = valid_precision;
+            fact.stated_at = stated_at;
             fact.half_life_days = temporal.default_half_life_days();
             fact.is_stable = temporal.is_stable();
             let new_id = fact.id;
@@ -320,6 +329,8 @@ pub fn ingest_extraction_with(
                         .with_confidence(confidence);
                 relationship.source_message_id = source_message_id;
                 relationship.valid_from = valid_from;
+                relationship.valid_precision = valid_precision;
+                relationship.stated_at = stated_at;
                 relationship.half_life_days = temporal.default_half_life_days();
                 relationship.is_stable = temporal.is_stable();
                 graph.add_relationship(relationship)?;
@@ -461,21 +472,31 @@ impl GraphIngestor {
     }
 }
 
-/// A date or datetime as a model writes it: RFC 3339, `YYYY-MM-DDTHH:MM:SS`,
-/// or a plain `YYYY-MM-DD` (taken as midnight UTC).
-fn parse_when(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+/// A date as a model writes it, with how exactly it is known: RFC 3339,
+/// `YYYY-MM-DDTHH:MM:SS` or `YYYY-MM-DD` (a day), `YYYY-MM` (a month, stored
+/// as its first day) or `YYYY` (a year, stored as 1 January). Times are UTC.
+fn parse_when(text: &str) -> Option<(chrono::DateTime<chrono::Utc>, DatePrecision)> {
     use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
     let text = text.trim();
     if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(text) {
-        return Some(parsed.with_timezone(&Utc));
+        return Some((parsed.with_timezone(&Utc), DatePrecision::Day));
     }
     if let Ok(parsed) = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S") {
-        return Some(Utc.from_utc_datetime(&parsed));
+        return Some((Utc.from_utc_datetime(&parsed), DatePrecision::Day));
     }
-    NaiveDate::parse_from_str(text, "%Y-%m-%d")
-        .ok()
-        .and_then(|date| date.and_hms_opt(0, 0, 0))
-        .map(|naive| Utc.from_utc_datetime(&naive))
+    let digits = |part: &str, len: usize| part.len() == len && part.bytes().all(|b| b.is_ascii_digit());
+    let parts: Vec<&str> = text.split('-').collect();
+    let (date, precision) = match parts.as_slice() {
+        [y, m, d] if digits(y, 4) && digits(m, 2) && digits(d, 2) => {
+            (NaiveDate::parse_from_str(text, "%Y-%m-%d").ok()?, DatePrecision::Day)
+        }
+        [y, m] if digits(y, 4) && digits(m, 2) => {
+            (NaiveDate::from_ymd_opt(y.parse().ok()?, m.parse().ok()?, 1)?, DatePrecision::Month)
+        }
+        [y] if digits(y, 4) => (NaiveDate::from_ymd_opt(y.parse().ok()?, 1, 1)?, DatePrecision::Year),
+        _ => return None,
+    };
+    Some((Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?), precision))
 }
 
 /// Split messages into consecutive groups of at most `max_chars` characters
@@ -556,12 +577,17 @@ mod tests {
 
     #[test]
     fn dates_are_read_in_the_forms_models_write() {
-        let day = parse_when("2023-07-15").unwrap();
-        assert_eq!(day.to_rfc3339(), "2023-07-15T00:00:00+00:00");
-        assert_eq!(parse_when(" 2023-07-15T09:30:00 ").unwrap().to_rfc3339(), "2023-07-15T09:30:00+00:00");
-        assert_eq!(parse_when("2023-07-15T09:30:00+02:00").unwrap().to_rfc3339(), "2023-07-15T07:30:00+00:00");
-        assert!(parse_when("last weekend").is_none());
-        assert!(parse_when("").is_none());
+        let read = |text: &str| parse_when(text).map(|(date, precision)| (date.to_rfc3339(), precision));
+        let day = |text: &str| Some((text.to_string(), DatePrecision::Day));
+        assert_eq!(read("2023-07-15"), day("2023-07-15T00:00:00+00:00"));
+        assert_eq!(read(" 2023-07-15T09:30:00 "), day("2023-07-15T09:30:00+00:00"));
+        assert_eq!(read("2023-07-15T09:30:00+02:00"), day("2023-07-15T07:30:00+00:00"));
+        // A month or a year is kept as that, not as a made-up day.
+        assert_eq!(read("2023-07"), Some(("2023-07-01T00:00:00+00:00".to_string(), DatePrecision::Month)));
+        assert_eq!(read("2022"), Some(("2022-01-01T00:00:00+00:00".to_string(), DatePrecision::Year)));
+        for unreadable in ["last weekend", "", "2023-13", "2023-02-30", "23", "July 2023"] {
+            assert!(parse_when(unreadable).is_none(), "{unreadable}");
+        }
     }
 
     #[test]

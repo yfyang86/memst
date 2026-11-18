@@ -1025,6 +1025,8 @@ fn main() -> Result<()> {
                         valid_from: None,
                         valid_to: None,
                         superseded_by: None,
+                        valid_precision: None,
+                        stated_at: None,
                     };
                     let _added = graph.add_relationship(relationship)?;
                     println!(

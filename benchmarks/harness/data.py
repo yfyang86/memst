@@ -103,13 +103,17 @@ LONGMEMEVAL_TYPES = [
 ]
 
 
-def load_longmemeval(path: Path, per_type: int = 0, seed: int = 7) -> List[Conversation]:
+def load_longmemeval(
+    path: Path, per_type: int = 0, seed: int = 7, types: Optional[List[str]] = None, ids: Optional[List[str]] = None
+) -> List[Conversation]:
     """LongMemEval: every question has its own history of about 50 sessions
     (roughly 120k tokens), so each becomes a one-question conversation.
 
     `per_type` > 0 keeps that many questions of each type, chosen by `seed`
     before any history is built, since each history is expensive to prepare.
     A larger `per_type` with the same seed extends the smaller sample.
+    `types` keeps only those question types; `ids` keeps exactly those
+    questions (and ignores `per_type`).
     """
     import random
     from datetime import datetime, timezone
@@ -122,7 +126,11 @@ def load_longmemeval(path: Path, per_type: int = 0, seed: int = 7) -> List[Conve
         return parsed.replace(tzinfo=timezone.utc).isoformat()
 
     samples = json.loads(Path(path).read_text())
-    if per_type > 0:
+    if types:
+        samples = [s for s in samples if s["question_type"] in types]
+    if ids:
+        samples = [s for s in samples if s["question_id"] in set(ids)]
+    elif per_type > 0:
         by_type = {}
         for sample in samples:
             by_type.setdefault(sample["question_type"], []).append(sample)

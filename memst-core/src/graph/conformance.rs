@@ -647,11 +647,17 @@ fn facts_change_over_time(graph: &mut KnowledgeGraph) {
     let moved_on = chrono::Utc::now() - chrono::Duration::days(1);
     let mut in_berlin = Relationship::new(alice.id, "lives_in", berlin.id, session);
     in_berlin.valid_from = Some(moved_on);
+    in_berlin.valid_precision = Some(crate::types::DatePrecision::Month);
+    in_berlin.stated_at = Some(moved_on + chrono::Duration::hours(3));
     let in_berlin = graph.supersede_relationship(in_lyon.id, in_berlin).unwrap();
     let (lyon_fact, _, _) = graph.get_relationship(in_lyon.id).unwrap().unwrap();
     assert_eq!(lyon_fact.valid_to, Some(moved_on));
     assert_eq!(lyon_fact.superseded_by, Some(in_berlin.id));
-    assert_eq!(graph.get_relationship(in_berlin.id).unwrap().unwrap().0.valid_from, Some(moved_on));
+    // Validity, its precision and when it was said all survive storage.
+    let stored = graph.get_relationship(in_berlin.id).unwrap().unwrap().0;
+    assert_eq!(stored.valid_from, Some(moved_on));
+    assert_eq!(stored.valid_precision, Some(crate::types::DatePrecision::Month));
+    assert_eq!(stored.stated_at, in_berlin.stated_at);
 
     // A fact can only be superseded once, and only if it exists.
     assert!(graph

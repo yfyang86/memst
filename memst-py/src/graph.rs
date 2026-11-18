@@ -81,6 +81,8 @@ fn triple_json((relationship, subject, object): &(Relationship, Entity, Entity))
         "created_at": relationship.created_at.to_rfc3339(),
         "valid_from": relationship.valid_from.map(|t| t.to_rfc3339()),
         "valid_to": relationship.valid_to.map(|t| t.to_rfc3339()),
+        "valid_precision": relationship.valid_precision.map(|p| p.as_str()),
+        "stated_at": relationship.stated_at.map(|t| t.to_rfc3339()),
     })
 }
 

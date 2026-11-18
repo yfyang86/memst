@@ -854,7 +854,7 @@ pub struct Relationship {
 
     // ===== Validity in time =====
     /// When the fact started to hold in the world, if known. (When it was
-    /// recorded is `created_at`.)
+    /// recorded is `created_at`; when it was said is `stated_at`.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valid_from: Option<chrono::DateTime<chrono::Utc>>,
 
@@ -865,6 +865,50 @@ pub struct Relationship {
     /// The relationship that replaced this one, if it was superseded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_by: Option<RelationshipId>,
+
+    /// How exactly `valid_from` is known. "In 2022" is stored as 1 January
+    /// 2022 with precision `Year`; without this it would read as a day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_precision: Option<DatePrecision>,
+
+    /// When the fact was stated: the time of the message it comes from.
+    /// This is not when it became true (`valid_from`): "we went to the park
+    /// two weeks ago" is stated today and true from two weeks earlier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// How exactly a date is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DatePrecision {
+    /// Only the year is known.
+    Year,
+    /// The year and month are known.
+    Month,
+    /// The day is known.
+    Day,
+}
+
+impl DatePrecision {
+    /// The name used in storage and in JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DatePrecision::Year => "year",
+            DatePrecision::Month => "month",
+            DatePrecision::Day => "day",
+        }
+    }
+
+    /// The inverse of [`as_str`](Self::as_str).
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "year" => Some(DatePrecision::Year),
+            "month" => Some(DatePrecision::Month),
+            "day" => Some(DatePrecision::Day),
+            _ => None,
+        }
+    }
 }
 
 impl Relationship {
@@ -891,6 +935,8 @@ impl Relationship {
             valid_from: None,
             valid_to: None,
             superseded_by: None,
+            valid_precision: None,
+            stated_at: None,
         }
     }
     
@@ -917,6 +963,8 @@ impl Relationship {
             valid_from: None,
             valid_to: None,
             superseded_by: None,
+            valid_precision: None,
+            stated_at: None,
         }
     }
 

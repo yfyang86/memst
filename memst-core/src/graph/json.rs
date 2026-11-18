@@ -7,7 +7,7 @@
 
 use super::backend::{entity_matches, relationship_matches, Direction, GraphBackend};
 use crate::error::{Error, Result};
-use crate::types::{Entity, EntityId, EntityQuery, Relationship, RelationshipId, RelationshipQuery};
+use crate::types::{DatePrecision, Entity, EntityId, EntityQuery, Relationship, RelationshipId, RelationshipQuery};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -53,6 +53,10 @@ struct EdgeRecord {
     valid_to: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     superseded_by: Option<RelationshipId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    valid_precision: Option<DatePrecision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 fn default_relevance() -> f32 {
@@ -80,6 +84,8 @@ impl From<&Relationship> for EdgeRecord {
             valid_from: r.valid_from,
             valid_to: r.valid_to,
             superseded_by: r.superseded_by,
+            valid_precision: r.valid_precision,
+            stated_at: r.stated_at,
         }
     }
 }
@@ -102,6 +108,8 @@ impl From<EdgeRecord> for Relationship {
             valid_from: e.valid_from,
             valid_to: e.valid_to,
             superseded_by: e.superseded_by,
+            valid_precision: e.valid_precision,
+            stated_at: e.stated_at,
         }
     }
 }

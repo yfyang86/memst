@@ -120,6 +120,13 @@ def main():
         default="full-context,raw-bm25,raw-dense,raw-hybrid,dense-wide-reason,rerank-reason,graph-entities,graph-facts,default",
         help="comma-separated pipeline names",
     )
+    parser.add_argument(
+        "--categories",
+        help="comma-separated question categories to keep (LoCoMo: temporal, multi-hop, ...; "
+        "LongMemEval: its question types, chosen before any history is built)",
+    )
+    parser.add_argument("--question-ids", help="LongMemEval: comma-separated question ids to run, instead of a sample")
+    parser.add_argument("--reference", help="pipeline the others are compared with, question by question (default raw-dense)")
     parser.add_argument("--pipeline-file", help="JSON file with more pipelines (a list, or one object)")
     parser.add_argument("--list-pipelines", action="store_true", help="print the known pipelines and exit")
     parser.add_argument("--api-url", default="https://api.deepseek.com")
@@ -168,15 +175,23 @@ def main():
     llm = {"api_url": args.api_url, "model": args.model, "extra": extra}
 
     rng = random.Random(args.seed)
+    categories = args.categories.split(",") if args.categories else None
     data = Path(args.data or default_data)
     if args.dataset == "locomo":
         conversations = load_locomo(data)
         if args.conversations > 0:
             conversations = conversations[: args.conversations]
         work_items = [(c, pick_questions(c, args.per_category, rng)) for c in conversations]
+        if categories:
+            work_items = [(c, [q for q in questions if q.category in categories]) for c, questions in work_items]
     else:
-        conversations = load_longmemeval(data, args.per_category, args.seed)
+        ids = args.question_ids.split(",") if args.question_ids else None
+        conversations = load_longmemeval(data, args.per_category, args.seed, categories, ids)
         work_items = [(c, c.questions) for c in conversations]
+    work_items = [(c, questions) for c, questions in work_items if questions]
+    conversations = [c for c, _ in work_items]
+    if not work_items:
+        parser.error("no questions match")
 
     # Reranking is part of answering, so it uses the reader's model.
     reranker = ChatClient(args.api_url, args.model, work / "rerank-cache.jsonl", extra=extra)
@@ -221,6 +236,8 @@ def main():
             "conversations": args.conversations,
             "questions_per_category_per_conversation": args.per_category,
             "seed": args.seed,
+            "categories": args.categories,
+            "reference": args.reference,
             "complete": final,
         }
         return summarise(rows, traces, wanted, pipelines, settings, costs, round(sum(tokens) / max(1, len(tokens))))

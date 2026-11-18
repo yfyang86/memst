@@ -94,7 +94,8 @@ def summarise(rows, traces, names, definitions: Dict[str, dict], settings: dict,
 
     # Differences on the same questions are much tighter than two separate
     # intervals suggest, so compare each pipeline with one reference directly.
-    reference = next((n for n in REFERENCES if n in per_pipeline), None)
+    reference = settings.get("reference") if settings.get("reference") in per_pipeline else None
+    reference = reference or next((n for n in REFERENCES if n in per_pipeline), None)
     paired = {}
     if reference:
         base = {r["question_id"]: r for r in by_pipeline[reference]}

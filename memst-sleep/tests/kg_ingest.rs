@@ -6,7 +6,7 @@ mod common;
 use common::MockLlmProvider;
 use memst_core::graph::conformance::KeywordEmbedder;
 use memst_core::graph::{EntitySearch, KnowledgeGraph};
-use memst_core::types::{EntityQuery, RelationshipQuery};
+use memst_core::types::{DatePrecision, EntityQuery, RelationshipQuery};
 use memst_sleep::kg_extract::KgExtractionService;
 use memst_sleep::kg_ingest::{GraphIngestor, IngestReport, SourceMessage, PARTICIPATED_IN, RUN_ATTRIBUTE};
 use std::sync::Arc;
@@ -288,7 +288,8 @@ async fn imperfect_model_output_is_read_item_by_item() {
     assert_eq!(lyon.confidence, 0.9);
 }
 
-/// Each fact records the message that states it and when it became true.
+/// Each fact records the message that states it, when that was said, and,
+/// only if the text gives it, when the fact became true.
 #[tokio::test]
 async fn facts_cite_their_message_and_carry_a_date() {
     let (mut graph, _dir) = graph();
@@ -308,6 +309,7 @@ async fn facts_cite_their_message_and_carry_a_date() {
         {"subject": "Alice", "predicate": "uses", "object": "Rust", "source": "m0", "when": null},
         {"subject": "Alice", "predicate": "joined", "object": "Mentorship program", "source": "[m1]", "when": "2023-07-15"},
         {"subject": "Alice", "predicate": "likes", "object": "Hiking", "source": "m9"},
+        {"subject": "Alice", "predicate": "started", "object": "Hiking", "source": "m2", "when": "2022"},
         {"subject": "Alice", "predicate": "works at", "object": "Acme"}],
       "events": []}"#;
     let llm = Arc::new(MockLlmProvider::new(vec![answer.to_string()]));
@@ -321,14 +323,22 @@ async fn facts_cite_their_message_and_carry_a_date() {
     let fact = |predicate: &str| {
         graph.find_relationships(RelationshipQuery::new().with_predicate(predicate)).unwrap().remove(0).0
     };
-    // Cited, no date in the text: dated from when it was said.
+    // Cited, no date in the text: we know when it was said, not since when
+    // it has been true.
     assert_eq!(fact("uses").source_message_id, Some(messages[0].id));
-    assert_eq!(fact("uses").valid_from, Some(at(10)));
-    // Cited, with a date the model worked out: that date, not the message's.
-    assert_eq!(fact("joined").source_message_id, Some(messages[1].id));
-    assert_eq!(fact("joined").valid_from.unwrap().to_rfc3339(), "2023-07-15T00:00:00+00:00");
+    assert_eq!((fact("uses").valid_from, fact("uses").stated_at), (None, Some(at(10))));
+    // Cited, with a date the model worked out: true from that date, said on
+    // the message's.
+    let joined = fact("joined");
+    assert_eq!(joined.source_message_id, Some(messages[1].id));
+    assert_eq!(joined.valid_from.unwrap().to_rfc3339(), "2023-07-15T00:00:00+00:00");
+    assert_eq!((joined.valid_precision, joined.stated_at), (Some(DatePrecision::Day), Some(at(17))));
+    // Only a year is known: kept as a year.
+    let started = fact("started");
+    assert_eq!(started.valid_from.unwrap().to_rfc3339(), "2022-01-01T00:00:00+00:00");
+    assert_eq!(started.valid_precision, Some(DatePrecision::Year));
     // Unknown or missing citation: attributed to the batch, undated.
     assert_eq!(fact("likes").source_message_id, Some(messages[0].id));
-    assert_eq!(fact("likes").valid_from, None);
+    assert_eq!((fact("likes").valid_from, fact("likes").stated_at), (None, None));
     assert_eq!(fact("works_at").valid_from, None);
 }

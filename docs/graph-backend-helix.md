@@ -196,8 +196,12 @@ into the shared graph (`memst_sleep::kg_ingest`):
   restored) rather than repeated;
 - events become entities, with a `participated_in` edge from each participant;
 - each relationship records the exact message that states it (the model is
-  shown labelled messages and cites one) and is dated: `valid_from` is the
-  date the text gives for the fact, or else when the message was sent;
+  shown labelled messages and cites one), when that message was sent
+  (`stated_at`), and, only if the text gives it, when the fact became true
+  (`valid_from`, with `valid_precision` saying whether a day, a month or a
+  year is known). The two are kept apart: "we went to the park two weeks
+  ago", sent on 9 September, is stated on 9 September and true from late
+  August. A fact whose text gives no time has no `valid_from`;
 - everything records its session, and each entity the extraction run that
   last wrote it;
 - a relationship whose endpoint cannot be identified is skipped and counted;
@@ -213,8 +217,11 @@ and are also stored by the JSON backend (inside `graph.json`).
 
 ## Facts that change
 
-A relationship records when it was written (`created_at`) and, separately,
-when the fact held: `valid_from`, `valid_to`, and `superseded_by`.
+A relationship records when it was written (`created_at`), when it was said
+(`stated_at`) and, separately, when the fact held: `valid_from`, `valid_to`,
+and `superseded_by`. When a fact replaces another, the old one ends at the
+new one's `valid_from`, or, if that is not known, at when the new one was
+said.
 
 - `assert_single_valued(fact)` is for predicates with one value at a time
   ("lives_in", "works_at"). If the subject already has that predicate with a
