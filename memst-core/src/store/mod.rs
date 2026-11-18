@@ -222,6 +222,15 @@ impl SessionStore {
         // Remove session directory
         fs::remove_dir_all(&session_path)?;
 
+        // Its text must not stay searchable. The index keeps a copy of what
+        // it indexed, so it has to be told. (Facts extracted from the session
+        // into the knowledge graph are a separate store; see
+        // docs/deletion-design.md.)
+        if self.search_index_path().exists() {
+            self.delete_session_from_index(session_id)
+                .map_err(|e| Error::InvalidOperation(format!("session deleted, but its search entries were not: {e}")))?;
+        }
+
         // Update manifest
         let mut manifest = self.read_manifest()?;
         manifest.remove_session(&session_id);
@@ -627,6 +636,58 @@ impl SessionStore {
         }
 
         Ok(results)
+    }
+
+    /// Change a memory in place. Returns whether it was found.
+    pub fn update_memory(
+        &self,
+        session_id: Uuid,
+        memory_id: Uuid,
+        change: impl FnOnce(&mut crate::types::MemoryItem),
+    ) -> Result<bool> {
+        for tier in [
+            crate::types::MemoryTier::Working,
+            crate::types::MemoryTier::ShortTerm,
+            crate::types::MemoryTier::LongTerm,
+        ] {
+            let tier_path = self.memory_tier_path(session_id, tier);
+            if !tier_path.exists() {
+                continue;
+            }
+            let mut memories = self.load_memories(&tier_path)?;
+            if let Some(memory) = memories.iter_mut().find(|m| m.id == memory_id) {
+                change(memory);
+                self.save_memories(&tier_path, &memories)?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Remove a memory from whichever tier holds it, returning it.
+    ///
+    /// The tier file is rewritten without the memory, so its content is no
+    /// longer in the store's current state. Copies made elsewhere (a search
+    /// index it was added to, a commit that captured it, a backup) are not
+    /// touched; see `docs/deletion-design.md`.
+    pub fn remove_memory(&self, session_id: Uuid, memory_id: Uuid) -> Result<Option<crate::types::MemoryItem>> {
+        for tier in [
+            crate::types::MemoryTier::Working,
+            crate::types::MemoryTier::ShortTerm,
+            crate::types::MemoryTier::LongTerm,
+        ] {
+            let tier_path = self.memory_tier_path(session_id, tier);
+            if !tier_path.exists() {
+                continue;
+            }
+            let mut memories = self.load_memories(&tier_path)?;
+            if let Some(pos) = memories.iter().position(|m| m.id == memory_id) {
+                let removed = memories.remove(pos);
+                self.save_memories(&tier_path, &memories)?;
+                return Ok(Some(removed));
+            }
+        }
+        Ok(None)
     }
 
     /// Promote a memory to a higher tier.
@@ -1934,5 +1995,30 @@ mod tests {
 
         let sessions = store.list_sessions().unwrap();
         assert_eq!(sessions.len(), session_count);
+    }
+
+    #[test]
+    fn deleting_a_session_removes_it_from_search() {
+        use crate::types::{Message, Role, SessionMetadata};
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::init(dir.path()).unwrap();
+        let keep = store.create_session(SessionMetadata::new("keep", "m")).unwrap();
+        let gone = store.create_session(SessionMetadata::new("gone", "m")).unwrap();
+        for (session, text) in [(keep, "the lighthouse keeper stays"), (gone, "the lighthouse secret goes")] {
+            let message = Message::new(Role::User, text);
+            store.append_message(session, message.clone()).unwrap();
+            store.index_message(session, &message).unwrap();
+        }
+        let found = |store: &SessionStore, term: &str| store.search_messages(vec![term.to_string()], None, 10).unwrap().len();
+        assert_eq!(found(&store, "lighthouse"), 2);
+
+        store.delete_session(gone).unwrap();
+        assert_eq!(found(&store, "lighthouse"), 1);
+        assert_eq!(found(&store, "secret"), 0);
+        // And it stays gone when the store is opened afresh.
+        drop(store);
+        let store = SessionStore::open(dir.path()).unwrap();
+        assert_eq!(found(&store, "secret"), 0);
+        assert_eq!(found(&store, "keeper"), 1);
     }
 }

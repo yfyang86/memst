@@ -114,6 +114,51 @@ enum Command {
         #[command(subcommand)]
         command: GraphCommand,
     },
+
+    #[command(about = "Serve one owner's memory to MCP clients, and review what they wrote")]
+    Mcp {
+        /// Whose memory. Required: a server is always bound to one owner,
+        /// and clients cannot name another.
+        #[arg(long, global = true)]
+        owner: Option<String>,
+
+        #[command(subcommand)]
+        command: McpCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpCommand {
+    /// Run an MCP server on standard input and output (for Claude Code,
+    /// Cursor and other MCP clients). It opens no network port.
+    Serve {
+        /// Offer only the tools that read. Nothing in the store is changed.
+        #[arg(long)]
+        read_only: bool,
+
+        /// What to do with a note that reads like an instruction to a model:
+        /// quarantine (keep it aside until you approve it), reject or off.
+        #[arg(long, default_value = "quarantine")]
+        screening: String,
+    },
+    /// List the notes set aside for review.
+    Review,
+    /// Release a note from review, or mark any note as approved by you.
+    Approve {
+        /// The note's id
+        id: Uuid,
+    },
+    /// Delete a note.
+    Forget {
+        /// The note's id
+        id: Uuid,
+    },
+    /// Show the most recent entries of the audit log.
+    Audit {
+        /// How many entries
+        #[arg(long, default_value_t = 20)]
+        last: usize,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -925,6 +970,73 @@ fn main() -> Result<()> {
             println!("  Working: {}", working);
             println!("  Short-term: {}", short_term);
             println!("  Long-term: {}", long_term);
+        }
+
+        Command::Mcp { owner, command } => {
+            use memst_mcp::service::{visible_tags, MemoryService};
+            use memst_mcp::{McpAdapter, McpServer, Scope, Screening, WritePolicy};
+
+            let Some(owner) = owner else {
+                anyhow::bail!("--owner is required: say whose memory this is (for example --owner alice)");
+            };
+            let open = |read_only: bool, policy: WritePolicy| -> Result<MemoryService> {
+                let scope = Scope::new(owner, read_only).map_err(anyhow::Error::msg)?;
+                MemoryService::open(&args.store, scope, policy).map_err(|e| anyhow::anyhow!("{e}"))
+            };
+            match command {
+                McpCommand::Serve { read_only, screening } => {
+                    let screening = match screening.as_str() {
+                        "quarantine" => Screening::Quarantine,
+                        "reject" => Screening::Reject,
+                        "off" => Screening::Off,
+                        other => anyhow::bail!("unknown screening '{other}' (expected quarantine, reject or off)"),
+                    };
+                    let service = open(*read_only, WritePolicy { screening, ..WritePolicy::default() })?;
+                    // Standard output carries the protocol and nothing else.
+                    eprintln!(
+                        "memst: serving {} memory for owner '{}' from {} over stdio",
+                        if *read_only { "read-only" } else { "read-write" },
+                        owner,
+                        args.store.display()
+                    );
+                    let server = McpServer::new(McpAdapter::connected(std::sync::Arc::new(service)))?;
+                    server.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
+                }
+                McpCommand::Review => {
+                    let waiting = open(false, WritePolicy::default())?.quarantined().map_err(|e| anyhow::anyhow!("{e}"))?;
+                    if waiting.is_empty() {
+                        println!("Nothing is waiting for review.");
+                    }
+                    for memory in waiting {
+                        println!("{}  written {} by {}", memory.id, memory.created_at.format("%Y-%m-%d %H:%M"), memory.source);
+                        for reason in memst_mcp::policy::instruction_like(&memory.content) {
+                            println!("  set aside because it {reason}");
+                        }
+                        let tags = visible_tags(&memory);
+                        if !tags.is_empty() {
+                            println!("  tags: {}", tags.join(", "));
+                        }
+                        // Shown escaped, so hidden characters are visible.
+                        println!("  {}\n", memory.content.escape_default());
+                    }
+                }
+                McpCommand::Approve { id } => {
+                    open(false, WritePolicy::default())?.approve(*id).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    println!("Approved {id}.");
+                }
+                McpCommand::Forget { id } => {
+                    open(false, WritePolicy::default())?.forget(*id).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    println!("Forgot {id}.");
+                }
+                McpCommand::Audit { last } => {
+                    let path = open(false, WritePolicy::default())?.audit_path();
+                    let log = std::fs::read_to_string(&path).unwrap_or_default();
+                    let lines: Vec<&str> = log.lines().collect();
+                    for line in &lines[lines.len().saturating_sub(*last)..] {
+                        println!("{line}");
+                    }
+                }
+            }
         }
 
         Command::Graph { backend, owner, all_sessions, embedder, command } => {

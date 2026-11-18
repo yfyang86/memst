@@ -15,7 +15,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Context assembly** with token-budget-aware retrieval
 - **Sleep-time consolidation** for automatic memory maintenance
 - **Multi-agent support** with isolated worktrees
-- **MCP (Model Context Protocol)** adapter for Claude/Cursor integration
+- **MCP (Model Context Protocol)** server for Claude Code, Cursor and other MCP clients
 - **Knowledge Graph** for entity and relationship tracking, stored in embedded HelixDB with BM25 and vector entity search ([details](docs/graph-backend-helix.md))
 - **KG decay** - Temporal relevance decay for entities/relationships
 - **KG evolution** - Automatic entity merging and deprecation
@@ -42,7 +42,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Progressive disclosure** - Selective memory inclusion
 
 ### MCP Integration
-- **MCP tool definitions and request handling** for Claude Code, Cursor, and other MCP clients. The tool handlers are placeholders and are not yet connected to a store
+- **An MCP server over stdio** (`memst --store DIR mcp --owner NAME serve`): search, read, write and forget notes in one owner's memory. Writes that read like instructions are set aside until you approve them. See [docs/mcp.md](docs/mcp.md)
 - **Tools**: memory_read, memory_write, memory_search, skill_lookup, context_build
 
 ### KG Extraction v2 (New)
@@ -58,7 +58,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **memst-repo**: Git-alike MemRepo backend (WAL, merge, worktrees)
 - **memst-sleep**: Async sleep-time consolidation pipeline
 - **memst-extract-v2**: KG extraction with domain ontologies (SQLite storage)
-- **memst-mcp**: MCP (Model Context Protocol) adapter
+- **memst-mcp**: MCP (Model Context Protocol) server
 - **memst-cli**: `memst` CLI binary
 - **memst-py**: Python extension module (`import memst`)
 - **memst-lib**: Shared library/FFI glue
@@ -325,7 +325,7 @@ cargo test --test uat_phase10_sleep_time
 cargo test --test uat_phase11_semantic_merge
 cargo test --test uat_phase12_skills
 cargo test --test uat_phase13_multi_agent
-cargo test --test uat_phase14_mcp
+cargo test -p memst-mcp
 cargo test --test end_to_end_simulation
 
 # Enable network integration tests (LLM/embedding)
@@ -358,7 +358,7 @@ maturin develop --release && python -m pytest memst-py/tests -v
 | P11 | Semantic Merge (fast-forward, conflict detection) | ⚠️ Partial: three-way merge does not load memories from commits |
 | P12 | Skills (procedural memory) | ✅ Complete |
 | P13 | Multi-Agent (worktrees, agent registry) | ✅ Complete |
-| P14 | MCP Adapter | ⚠️ Partial: handlers are placeholders |
+| P14 | MCP server | ✅ stdio server backed by the store |
 | P15 | Memory Evolution, KG decay | ✅ Complete |
 | P16 | KG Extraction v2 (SQLite) | ✅ Complete |
 

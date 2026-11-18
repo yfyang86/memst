@@ -61,7 +61,7 @@ unreviewed preprints and are marked there.
 | Consolidation (`memst-sleep`) | Sleep-time jobs, A-MEM style evolution | In line with current practice, but consolidation rewrites rather than appends, and extraction hallucination is not measured. |
 | Raw evidence | Messages are kept in the session store | Good: the raw episodes exist. They are not offered as a retrieval strategy alongside the consolidated ones. |
 | Skills | Procedural memory with lookup | No update / deprecate path, flat retrieval, no import or export in the common `SKILL.md` layout. |
-| Security | None | No provenance beyond `session_id` / `source_message_id`, no write gating, no ownership check at retrieval, MCP adapter unauthenticated. |
+| Security | An MCP server bound to one owner, with quarantine of instruction-like writes, server-set trust and ownership tags, labelled reads, limits, an audit log and a read-only mode | Covers the consensus defences at the tool boundary: provenance, write gating, ownership checks, labelled retrieval. Not covered: detection of false but plausible notes, encryption, and the command line and Python paths, which bypass the checks. Deletion from history is designed, not built (`docs/deletion-design.md`). |
 | Graph substrate | Embedded HelixDB (graph + vector + BM25). Entity search uses its BM25 and vector indexes, fused by reciprocal rank, with MemSt's substring matching as fallback | Matches the hybrid substrate the field converged on. Relationships are searchable by BM25. Entities are embedded only on request; see [graph-backend-helix.md](../graph-backend-helix.md). |
 
 ## What MemSt's own evaluation now shows

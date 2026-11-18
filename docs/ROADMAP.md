@@ -26,7 +26,7 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 5 | Evaluation harness | **Done** (pilots on LoCoMo and LongMemEval-S) | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
 | 5b | Full evaluation and read path | **Done** | Full runs reported with paired tests and a second judge; a read path that beats plain retrieval on the pilots |
 | 5c | A narrower job for the graph | **Done**: not passed, reported as a negative result | The graph beats raw retrieval on temporal and knowledge-update questions by a paired test, or is reported as a negative result |
-| 6 | Security and MCP | Next | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
+| 6 | Security and MCP | **Done** | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
 
 The manuscript update follows sprint 5.
 
@@ -182,10 +182,40 @@ retrieval cannot return all of them (LongMemEval-M, about 1.5 million
 tokens per history), and tasks that edit memory (corrections, deletion,
 "as of" queries), which need a benchmark of their own.
 
-**6. Security and MCP.** Connect the MCP tool handlers to a real store (they
-are placeholders today). Write gating, ownership checks and authentication.
-Deletion design for a store that keeps history. One memory-poisoning test
-suite.
+**6. Security and MCP.** Done.
+
+- **A real MCP server.** `memst mcp serve` speaks JSON-RPC over stdio and is
+  backed by the store; the earlier adapter returned fixed text and had no
+  transport. Tools: `memory_search`, `memory_read`, `memory_get`,
+  `memory_status`, `memory_write`, `memory_forget`. Checked against the
+  official MCP Python SDK client. `skill_lookup` and `context_build`, which
+  were never implemented, are no longer advertised.
+- **Scope.** A server is bound to one owner at start (`--owner` is
+  required). No tool takes an owner, session or path; an argument a tool
+  does not define is refused. `--read-only` removes the writing tools.
+- **Write gating.** Notes that read like instructions are quarantined until
+  the store's owner approves them on the command line; limits on size, rate
+  and count; tags that claim trust or ownership are dropped; every write,
+  deletion and approval is logged without content.
+- **Reading back.** Returned notes are fenced, labelled with their source
+  and whether they were approved, and introduced as records, not
+  instructions.
+- **A poisoning test suite**: ten attacks, each with the defence that stops
+  it (`memst-mcp/tests/poisoning.rs`).
+- **Deletion.** `docs/deletion-design.md` sets out four levels of deletion,
+  what is implemented and the design for the rest. `memory_forget` removes a
+  note with no copy left under the store. Deleting a session now also
+  removes it from the search index; before, its text stayed searchable.
+- **The store lock.** A store handle holds an exclusive lock for its whole
+  life, so a long-running server would have blocked everything else. The MCP
+  server takes it per operation.
+
+Limits, stated in `docs/mcp.md`: screening catches plainly phrased
+instructions, not a false statement dressed as a fact; owners are separated
+by the server, not by the file system; there is no network transport and so
+no authentication of its own; the command line and Python module bypass the
+MCP checks. Not built: deleting a single message, cascading deletion to
+derived facts, and deletion from history (designed, in the deletion note).
 
 ## Known gaps not yet scheduled
 

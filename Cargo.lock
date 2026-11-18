@@ -3144,9 +3144,11 @@ dependencies = [
  "memst-core",
  "memst-embed",
  "memst-graph-helix",
+ "memst-mcp",
  "memst-sleep",
  "predicates",
  "serde_json",
+ "tempfile",
  "tokio",
  "uuid",
 ]
@@ -3238,15 +3240,13 @@ dependencies = [
 name = "memst-mcp"
 version = "1.0.0"
 dependencies = [
- "anyhow",
- "async-trait",
+ "chrono",
  "memst-core",
- "memst-repo",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
- "tokio-test",
  "uuid",
 ]
 

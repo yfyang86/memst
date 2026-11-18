@@ -9,6 +9,7 @@ memst-core = { path = "../memst-core" }
 memst-graph-helix = { path = "../memst-graph-helix", optional = true }
 memst-embed = { path = "../memst-embed", optional = true }
 memst-sleep = { path = "../memst-sleep" }
+memst-mcp = { path = "../memst-mcp" }
 clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
@@ -27,6 +28,7 @@ helix = ["dep:memst-graph-helix"]
 local-embeddings = ["dep:memst-embed"]
 
 [dev-dependencies]
+tempfile = "3.8"
 assert_cmd = "2.0"
 predicates = "3.0"
 
