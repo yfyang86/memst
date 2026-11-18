@@ -13,6 +13,11 @@ network port.
 
 ## Connecting a client
 
+**Pi** has no built-in MCP. Use the native extension in
+[`integrations/pi`](../integrations/pi/README.md), which adds the index to
+every session, records transcripts and gives you `/memory`; it runs this
+server for you.
+
 Most clients take a command and its arguments. For Claude Code:
 
 ```bash

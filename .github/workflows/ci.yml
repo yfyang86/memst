@@ -73,3 +73,27 @@ jobs:
           python -m pip install ../dist/*.whl
       - name: Test
         run: python -m pytest memst-py/tests -q
+
+  pi:
+    name: pi extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The extension's tests drive the real memst program. The MCP server
+      # does not need the graph backend, so build without it.
+      - name: Build memst
+        run: cargo build --locked -p memst-cli --no-default-features
+      # Node 22.6 or later runs TypeScript directly.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test the extension
+        working-directory: integrations/pi
+        env:
+          MEMST_BIN: ${{ github.workspace }}/target/debug/memst
+        run: |
+          npm ci
+          npm test

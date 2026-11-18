@@ -1,0 +1,17 @@
+{
+  "name": "memst-pi",
+  "version": "0.1.0",
+  "description": "MemSt memory for the Pi coding agent: notes with history, an index in every session, and a searchable record of earlier sessions",
+  "license": "Apache-2.0",
+  "keywords": ["pi-package", "memory", "memst"],
+  "type": "module",
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test --test-force-exit test/*.test.ts"
+  },
+  "devDependencies": {
+    "typebox": "^1.0.0"
+  }
+}
