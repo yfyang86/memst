@@ -25,8 +25,8 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 4 | Non-destructive, time-aware graph | **Done**, one item moved to sprint 5 | A corrected fact outranks and hides the stale one; an entity merge can be undone |
 | 5 | Evaluation harness | **Done** (pilots on LoCoMo and LongMemEval-S) | One command reproduces every table; MemSt is compared against full-context and raw-history baselines |
 | 5b | Full evaluation and read path | **Done** | Full runs reported with paired tests and a second judge; a read path that beats plain retrieval on the pilots |
-| 5c | A narrower job for the graph | Next | The graph beats raw retrieval on temporal and knowledge-update questions by a paired test, or is reported as a negative result |
-| 6 | Security and MCP | After 5c | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
+| 5c | A narrower job for the graph | **Done**: not passed, reported as a negative result | The graph beats raw retrieval on temporal and knowledge-update questions by a paired test, or is reported as a negative result |
+| 6 | Security and MCP | Next | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
 
 The manuscript update follows sprint 5.
 
@@ -142,21 +142,45 @@ Not done: those two pipelines at full scale, all 500 LongMemEval-S questions,
 and a judge from another provider. The commands are in
 `benchmarks/harness/RUNNING.md`.
 
-**5c. A narrower job for the graph (next).** The graph is not a better
-general retriever, with either reader. Test whether it earns its extraction
-cost where it should: dates and superseded facts (LongMemEval's
-knowledge-update and temporal questions, LoCoMo's temporal ones), with the
-reasoning reader, at 100 questions or more per category.
+**5c. A narrower job for the graph.** Done; the test was not passed.
 
-- Show only the source turns of the facts found, without the fact lines:
-  with the answer turn in context, the reader is right 80% of the time
-  without fact lines and 75% with them.
-- Use validity in time at retrieval: when two facts conflict, show which is
-  current.
-- Cut extraction cost (larger batches, fewer calls).
-- Pass: a reliable gain over `dense-wide-reason` on those categories by the
-  paired test. Fail: report it as a negative result and position MemSt on
-  the versioned store.
+The question was whether the graph earns its extraction cost on questions
+about dates and changed facts, when added to the best raw pipeline and read
+by the same reasoning reader. The criterion, fixed beforehand, was a reliable
+gain in judged accuracy over `dense-wide-reason` on the same questions.
+
+- **LoCoMo, all 321 temporal questions:** no use of the graph gives a
+  reliable gain, by either judge. The best one (the graph as an index to
+  source messages) is 2.5 points ahead, interval −0.6 to +5.9, the same as
+  reranking, which needs no extraction. Showing the reader extracted facts,
+  as lines or as a timeline, does not help. The graph alone is 12 points
+  behind.
+- **LongMemEval-S, knowledge-update and temporal questions:** on 22 questions (10 of each type and
+  2 abstention ones) the best raw pipeline answers every one correctly, so
+  there is nothing for the graph to add; every graph variant is level or
+  one to three answers behind.
+- **An engine fault was found and fixed.** Ingestion dated a fact with its
+  message's date when the text gave none, so "we went two weeks ago" was
+  dated to the day it was said. `stated_at` and `valid_from` are now
+  separate, with the precision of the date. This raised the graph pipeline
+  with a direct reader by 12 points on temporal questions and did not change
+  the verdict.
+- **Extraction cost cannot simply be cut.** Batches four times larger give a
+  quarter of the calls and half the facts.
+
+What this means: on these benchmarks, with this reader, the knowledge graph
+is not a retrieval advantage in any role tried. It is at best level with raw
+retrieval at 18 to 47 extra model calls per history. The position this
+supports is MemSt as a versioned, auditable store whose retrieval is raw
+turns with a reasoning reader, with the graph as a structured, time-aware
+view for uses these benchmarks do not measure (browsing, audit, correction,
+rollback), not as the thing that answers questions.
+
+Still untested, and the only places left where the graph could win:
+questions that need facts combined across many sessions at a scale where
+retrieval cannot return all of them (LongMemEval-M, about 1.5 million
+tokens per history), and tasks that edit memory (corrections, deletion,
+"as of" queries), which need a benchmark of their own.
 
 **6. Security and MCP.** Connect the MCP tool handlers to a real store (they
 are placeholders today). Write gating, ownership checks and authentication.

@@ -1,0 +1,1021 @@
+{
+  "settings": {
+    "dataset": "LoCoMo",
+    "dataset_key": "locomo",
+    "reader_and_judge_model": "deepseek-flash",
+    "judge_model": "deepseek-flash",
+    "thinking": "off",
+    "embedder": "local",
+    "conversations": 0,
+    "questions_per_category_per_conversation": 0,
+    "seed": 7,
+    "categories": "temporal",
+    "complete": true,
+    "questions": 321,
+    "reference": "dense-wide-reason"
+  },
+  "pipelines": {
+    "raw-dense": {
+      "n": 321,
+      "f1": 0.4341,
+      "f1_low": 0.3965,
+      "f1_high": 0.471,
+      "judged_accuracy": 0.6044,
+      "judged_low": 0.5483,
+      "judged_high": 0.6573,
+      "evidence_in_context": 0.8536,
+      "prompt_tokens_mean": 1082,
+      "read_llm_calls_mean": 1.0,
+      "retrieval_p50_ms": 54.4,
+      "retrieval_p95_ms": 63.9,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.4341,
+          "f1_low": 0.3965,
+          "f1_high": 0.471,
+          "judged_accuracy": 0.6044,
+          "judged_low": 0.5483,
+          "judged_high": 0.6573,
+          "evidence_in_context": 0.8536,
+          "prompt_tokens_mean": 1082,
+          "read_llm_calls_mean": 1.0,
+          "retrieval_p50_ms": 54.4,
+          "retrieval_p95_ms": 63.9
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.4341,
+        "f1_low": 0.3965,
+        "f1_high": 0.471,
+        "judged_accuracy": 0.6044,
+        "judged_low": 0.5483,
+        "judged_high": 0.6573,
+        "evidence_in_context": 0.8536,
+        "prompt_tokens_mean": 1082,
+        "read_llm_calls_mean": 1.0,
+        "retrieval_p50_ms": 54.4,
+        "retrieval_p95_ms": 63.9
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "turns (method=dense, k=20)",
+          "reached_evidence": 0.8536,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 20.0,
+          "p50_ms": 54.3
+        }
+      ],
+      "definition": {
+        "name": "raw-dense",
+        "description": "No memory construction: embeddings over the raw turns.",
+        "stages": [
+          {
+            "stage": "turns",
+            "method": "dense",
+            "k": 20
+          }
+        ]
+      }
+    },
+    "dense-wide-reason": {
+      "n": 321,
+      "f1": 0.5909,
+      "f1_low": 0.5471,
+      "f1_high": 0.6334,
+      "judged_accuracy": 0.7539,
+      "judged_low": 0.7072,
+      "judged_high": 0.8006,
+      "evidence_in_context": 0.8972,
+      "prompt_tokens_mean": 2095,
+      "read_llm_calls_mean": 1.0,
+      "retrieval_p50_ms": 54.2,
+      "retrieval_p95_ms": 75.0,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.5909,
+          "f1_low": 0.5471,
+          "f1_high": 0.6334,
+          "judged_accuracy": 0.7539,
+          "judged_low": 0.7072,
+          "judged_high": 0.8006,
+          "evidence_in_context": 0.8972,
+          "prompt_tokens_mean": 2095,
+          "read_llm_calls_mean": 1.0,
+          "retrieval_p50_ms": 54.2,
+          "retrieval_p95_ms": 75.0
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.5909,
+        "f1_low": 0.5471,
+        "f1_high": 0.6334,
+        "judged_accuracy": 0.7539,
+        "judged_low": 0.7072,
+        "judged_high": 0.8006,
+        "evidence_in_context": 0.8972,
+        "prompt_tokens_mean": 2095,
+        "read_llm_calls_mean": 1.0,
+        "retrieval_p50_ms": 54.2,
+        "retrieval_p95_ms": 75.0
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "turns (method=dense, k=40)",
+          "reached_evidence": 0.8972,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 40.0,
+          "p50_ms": 54.1
+        }
+      ],
+      "definition": {
+        "name": "dense-wide-reason",
+        "description": "No memory construction: top 40 turns by embedding, and a reader that works through the evidence before answering.",
+        "stages": [
+          {
+            "stage": "turns",
+            "method": "dense",
+            "k": 40
+          }
+        ],
+        "reader": {
+          "mode": "reason"
+        }
+      }
+    },
+    "rerank-reason": {
+      "n": 321,
+      "f1": 0.6083,
+      "f1_low": 0.5668,
+      "f1_high": 0.6488,
+      "judged_accuracy": 0.7788,
+      "judged_low": 0.7321,
+      "judged_high": 0.8224,
+      "evidence_in_context": 0.9097,
+      "prompt_tokens_mean": 4521,
+      "read_llm_calls_mean": 2.0,
+      "retrieval_p50_ms": 56.6,
+      "retrieval_p95_ms": 74.4,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.6083,
+          "f1_low": 0.5668,
+          "f1_high": 0.6488,
+          "judged_accuracy": 0.7788,
+          "judged_low": 0.7321,
+          "judged_high": 0.8224,
+          "evidence_in_context": 0.9097,
+          "prompt_tokens_mean": 4521,
+          "read_llm_calls_mean": 2.0,
+          "retrieval_p50_ms": 56.6,
+          "retrieval_p95_ms": 74.4
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.6083,
+        "f1_low": 0.5668,
+        "f1_high": 0.6488,
+        "judged_accuracy": 0.7788,
+        "judged_low": 0.7321,
+        "judged_high": 0.8224,
+        "evidence_in_context": 0.9097,
+        "prompt_tokens_mean": 4521,
+        "read_llm_calls_mean": 2.0,
+        "retrieval_p50_ms": 56.6,
+        "retrieval_p95_ms": 74.4
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "turns (method=hybrid, k=60)",
+          "reached_evidence": 0.9283,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 60.0,
+          "p50_ms": 56.3
+        },
+        {
+          "stage": "rerank (keep=20)",
+          "reached_evidence": 0.9097,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 20.0,
+          "p50_ms": 0.2
+        }
+      ],
+      "definition": {
+        "name": "rerank-reason",
+        "description": "No memory construction: 60 candidate turns (BM25 and embeddings fused), a model keeps the 20 most useful, and the reader works through the evidence before answering.",
+        "stages": [
+          {
+            "stage": "turns",
+            "method": "hybrid",
+            "k": 60
+          },
+          {
+            "stage": "rerank",
+            "keep": 20
+          }
+        ],
+        "reader": {
+          "mode": "reason"
+        }
+      }
+    },
+    "default": {
+      "n": 321,
+      "f1": 0.5648,
+      "f1_low": 0.5218,
+      "f1_high": 0.6063,
+      "judged_accuracy": 0.6947,
+      "judged_low": 0.6449,
+      "judged_high": 0.7445,
+      "evidence_in_context": 0.8941,
+      "prompt_tokens_mean": 1500,
+      "read_llm_calls_mean": 1.0,
+      "retrieval_p50_ms": 138.5,
+      "retrieval_p95_ms": 202.4,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.5648,
+          "f1_low": 0.5218,
+          "f1_high": 0.6063,
+          "judged_accuracy": 0.6947,
+          "judged_low": 0.6449,
+          "judged_high": 0.7445,
+          "evidence_in_context": 0.8941,
+          "prompt_tokens_mean": 1500,
+          "read_llm_calls_mean": 1.0,
+          "retrieval_p50_ms": 138.5,
+          "retrieval_p95_ms": 202.4
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.5648,
+        "f1_low": 0.5218,
+        "f1_high": 0.6063,
+        "judged_accuracy": 0.6947,
+        "judged_low": 0.6449,
+        "judged_high": 0.7445,
+        "evidence_in_context": 0.8941,
+        "prompt_tokens_mean": 1500,
+        "read_llm_calls_mean": 1.0,
+        "retrieval_p50_ms": 138.5,
+        "retrieval_p95_ms": 202.4
+      },
+      "write_llm_calls_per_conversation": 17.8,
+      "write_llm_input_tokens_per_conversation_estimate": 27029,
+      "write_seconds_per_conversation": 106.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "facts (method=hybrid, k=30)",
+          "reached_evidence": 0.7352,
+          "facts_added_mean": 30.0,
+          "turns_added_mean": 0.0,
+          "p50_ms": 83.5
+        },
+        {
+          "stage": "fact_sources (max=8)",
+          "reached_evidence": 0.6791,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 8.0,
+          "p50_ms": 0.0
+        },
+        {
+          "stage": "turns (method=hybrid, k=12)",
+          "reached_evidence": 0.2523,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 10.1,
+          "p50_ms": 55.9
+        }
+      ],
+      "definition": {
+        "name": "default",
+        "description": "Search the graph by relationship, bring the messages those facts were stated in, and add raw-turn retrieval.",
+        "stages": [
+          {
+            "stage": "facts",
+            "method": "hybrid",
+            "k": 30
+          },
+          {
+            "stage": "fact_sources",
+            "max": 8
+          },
+          {
+            "stage": "turns",
+            "method": "hybrid",
+            "k": 12
+          }
+        ],
+        "context": {
+          "max_facts": 30,
+          "max_turns": 20
+        }
+      }
+    },
+    "default-reason": {
+      "n": 321,
+      "f1": 0.5823,
+      "f1_low": 0.5388,
+      "f1_high": 0.6253,
+      "judged_accuracy": 0.7539,
+      "judged_low": 0.7072,
+      "judged_high": 0.7975,
+      "evidence_in_context": 0.8941,
+      "prompt_tokens_mean": 1556,
+      "read_llm_calls_mean": 1.0,
+      "retrieval_p50_ms": 139.8,
+      "retrieval_p95_ms": 205.1,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.5823,
+          "f1_low": 0.5388,
+          "f1_high": 0.6253,
+          "judged_accuracy": 0.7539,
+          "judged_low": 0.7072,
+          "judged_high": 0.7975,
+          "evidence_in_context": 0.8941,
+          "prompt_tokens_mean": 1556,
+          "read_llm_calls_mean": 1.0,
+          "retrieval_p50_ms": 139.8,
+          "retrieval_p95_ms": 205.1
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.5823,
+        "f1_low": 0.5388,
+        "f1_high": 0.6253,
+        "judged_accuracy": 0.7539,
+        "judged_low": 0.7072,
+        "judged_high": 0.7975,
+        "evidence_in_context": 0.8941,
+        "prompt_tokens_mean": 1556,
+        "read_llm_calls_mean": 1.0,
+        "retrieval_p50_ms": 139.8,
+        "retrieval_p95_ms": 205.1
+      },
+      "write_llm_calls_per_conversation": 17.8,
+      "write_llm_input_tokens_per_conversation_estimate": 27029,
+      "write_seconds_per_conversation": 106.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "facts (method=hybrid, k=30)",
+          "reached_evidence": 0.7352,
+          "facts_added_mean": 30.0,
+          "turns_added_mean": 0.0,
+          "p50_ms": 83.0
+        },
+        {
+          "stage": "fact_sources (max=8)",
+          "reached_evidence": 0.6791,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 8.0,
+          "p50_ms": 0.0
+        },
+        {
+          "stage": "turns (method=hybrid, k=12)",
+          "reached_evidence": 0.2523,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 10.1,
+          "p50_ms": 56.8
+        }
+      ],
+      "definition": {
+        "name": "default-reason",
+        "description": "The default graph pipeline, with a reasoning reader.",
+        "stages": [
+          {
+            "stage": "facts",
+            "method": "hybrid",
+            "k": 30
+          },
+          {
+            "stage": "fact_sources",
+            "max": 8
+          },
+          {
+            "stage": "turns",
+            "method": "hybrid",
+            "k": 12
+          }
+        ],
+        "context": {
+          "max_facts": 30,
+          "max_turns": 20
+        },
+        "reader": {
+          "mode": "reason"
+        }
+      }
+    },
+    "sources-only-reason": {
+      "n": 321,
+      "f1": 0.5958,
+      "f1_low": 0.55,
+      "f1_high": 0.6342,
+      "judged_accuracy": 0.7445,
+      "judged_low": 0.6916,
+      "judged_high": 0.7913,
+      "evidence_in_context": 0.8941,
+      "prompt_tokens_mean": 1127,
+      "read_llm_calls_mean": 1.0,
+      "retrieval_p50_ms": 141.0,
+      "retrieval_p95_ms": 203.5,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.5958,
+          "f1_low": 0.55,
+          "f1_high": 0.6342,
+          "judged_accuracy": 0.7445,
+          "judged_low": 0.6916,
+          "judged_high": 0.7913,
+          "evidence_in_context": 0.8941,
+          "prompt_tokens_mean": 1127,
+          "read_llm_calls_mean": 1.0,
+          "retrieval_p50_ms": 141.0,
+          "retrieval_p95_ms": 203.5
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.5958,
+        "f1_low": 0.55,
+        "f1_high": 0.6342,
+        "judged_accuracy": 0.7445,
+        "judged_low": 0.6916,
+        "judged_high": 0.7913,
+        "evidence_in_context": 0.8941,
+        "prompt_tokens_mean": 1127,
+        "read_llm_calls_mean": 1.0,
+        "retrieval_p50_ms": 141.0,
+        "retrieval_p95_ms": 203.5
+      },
+      "write_llm_calls_per_conversation": 17.8,
+      "write_llm_input_tokens_per_conversation_estimate": 27029,
+      "write_seconds_per_conversation": 106.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "facts (method=hybrid, k=30)",
+          "reached_evidence": 0.7352,
+          "facts_added_mean": 30.0,
+          "turns_added_mean": 0.0,
+          "p50_ms": 84.5
+        },
+        {
+          "stage": "fact_sources (max=8)",
+          "reached_evidence": 0.6791,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 8.0,
+          "p50_ms": 0.0
+        },
+        {
+          "stage": "turns (method=hybrid, k=12)",
+          "reached_evidence": 0.2523,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 10.1,
+          "p50_ms": 56.9
+        }
+      ],
+      "definition": {
+        "name": "sources-only-reason",
+        "description": "The graph as an index only: the source messages of the facts found plus raw turns, with no fact lines.",
+        "stages": [
+          {
+            "stage": "facts",
+            "method": "hybrid",
+            "k": 30
+          },
+          {
+            "stage": "fact_sources",
+            "max": 8
+          },
+          {
+            "stage": "turns",
+            "method": "hybrid",
+            "k": 12
+          }
+        ],
+        "context": {
+          "max_facts": 0,
+          "max_turns": 20
+        },
+        "reader": {
+          "mode": "reason"
+        }
+      }
+    },
+    "wide+facts-reason": {
+      "n": 321,
+      "f1": 0.5814,
+      "f1_low": 0.5381,
+      "f1_high": 0.6238,
+      "judged_accuracy": 0.7352,
+      "judged_low": 0.6854,
+      "judged_high": 0.785,
+      "evidence_in_context": 0.8972,
+      "prompt_tokens_mean": 2524,
+      "read_llm_calls_mean": 1.0,
+      "retrieval_p50_ms": 139.8,
+      "retrieval_p95_ms": 187.2,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.5814,
+          "f1_low": 0.5381,
+          "f1_high": 0.6238,
+          "judged_accuracy": 0.7352,
+          "judged_low": 0.6854,
+          "judged_high": 0.785,
+          "evidence_in_context": 0.8972,
+          "prompt_tokens_mean": 2524,
+          "read_llm_calls_mean": 1.0,
+          "retrieval_p50_ms": 139.8,
+          "retrieval_p95_ms": 187.2
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.5814,
+        "f1_low": 0.5381,
+        "f1_high": 0.6238,
+        "judged_accuracy": 0.7352,
+        "judged_low": 0.6854,
+        "judged_high": 0.785,
+        "evidence_in_context": 0.8972,
+        "prompt_tokens_mean": 2524,
+        "read_llm_calls_mean": 1.0,
+        "retrieval_p50_ms": 139.8,
+        "retrieval_p95_ms": 187.2
+      },
+      "write_llm_calls_per_conversation": 17.8,
+      "write_llm_input_tokens_per_conversation_estimate": 27029,
+      "write_seconds_per_conversation": 106.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "turns (method=dense, k=40)",
+          "reached_evidence": 0.8972,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 40.0,
+          "p50_ms": 55.4
+        },
+        {
+          "stage": "facts (method=hybrid, k=30)",
+          "reached_evidence": 0.7352,
+          "facts_added_mean": 30.0,
+          "turns_added_mean": 0.0,
+          "p50_ms": 84.4
+        }
+      ],
+      "definition": {
+        "name": "wide+facts-reason",
+        "description": "The best raw pipeline (40 turns by embedding, reasoning reader) with the graph's facts added as lines.",
+        "stages": [
+          {
+            "stage": "turns",
+            "method": "dense",
+            "k": 40
+          },
+          {
+            "stage": "facts",
+            "method": "hybrid",
+            "k": 30
+          }
+        ],
+        "context": {
+          "max_facts": 30
+        },
+        "reader": {
+          "mode": "reason"
+        }
+      }
+    },
+    "wide+timeline-reason": {
+      "n": 321,
+      "f1": 0.6003,
+      "f1_low": 0.5595,
+      "f1_high": 0.6395,
+      "judged_accuracy": 0.7664,
+      "judged_low": 0.7227,
+      "judged_high": 0.8131,
+      "evidence_in_context": 0.8972,
+      "prompt_tokens_mean": 2541,
+      "read_llm_calls_mean": 1.0,
+      "retrieval_p50_ms": 139.7,
+      "retrieval_p95_ms": 193.1,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.6003,
+          "f1_low": 0.5595,
+          "f1_high": 0.6395,
+          "judged_accuracy": 0.7664,
+          "judged_low": 0.7227,
+          "judged_high": 0.8131,
+          "evidence_in_context": 0.8972,
+          "prompt_tokens_mean": 2541,
+          "read_llm_calls_mean": 1.0,
+          "retrieval_p50_ms": 139.7,
+          "retrieval_p95_ms": 193.1
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.6003,
+        "f1_low": 0.5595,
+        "f1_high": 0.6395,
+        "judged_accuracy": 0.7664,
+        "judged_low": 0.7227,
+        "judged_high": 0.8131,
+        "evidence_in_context": 0.8972,
+        "prompt_tokens_mean": 2541,
+        "read_llm_calls_mean": 1.0,
+        "retrieval_p50_ms": 139.7,
+        "retrieval_p95_ms": 193.1
+      },
+      "write_llm_calls_per_conversation": 17.8,
+      "write_llm_input_tokens_per_conversation_estimate": 27029,
+      "write_seconds_per_conversation": 106.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "turns (method=dense, k=40)",
+          "reached_evidence": 0.8972,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 40.0,
+          "p50_ms": 55.4
+        },
+        {
+          "stage": "facts (method=hybrid, k=30)",
+          "reached_evidence": 0.7352,
+          "facts_added_mean": 30.0,
+          "turns_added_mean": 0.0,
+          "p50_ms": 84.7
+        }
+      ],
+      "definition": {
+        "name": "wide+timeline-reason",
+        "description": "The best raw pipeline with the graph's facts added as a dated timeline that marks which value is the latest.",
+        "stages": [
+          {
+            "stage": "turns",
+            "method": "dense",
+            "k": 40
+          },
+          {
+            "stage": "facts",
+            "method": "hybrid",
+            "k": 30
+          }
+        ],
+        "context": {
+          "max_facts": 30,
+          "facts_as": "timeline"
+        },
+        "reader": {
+          "mode": "reason"
+        }
+      }
+    },
+    "wide+sources-reason": {
+      "n": 321,
+      "f1": 0.6239,
+      "f1_low": 0.5824,
+      "f1_high": 0.6649,
+      "judged_accuracy": 0.7788,
+      "judged_low": 0.7352,
+      "judged_high": 0.8224,
+      "evidence_in_context": 0.9283,
+      "prompt_tokens_mean": 2486,
+      "read_llm_calls_mean": 1.0,
+      "retrieval_p50_ms": 138.5,
+      "retrieval_p95_ms": 190.3,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.6239,
+          "f1_low": 0.5824,
+          "f1_high": 0.6649,
+          "judged_accuracy": 0.7788,
+          "judged_low": 0.7352,
+          "judged_high": 0.8224,
+          "evidence_in_context": 0.9283,
+          "prompt_tokens_mean": 2486,
+          "read_llm_calls_mean": 1.0,
+          "retrieval_p50_ms": 138.5,
+          "retrieval_p95_ms": 190.3
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.6239,
+        "f1_low": 0.5824,
+        "f1_high": 0.6649,
+        "judged_accuracy": 0.7788,
+        "judged_low": 0.7352,
+        "judged_high": 0.8224,
+        "evidence_in_context": 0.9283,
+        "prompt_tokens_mean": 2486,
+        "read_llm_calls_mean": 1.0,
+        "retrieval_p50_ms": 138.5,
+        "retrieval_p95_ms": 190.3
+      },
+      "write_llm_calls_per_conversation": 17.8,
+      "write_llm_input_tokens_per_conversation_estimate": 27029,
+      "write_seconds_per_conversation": 106.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "turns (method=dense, k=40)",
+          "reached_evidence": 0.8972,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 40.0,
+          "p50_ms": 55.3
+        },
+        {
+          "stage": "facts (method=hybrid, k=30)",
+          "reached_evidence": 0.7352,
+          "facts_added_mean": 30.0,
+          "turns_added_mean": 0.0,
+          "p50_ms": 82.9
+        },
+        {
+          "stage": "fact_sources (max=10)",
+          "reached_evidence": 0.053,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 6.8,
+          "p50_ms": 0.0
+        }
+      ],
+      "definition": {
+        "name": "wide+sources-reason",
+        "description": "The best raw pipeline with the source messages of the graph's facts added, and no fact lines.",
+        "stages": [
+          {
+            "stage": "turns",
+            "method": "dense",
+            "k": 40
+          },
+          {
+            "stage": "facts",
+            "method": "hybrid",
+            "k": 30
+          },
+          {
+            "stage": "fact_sources",
+            "max": 10
+          }
+        ],
+        "context": {
+          "max_facts": 0
+        },
+        "reader": {
+          "mode": "reason"
+        }
+      }
+    },
+    "timeline-only-reason": {
+      "n": 321,
+      "f1": 0.5139,
+      "f1_low": 0.47,
+      "f1_high": 0.5614,
+      "judged_accuracy": 0.6355,
+      "judged_low": 0.5857,
+      "judged_high": 0.6885,
+      "evidence_in_context": 0.7165,
+      "prompt_tokens_mean": 1437,
+      "read_llm_calls_mean": 1.0,
+      "retrieval_p50_ms": 84.5,
+      "retrieval_p95_ms": 125.1,
+      "by_category": {
+        "temporal": {
+          "n": 321,
+          "f1": 0.5139,
+          "f1_low": 0.47,
+          "f1_high": 0.5614,
+          "judged_accuracy": 0.6355,
+          "judged_low": 0.5857,
+          "judged_high": 0.6885,
+          "evidence_in_context": 0.7165,
+          "prompt_tokens_mean": 1437,
+          "read_llm_calls_mean": 1.0,
+          "retrieval_p50_ms": 84.5,
+          "retrieval_p95_ms": 125.1
+        }
+      },
+      "answerable": {
+        "n": 321,
+        "f1": 0.5139,
+        "f1_low": 0.47,
+        "f1_high": 0.5614,
+        "judged_accuracy": 0.6355,
+        "judged_low": 0.5857,
+        "judged_high": 0.6885,
+        "evidence_in_context": 0.7165,
+        "prompt_tokens_mean": 1437,
+        "read_llm_calls_mean": 1.0,
+        "retrieval_p50_ms": 84.5,
+        "retrieval_p95_ms": 125.1
+      },
+      "write_llm_calls_per_conversation": 17.8,
+      "write_llm_input_tokens_per_conversation_estimate": 27029,
+      "write_seconds_per_conversation": 106.0,
+      "errors": 0,
+      "stages": [
+        {
+          "stage": "facts (method=hybrid, k=40)",
+          "reached_evidence": 0.7726,
+          "facts_added_mean": 40.0,
+          "turns_added_mean": 0.0,
+          "p50_ms": 84.2
+        },
+        {
+          "stage": "fact_sources (max=12)",
+          "reached_evidence": 0.7165,
+          "facts_added_mean": 0.0,
+          "turns_added_mean": 12.0,
+          "p50_ms": 0.0
+        }
+      ],
+      "definition": {
+        "name": "timeline-only-reason",
+        "description": "The graph alone as a dated timeline, with its source messages.",
+        "stages": [
+          {
+            "stage": "facts",
+            "method": "hybrid",
+            "k": 40
+          },
+          {
+            "stage": "fact_sources",
+            "max": 12
+          }
+        ],
+        "context": {
+          "max_facts": 40,
+          "facts_as": "timeline"
+        },
+        "reader": {
+          "mode": "reason"
+        }
+      }
+    }
+  },
+  "categories": [
+    "temporal"
+  ],
+  "paired_with": "dense-wide-reason",
+  "paired": {
+    "raw-dense": {
+      "f1": [
+        -0.1568,
+        -0.1976,
+        -0.1164
+      ],
+      "judged": [
+        -0.1495,
+        -0.2056,
+        -0.0966
+      ]
+    },
+    "rerank-reason": {
+      "f1": [
+        0.0174,
+        -0.0136,
+        0.0487
+      ],
+      "judged": [
+        0.0249,
+        -0.0093,
+        0.0623
+      ]
+    },
+    "default": {
+      "f1": [
+        -0.0261,
+        -0.0633,
+        0.0118
+      ],
+      "judged": [
+        -0.0592,
+        -0.109,
+        -0.0125
+      ]
+    },
+    "default-reason": {
+      "f1": [
+        -0.0086,
+        -0.0457,
+        0.0311
+      ],
+      "judged": [
+        0.0,
+        -0.0467,
+        0.0498
+      ]
+    },
+    "sources-only-reason": {
+      "f1": [
+        0.0049,
+        -0.0305,
+        0.0389
+      ],
+      "judged": [
+        -0.0093,
+        -0.053,
+        0.028
+      ]
+    },
+    "wide+facts-reason": {
+      "f1": [
+        -0.0095,
+        -0.0464,
+        0.0266
+      ],
+      "judged": [
+        -0.0187,
+        -0.0685,
+        0.028
+      ]
+    },
+    "wide+timeline-reason": {
+      "f1": [
+        0.0094,
+        -0.0227,
+        0.0445
+      ],
+      "judged": [
+        0.0125,
+        -0.028,
+        0.0561
+      ]
+    },
+    "wide+sources-reason": {
+      "f1": [
+        0.033,
+        0.0076,
+        0.0607
+      ],
+      "judged": [
+        0.0249,
+        -0.0062,
+        0.0592
+      ]
+    },
+    "timeline-only-reason": {
+      "f1": [
+        -0.077,
+        -0.1205,
+        -0.0304
+      ],
+      "judged": [
+        -0.1184,
+        -0.1713,
+        -0.0623
+      ]
+    }
+  },
+  "oracle_router": {
+    "over": [
+      "raw-dense",
+      "dense-wide-reason",
+      "rerank-reason",
+      "default",
+      "default-reason",
+      "sources-only-reason",
+      "wide+facts-reason",
+      "wide+timeline-reason",
+      "wide+sources-reason",
+      "timeline-only-reason"
+    ],
+    "f1": 0.7781,
+    "judged": 0.919,
+    "best_single_pipeline_f1": 0.6239,
+    "best_single_pipeline_judged": 0.7788
+  },
+  "full_context_prompt_tokens": null,
+  "conversation_tokens_estimate_mean": 25736
+}

@@ -57,7 +57,7 @@ unreviewed preprints and are marked there.
 | Versioned store (`memst-repo`) | Content-addressed objects, WAL, worktrees, fast-forward merge and conflict detection. A full three-way merge is not there yet: memories are not loaded from commits | The strongest differentiator, but it now has direct neighbours that must be cited and compared against. Nothing yet measures what versioning buys (rollback, audit, merge). |
 | Evaluation (`benchmarks/`) | LoCoMo only. MemSt's own tables show full context at 80.7 F1 against 42.5–49.2 for MemSt strategies | This is exactly the pattern the field now treats as "memory not shown to be needed". No raw-history RAG baseline under the same reader, no cost-to-break-even, category 5 dropped. |
 | Query-adaptive routing | Rule-based classifier, 80% accuracy | A 2026 study finds per-query routing realises little of the oracle headroom; regime-level selection does better. The oracle bound and realised fraction should be reported. |
-| Knowledge graph | Entities and relationships with half-life decay, merging, deprecation; now on HelixDB | Relationships now carry validity in time and are superseded rather than only decayed; entity merges can be undone. Cascading invalidation of dependent facts is not done. The graph is now one per store with per-owner isolation, in line with the field's user-level graphs. |
+| Knowledge graph | Entities and relationships with half-life decay, merging, deprecation; now on HelixDB | Relationships now carry validity in time (kept apart from when they were stated) and are superseded rather than only decayed; entity merges can be undone. Cascading invalidation of dependent facts is not done. The graph is now one per store with per-owner isolation, in line with the field's user-level graphs. |
 | Consolidation (`memst-sleep`) | Sleep-time jobs, A-MEM style evolution | In line with current practice, but consolidation rewrites rather than appends, and extraction hallucination is not measured. |
 | Raw evidence | Messages are kept in the session store | Good: the raw episodes exist. They are not offered as a retrieval strategy alongside the consolidated ones. |
 | Skills | Procedural memory with lookup | No update / deprecate path, flat retrieval, no import or export in the common `SKILL.md` layout. |
@@ -82,6 +82,16 @@ unreviewed preprints and are marked there.
   A reader that works through the evidence, over a wider or reranked context,
   gains 9 to 10 points on a LoCoMo pilot and 17 to 22 on a LongMemEval-S
   pilot, and matches full context at under a fifth of the tokens.
+- **A narrower job for the graph did not hold up either.** Asked only to help
+  on questions about dates and changed facts, added to the best raw pipeline
+  with the same reasoning reader, no use of the graph gives a reliable gain:
+  +2.5 points at best on LoCoMo's 321 temporal questions (interval −0.6 to
+  +5.9), and nothing on 22 LongMemEval-S knowledge-update and temporal
+  questions, which the raw pipeline answers in full. This matches the 2026
+  reports that retrieval over raw history equals engineered memory.
+- **Valid time and statement time must be stored apart.** MemSt dated facts
+  with the day they were said; fixing that was worth 12 points to the graph
+  pipeline on temporal questions.
 - **The reader's own model is a lenient judge on LoCoMo** (6 to 10 points
   above a stricter one), consistent with the audit cited above.
 

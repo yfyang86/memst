@@ -361,6 +361,81 @@ Reading them:
 `dense-wide-reason` and `rerank-reason` are now built-in pipelines and part
 of the default set, so the next full run measures them at scale.
 
+### A narrower job for the graph (roadmap 5c)
+
+The graph is not a better general retriever, so this asks less of it: does
+it help on questions about dates, when added to the best raw pipeline and
+read by the same reasoning reader? The test was fixed beforehand: a reliable
+gain in judged accuracy over `dense-wide-reason` on the same questions.
+
+All 321 temporal questions of LoCoMo, all ten conversations. Output in
+`benchmarks/results/graph-role-locomo/`; graded by the stricter judge in
+`graph-role-locomo-pro-judge/`. The pipelines are in
+`experiments/graph-role.json`.
+
+| Pipeline | What the graph contributes | Judged correct | Difference from `dense-wide-reason` | By the stricter judge |
+|---|---|---|---|---|
+| dense-wide-reason | nothing (40 raw turns) | 75.4% | | 72.0% |
+| rerank-reason | nothing (reranked raw turns) | 77.9% | +2.5 (−0.9 to +6.2) | +1.6 (−1.9 to +5.0) |
+| wide+sources-reason | the messages its facts were stated in, added to the 40 turns | 77.9% | +2.5 (−0.6 to +5.9) | +2.5 (−0.6 to +5.6) |
+| wide+timeline-reason | its facts as a dated timeline, added to the 40 turns | 76.6% | +1.2 (−2.8 to +5.6) | −1.9 (−6.2 to +2.5) |
+| wide+facts-reason | its facts as lines, added to the 40 turns | 73.5% | −1.9 (−6.9 to +2.8) | −4.7 (−9.0 to +0.3) |
+| default-reason | facts, their sources and 12 raw turns | 75.4% | 0.0 (−4.7 to +5.0) | −2.8 (−7.8 to +2.2) |
+| sources-only-reason | the sources of its facts and 12 raw turns, no fact lines | 74.5% | −0.9 (−5.3 to +2.8) | −1.6 (−5.9 to +2.2) |
+| timeline-only-reason | everything: a timeline and its sources, no raw retrieval | 63.5% | −11.8 (−17.1 to −6.2) | −14.9 (−20.2 to −9.3) |
+
+**Verdict on LoCoMo: the test is not passed.** No use of the graph gives a
+reliable gain over the best raw pipeline on temporal questions, by either
+judge. The best one uses the graph only as an index to source messages and
+is 2.5 points ahead with an interval that includes zero, the same as
+reranking, which needs no extraction. Showing the reader the extracted facts
+does not help, and the graph on its own is 12 points behind.
+
+LongMemEval-S, 22 questions about changed facts and dates (10
+knowledge-update, 10 temporal-reasoning, 2 abstention), with graphs
+extracted after the date fix. Output in
+`benchmarks/results/graph-role-longmemeval/`.
+
+| Pipeline | Judged correct | knowledge-update | temporal-reasoning | Prompt tokens |
+|---|---|---|---|---|
+| raw-dense (direct reader) | 68.2% | 10 of 10 | 3 of 10 | 4,214 |
+| dense-wide-reason | 100.0% | 10 | 10 | 7,608 |
+| rerank-reason | 90.9% | 9 | 9 | 10,418 |
+| wide+timeline-reason | 95.5% | 9 | 10 | 8,125 |
+| wide+facts-reason | 95.5% | 10 | 9 | 8,126 |
+| wide+sources-reason | 95.5% | 10 | 9 | 9,727 |
+| default-reason | 90.9% | 10 | 8 | 5,437 |
+| sources-only-reason | 86.4% | 9 | 8 | 4,918 |
+| default (direct reader) | 77.3% | 10 | 5 | 5,381 |
+
+**Verdict on LongMemEval-S: not passed either.** The best raw pipeline
+answers all 22 correctly, so the graph has nothing to add, and each graph
+variant is level or one to three answers behind. What moves these questions
+is the reader: the same 20 turns go from 3 of 10 temporal questions right to
+10 of 10 with 40 turns and a reader that works through the dates. Twenty-two
+questions is a small sample, and this subset is evidently easy once the
+reader reasons; it cannot show a graph advantage, only fail to.
+
+Two things were learnt on the way:
+
+- **Fact dates were wrong, and are fixed.** Ingestion dated a fact with the
+  date of its message when the text gave none, and showed that as "true
+  since". A trip mentioned on 9 September as "two weeks ago" was dated 9
+  September. Now when a fact became true and when it was said are stored
+  apart, with the precision of the date. On the same questions this raised
+  the default pipeline with a direct reader from 57.3% to 69.5% (interval of
+  the gain 6.5 to 17.8), and the timeline no longer hurts (73.2% to 76.6%).
+  It did not change the verdict. The run before the fix is in
+  `graph-role-locomo-old-dates/`. Of 2,551 facts extracted afterwards, 24%
+  carry the date of the event, 39% only the date they were said, and 37% no
+  time at all.
+- **Extraction cannot simply be made cheaper.** With batches of 6,000, 12,000
+  and 24,000 characters the three pilot conversations took 46, 24 and 13
+  calls and produced 650, 438 and 321 relationships: the model extracts a
+  roughly fixed amount per call. The graph alone drops from 62% to 57% to 49%
+  judged; pipelines that also have raw turns do not move
+  (`graph-role-batch-size/`).
+
 ### Earlier pilots
 
 `benchmarks/results/pipelines-locomo/`, `pipelines-longmemeval/`, `harness/`
