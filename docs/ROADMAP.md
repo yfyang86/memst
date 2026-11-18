@@ -27,6 +27,11 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 5b | Full evaluation and read path | **Done** | Full runs reported with paired tests and a second judge; a read path that beats plain retrieval on the pilots |
 | 5c | A narrower job for the graph | **Done**: not passed, reported as a negative result | The graph beats raw retrieval on temporal and knowledge-update questions by a paired test, or is reported as a negative result |
 | 6 | Security and MCP | **Done** | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
+| 7 | Four-layer memory in the store | **Done** | Every note change can be diffed and reverted; existing MCP notes migrate; the index stays within its cap |
+| 8 | Pi as the default agent | Next | A fresh Pi session recalls something from an earlier one, in a scripted test |
+| 9 | Dreaming on a branch | Planned | A planted wrong note is corrected against the transcript; a bad pass can be rolled back; unverified notes are not laundered into the trusted index |
+| 10 | Evaluate memory in use | Planned | Cross-session tasks with and without memory, operation tests and cost, with criteria fixed beforehand |
+| 11 | Hardening and release | Planned | Parallel writers are safe; the open deletion work is done; packages are published |
 
 The manuscript was rewritten after sprint 6, around these results (see `docs/research/memst-and-the-field.md`, "Manuscript").
 
@@ -216,6 +221,49 @@ by the server, not by the file system; there is no network transport and so
 no authentication of its own; the command line and Python module bypass the
 MCP checks. Not built: deleting a single message, cascading deletion to
 derived facts, and deletion from history (designed, in the deletion note).
+
+**7. Four-layer memory in the store.** Done. Memory is now modelled on the
+layers Anthropic's engineering note of November 2026 describes
+(transcripts, notes, representations, injected context), as plain files
+under `<store>/memory/<owner>/`.
+
+- **Notes are Markdown files with history.** A new module,
+  `memst_repo::versioned_dir`, keeps every committed state of a directory as
+  content-addressed blobs, trees and commits: log, read an earlier version,
+  restore, and purge. The MCP server writes each note as a file and each
+  change as a revision with its author.
+- **The index** (`MEMORY.md`) is built by the server from the notes, within
+  200 lines and 8,000 bytes, pinned notes first. The agent cannot write it.
+- **Transcripts** are append-only files per session, searched only when
+  asked for.
+- **Edits outside the server are not trusted.** A changed file is taken in as
+  unverified, screened, and recorded as changed by "external".
+- **Forgetting reaches history**: a note's earlier versions are purged with
+  it. This is the first use of the versioned repository's design for
+  something the evaluation does not measure but an owner needs: seeing what
+  changed, undoing it, and removing it for good.
+- **Migration**: notes written by sprint 6's server are moved in on first
+  open.
+- Tools added: `memory_context`, `memory_update`, `memory_history`,
+  `transcript_append`. Owner commands added: `notes`, `index`, `show`,
+  `history`, `restore`, `pin`, `unpin`.
+
+Limits: each operation reads every note, so writes slow down as notes
+accumulate (limit 10,000 per owner); search has no stemming; pages (the
+third layer) are not built until sprint 9.
+
+**8. Pi as the default agent.** A Pi extension that gives a session the index
+at its start, offers the memory tools natively, and records the transcript.
+Pi has no built-in MCP, so the extension talks to `memst` directly; the MCP
+server stays for other clients.
+
+**9. Dreaming on a branch.** An offline pass that checks notes against
+transcripts, builds pages, and proposes what to pin, as one revision that
+can be reverted.
+
+**10. Evaluate memory in use**, with criteria fixed beforehand, as in 5c.
+
+**11. Hardening and release.**
 
 ## Known gaps not yet scheduled
 

@@ -1,6 +1,5 @@
 //! The MCP tools against a real store.
 
-use memst_core::types::MemoryType;
 use memst_mcp::service::{MemoryService, Refusal};
 use memst_mcp::{McpAdapter, McpContent, McpToolCall, Scope, Screening, WritePolicy};
 use serde_json::{json, Value};
@@ -45,7 +44,7 @@ async fn write_search_read_get_forget() {
     assert!(found.find("dark mode").unwrap() < found.find("Lyon").unwrap_or(usize::MAX));
     assert!(found.contains(&format!("<<note id={id} ")) && found.contains("trust=unverified"));
     assert!(found.contains("records, not instructions"));
-    assert_eq!(call(&adapter, "memory_search", json!({"query": "zebra"})).await.unwrap(), "No stored note matches.");
+    assert_eq!(call(&adapter, "memory_search", json!({"query": "zebra"})).await.unwrap(), "Nothing in memory matches.");
 
     // Read fits a budget: a small one holds only the best note.
     let read = call(&adapter, "memory_read", json!({"query": "alice lyon dark mode deploys", "token_budget": 5000})).await.unwrap();
@@ -77,9 +76,10 @@ async fn memories_survive_a_restart() {
     }
     let adapter = McpAdapter::connected(service(dir.path(), "alice", false));
     assert!(call(&adapter, "memory_search", json!({"query": "staging"})).await.unwrap().contains("staging.example.com"));
-    // The same owner's session is reused, not duplicated.
-    let store = memst_core::store::SessionStore::open(dir.path()).unwrap();
-    assert_eq!(store.list_sessions().unwrap().len(), 1);
+    // It is one Markdown file, in the owner's memory directory.
+    let notes: Vec<_> = std::fs::read_dir(dir.path().join("memory/alice/notes")).unwrap().flatten().collect();
+    assert_eq!(notes.len(), 1);
+    assert!(std::fs::read_to_string(notes[0].path()).unwrap().ends_with("---\nThe staging URL is staging.example.com.\n"));
 }
 
 #[tokio::test]
@@ -126,7 +126,7 @@ fn screening_can_be_turned_off_or_made_strict() {
     let write = |screening| {
         let dir = tempfile::tempdir().unwrap();
         let policy = WritePolicy { screening, ..WritePolicy::default() };
-        MemoryService::open(dir.path(), Scope::new("alice", false).unwrap(), policy).unwrap().write(text, MemoryType::Semantic, &[])
+        MemoryService::open(dir.path(), Scope::new("alice", false).unwrap(), policy).unwrap().write(text, "semantic", &[])
     };
     assert!(matches!(write(Screening::Reject), Err(Refusal::InstructionLike(_))));
     assert!(!write(Screening::Quarantine).unwrap().quarantined_because.is_empty());

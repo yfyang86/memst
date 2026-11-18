@@ -6,9 +6,10 @@ A user who asks for something to be forgotten wants the opposite. This note
 sets out what deletion means in MemSt, what is implemented, and what is
 designed and not yet built.
 
-Status, November 2026: levels 1 and 2 are implemented for notes written
-through MCP, and for sessions as far as the search index. Everything else
-below is design.
+Status, November 2026: notes written through the MCP server are removed at
+level 3 (from the current state and from their own history). Sessions are
+removed at level 2 as far as the search index. Everything else below is
+design.
 
 ## Where content lives
 
@@ -18,6 +19,8 @@ A piece of text a user gave MemSt can be in any of these.
 |---|---|---|---|
 | `sessions/<id>/messages.bin`, `messages.idx` | Every message of a session | Appended | No: only the whole session |
 | `sessions/<id>/memory/*.bin` | Memory items by tier | Rewritten on change | Yes: `SessionStore::remove_memory` |
+| `memory/<owner>/notes/*.md` and `.history/` | MCP notes, and every earlier version of each | Files, with a revision per change | Yes, with all its versions: `VersionedDir::purge` |
+| `memory/<owner>/transcripts/*.jsonl` | What was said in each session | Appended | A whole session |
 | `sessions/<id>/operations.log` | Tool calls with their inputs and outputs | Appended | No: only with the session |
 | `search_index/` | A copy of each indexed text, and its terms | Updated | Only a whole session |
 | `graph.helix` | Entities and relationships extracted from messages, each citing its source message; embeddings | Updated; superseded facts are kept | Entities and relationships one by one; not "everything from this message" |
@@ -49,13 +52,23 @@ of level 4.
 
 ## What is implemented
 
-- **Notes written through MCP: level 2, and nothing else holds them.**
-  `memory_forget` rewrites the tier file without the note. These notes are
-  never put in the search index, the graph or the repository, and the audit
-  log records the deletion without the content. A test checks that the text
-  is no longer anywhere under the store directory
-  (`a_forgotten_note_is_gone_from_the_store_and_the_log`). Where the
-  operating system or the disk keeps old blocks is outside MemSt; see below.
+- **Notes written through MCP: level 3.** A note is a file with a revision
+  per change. `memory_forget` deletes the file, records the removal as a
+  revision, and deletes the stored content of every earlier version. The
+  revisions themselves stay valid: they name each version by the hash of its
+  content, and that name now leads nowhere, so the history shows that the
+  note existed and reports its content as forgotten. This is the
+  content-addressed form of design D below without the encryption: it works
+  because a note's file carries a random id, so the hash left behind cannot
+  be reversed by guessing the text. Restoring an earlier revision skips
+  forgotten notes. Revision messages and the audit log carry ids, never
+  text, and the index is rebuilt from the remaining notes. A test checks
+  that the text is no longer anywhere under the store directory after a note
+  with several versions is forgotten
+  (`forgetting_removes_every_earlier_version_too`). Where the operating
+  system or the disk keeps old blocks is outside MemSt; see below.
+- **Transcripts written through MCP: level 2**, a session at a time. They
+  are not versioned, so there is no history to reach.
 - **Sessions: level 2 for messages, memories, operations and the search
   index.** `SessionStore::delete_session` removes the session's directory
   and its entries in the search index. Before November 2026 it left the
@@ -144,9 +157,11 @@ changes names all the way up. Three ways, in order of preference:
 Recommendation: 1 for new stores, with 3 as a setting for those who want a
 limit, and 2 as the tool for a store created before encryption.
 
-MCP notes are not committed to the repository today, so this does not yet
-block `memory_forget`. It does block "delete this message" for any store
-that uses the repository.
+MCP notes use the simpler form described under "What is implemented":
+delete the content, keep the name. That is enough for a single-copy store.
+Per-item keys matter once stores are copied or synchronised, where a deleted
+object can come back from another copy; a deleted key cannot be undone by a
+copy that only has ciphertext.
 
 ### E. What a deletion leaves behind on purpose
 

@@ -72,3 +72,52 @@ fn an_owner_is_required_and_must_be_plain() {
     // Nothing was created on the way to refusing.
     assert!(!store.exists());
 }
+
+fn run(store: &std::path::Path, args: &[&str]) -> String {
+    let mut all = vec!["mcp", "--owner", "alice"];
+    all.extend_from_slice(args);
+    let output = memst(store, &all).output().unwrap();
+    assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn the_owner_can_see_what_changed_and_go_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store");
+    // An agent writes a note, then replaces it with something wrong.
+    let mut child = memst(&store, &["mcp", "--owner", "alice", "serve"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"memory_write","arguments":{{"content":"Alice lives in Lyon."}}}}}}"#).unwrap();
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+    let id = text.trim_start_matches("Stored as note ").trim_end_matches('.').to_string();
+
+    run(&store, &["approve", &id]);
+    run(&store, &["pin", &id]);
+    assert!(run(&store, &["index"]).contains("## Pinned by the user"));
+    let good = run(&store, &["history"]).lines().next().unwrap().split_whitespace().next().unwrap().to_string();
+
+    // Someone edits the file by hand.
+    let path = store.join(format!("memory/alice/notes/{id}.md"));
+    let edited = std::fs::read_to_string(&path).unwrap().replace("Lyon", "Paris");
+    std::fs::write(&path, edited).unwrap();
+    let notes = run(&store, &["notes"]);
+    assert!(notes.contains("unverified") && notes.contains("Alice lives in Paris.") && !notes.contains("[pinned]"), "{notes}");
+    let history = run(&store, &["history"]);
+    assert!(history.lines().next().unwrap().contains("external"), "{history}");
+    assert!(run(&store, &["show", &id, "--at", &good]).contains("Alice lives in Lyon."));
+
+    // Back to the approved, pinned state.
+    run(&store, &["restore", &good]);
+    let notes = run(&store, &["notes"]);
+    assert!(notes.contains("approved") && notes.contains("[pinned] Alice lives in Lyon."), "{notes}");
+    assert_eq!(run(&store, &["history"]).lines().filter(|l| !l.starts_with(' ')).count(), 5);
+
+    // Forgetting removes it from the history as well.
+    run(&store, &["forget", &id]);
+    assert!(run(&store, &["show", &id, "--at", &good]).contains("has since been forgotten"));
+    assert_eq!(run(&store, &["notes"]).trim(), "No notes.");
+}

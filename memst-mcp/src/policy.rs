@@ -55,11 +55,27 @@ pub struct WritePolicy {
     pub max_memories: usize,
     /// What to do with instruction-like content.
     pub screening: Screening,
+    /// Most lines in the index that every session is given.
+    pub index_max_lines: usize,
+    /// Most bytes in the index.
+    pub index_max_bytes: usize,
+    /// Longest transcript entry, in characters.
+    pub max_transcript_chars: usize,
 }
 
 impl Default for WritePolicy {
     fn default() -> Self {
-        Self { max_chars: 8_000, max_writes_per_minute: 30, max_memories: 50_000, screening: Screening::Quarantine }
+        Self {
+            max_chars: 8_000,
+            max_writes_per_minute: 30,
+            max_memories: 10_000,
+            screening: Screening::Quarantine,
+            // The index is paid for in every session, and a mistake in it
+            // reaches every session, so it is kept small.
+            index_max_lines: 200,
+            index_max_bytes: 8_000,
+            max_transcript_chars: 100_000,
+        }
     }
 }
 

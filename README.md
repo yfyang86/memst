@@ -42,7 +42,7 @@ Author: Yifan Yang <yfyang.86@hotmail.com>
 - **Progressive disclosure** - Selective memory inclusion
 
 ### MCP Integration
-- **An MCP server over stdio** (`memst --store DIR mcp --owner NAME serve`): search, read, write and forget notes in one owner's memory. Writes that read like instructions are set aside until you approve them. See [docs/mcp.md](docs/mcp.md)
+- **An MCP server over stdio** (`memst --store DIR mcp --owner NAME serve`) over one owner's memory: transcripts, notes kept as Markdown files with a full history, and a small index given to every session. Writes that read like instructions are set aside until you approve them; any change can be undone, and a note can be forgotten together with its history. See [docs/mcp.md](docs/mcp.md)
 - **Tools**: memory_read, memory_write, memory_search, skill_lookup, context_build
 
 ### KG Extraction v2 (New)

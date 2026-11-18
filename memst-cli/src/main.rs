@@ -159,6 +159,40 @@ enum McpCommand {
         #[arg(long, default_value_t = 20)]
         last: usize,
     },
+    /// Print the index: what every session is given at its start.
+    Index,
+    /// List the notes.
+    Notes,
+    /// Print a note, as it is now or as it was at an earlier revision.
+    Show {
+        /// The note's id
+        id: Uuid,
+        /// A revision id (or its first characters) from `history`
+        #[arg(long)]
+        at: Option<String>,
+    },
+    /// List the changes made to the notes, newest first.
+    History {
+        /// How many changes
+        #[arg(long, default_value_t = 20)]
+        last: usize,
+    },
+    /// Put the notes back as they were at a revision. Nothing is lost: the
+    /// states in between stay in the history.
+    Restore {
+        /// A revision id (or its first characters) from `history`
+        revision: String,
+    },
+    /// Put an approved note at the top of the index.
+    Pin {
+        /// The note's id
+        id: Uuid,
+    },
+    /// Take a note off the top of the index.
+    Unpin {
+        /// The note's id
+        id: Uuid,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -973,8 +1007,9 @@ fn main() -> Result<()> {
         }
 
         Command::Mcp { owner, command } => {
-            use memst_mcp::service::{visible_tags, MemoryService};
+            use memst_mcp::service::MemoryService;
             use memst_mcp::{McpAdapter, McpServer, Scope, Screening, WritePolicy};
+            use memst_repo::versioned_dir::{Change, Past};
 
             let Some(owner) = owner else {
                 anyhow::bail!("--owner is required: say whose memory this is (for example --owner alice)");
@@ -983,6 +1018,9 @@ fn main() -> Result<()> {
                 let scope = Scope::new(owner, read_only).map_err(anyhow::Error::msg)?;
                 MemoryService::open(&args.store, scope, policy).map_err(|e| anyhow::anyhow!("{e}"))
             };
+            let refused = |e: memst_mcp::Refusal| anyhow::anyhow!("{e}");
+            // The owner's own commands: full access, default limits.
+            let mine = || open(false, WritePolicy::default());
             match command {
                 McpCommand::Serve { read_only, screening } => {
                     let screening = match screening.as_str() {
@@ -1003,38 +1041,99 @@ fn main() -> Result<()> {
                     server.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
                 }
                 McpCommand::Review => {
-                    let waiting = open(false, WritePolicy::default())?.quarantined().map_err(|e| anyhow::anyhow!("{e}"))?;
+                    let waiting = mine()?.quarantined().map_err(refused)?;
                     if waiting.is_empty() {
                         println!("Nothing is waiting for review.");
                     }
-                    for memory in waiting {
-                        println!("{}  written {} by {}", memory.id, memory.created_at.format("%Y-%m-%d %H:%M"), memory.source);
-                        for reason in memst_mcp::policy::instruction_like(&memory.content) {
+                    for note in waiting {
+                        println!("{}  written {} by {}", note.id, note.updated.format("%Y-%m-%d %H:%M"), note.source);
+                        for reason in memst_mcp::policy::instruction_like(&note.body) {
                             println!("  set aside because it {reason}");
                         }
-                        let tags = visible_tags(&memory);
-                        if !tags.is_empty() {
-                            println!("  tags: {}", tags.join(", "));
+                        if !note.tags.is_empty() {
+                            println!("  tags: {}", note.tags.join(", "));
                         }
                         // Shown escaped, so hidden characters are visible.
-                        println!("  {}\n", memory.content.escape_default());
+                        println!("  {}\n", note.body.escape_default());
                     }
                 }
                 McpCommand::Approve { id } => {
-                    open(false, WritePolicy::default())?.approve(*id).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    mine()?.approve(*id).map_err(refused)?;
                     println!("Approved {id}.");
                 }
                 McpCommand::Forget { id } => {
-                    open(false, WritePolicy::default())?.forget(*id).map_err(|e| anyhow::anyhow!("{e}"))?;
-                    println!("Forgot {id}.");
+                    mine()?.forget(*id).map_err(refused)?;
+                    println!("Forgot {id}, and every earlier version of it.");
                 }
                 McpCommand::Audit { last } => {
-                    let path = open(false, WritePolicy::default())?.audit_path();
-                    let log = std::fs::read_to_string(&path).unwrap_or_default();
+                    let log = std::fs::read_to_string(mine()?.audit_path()).unwrap_or_default();
                     let lines: Vec<&str> = log.lines().collect();
                     for line in &lines[lines.len().saturating_sub(*last)..] {
                         println!("{line}");
                     }
+                }
+                McpCommand::Index => print!("{}", mine()?.index().map_err(refused)?),
+                McpCommand::Notes => {
+                    let memory = mine()?;
+                    let mut notes = memory.search_all().map_err(refused)?;
+                    notes.extend(memory.quarantined().map_err(refused)?);
+                    if notes.is_empty() {
+                        println!("No notes.");
+                    }
+                    for note in notes {
+                        let state = if note.status == memst_mcp::note::Status::Quarantined {
+                            "waiting for review"
+                        } else {
+                            memst_mcp::service::trust_of(&note)
+                        };
+                        println!("{}  {}  {}  {}{}", note.id, note.updated.format("%Y-%m-%d"), state, if note.pinned { "[pinned] " } else { "" }, note.title());
+                    }
+                }
+                McpCommand::Show { id, at } => match at {
+                    None => {
+                        let memory = mine()?;
+                        let mut all = memory.search_all().map_err(refused)?;
+                        all.extend(memory.quarantined().map_err(refused)?);
+                        let note = all.into_iter().find(|n| n.id == *id).ok_or_else(|| anyhow::anyhow!("no note with that id"))?;
+                        print!("{}", note.to_markdown());
+                    }
+                    Some(revision) => match mine()?.note_at(*id, revision).map_err(refused)? {
+                        Past::Content(text) => print!("{text}"),
+                        Past::Absent => println!("The note did not exist at that revision."),
+                        Past::Forgotten => println!("The note existed at that revision; its content has since been forgotten."),
+                    },
+                },
+                McpCommand::History { last } => {
+                    let revisions = mine()?.history(*last).map_err(refused)?;
+                    if revisions.is_empty() {
+                        println!("No changes yet.");
+                    }
+                    for revision in revisions {
+                        println!("{}  {}  {}  {}", &revision.id.to_hex()[..12], revision.at.format("%Y-%m-%d %H:%M"), revision.author, revision.message);
+                        for change in &revision.changes {
+                            let (word, path) = match change {
+                                Change::Added(p) => ("added", p),
+                                Change::Modified(p) => ("changed", p),
+                                Change::Removed(p) => ("removed", p),
+                            };
+                            println!("    {word} {path}");
+                        }
+                    }
+                }
+                McpCommand::Restore { revision } => {
+                    let skipped = mine()?.restore(revision).map_err(refused)?;
+                    println!("The notes are as they were at {revision}.");
+                    if skipped > 0 {
+                        println!("{skipped} note(s) that were forgotten since then were not brought back.");
+                    }
+                }
+                McpCommand::Pin { id } => {
+                    mine()?.pin(*id, true).map_err(refused)?;
+                    println!("Pinned {id}.");
+                }
+                McpCommand::Unpin { id } => {
+                    mine()?.pin(*id, false).map_err(refused)?;
+                    println!("Unpinned {id}.");
                 }
             }
         }
