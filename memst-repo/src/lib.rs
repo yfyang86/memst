@@ -9,6 +9,7 @@
 
 pub mod merge;
 pub mod refs;
+pub mod versioned_dir;
 pub mod wal;
 pub mod worktrees;
 

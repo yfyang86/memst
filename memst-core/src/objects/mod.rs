@@ -1064,6 +1064,21 @@ impl ObjectStore {
         Ok(data.to_vec())
     }
 
+    /// Remove an object's file. Returns whether it was there.
+    ///
+    /// Objects are named by the hash of their content, so anything that
+    /// referred to this one still names it and will find it missing. That is
+    /// the point: it is how one item is removed from every snapshot at once
+    /// without rewriting them (see `docs/deletion-design.md`).
+    pub fn delete_object(&self, oid: &ObjectId) -> Result<bool> {
+        let path = self.object_path(oid);
+        if !path.exists() {
+            return Ok(false);
+        }
+        std::fs::remove_file(&path)?;
+        Ok(true)
+    }
+
     /// Check if an object exists
     pub fn exists(&self, oid: &ObjectId) -> bool {
         self.object_path(oid).exists()

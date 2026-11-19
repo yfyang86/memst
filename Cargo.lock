@@ -3145,6 +3145,7 @@ dependencies = [
  "memst-embed",
  "memst-graph-helix",
  "memst-mcp",
+ "memst-repo",
  "memst-sleep",
  "predicates",
  "serde_json",
@@ -3242,6 +3243,7 @@ version = "1.0.0"
 dependencies = [
  "chrono",
  "memst-core",
+ "memst-repo",
  "serde",
  "serde_json",
  "tempfile",

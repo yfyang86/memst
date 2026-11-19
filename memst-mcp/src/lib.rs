@@ -9,6 +9,8 @@
 //! - [`server`]: JSON-RPC over stdio
 
 pub mod adapter;
+mod migrate;
+pub mod note;
 pub mod policy;
 pub mod server;
 pub mod service;
