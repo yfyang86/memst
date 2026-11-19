@@ -65,7 +65,13 @@ has written:
 /memory forget <id>     delete a note and every earlier version of it
 /memory history         what changed, when, and who changed it
 /memory restore <rev>   put the notes back as they were at a revision
+/memory dream           review memory against what was said; shows a proposal
+/memory dream --apply   apply it (one revision, undone with restore)
 ```
+
+`/memory dream` needs a model for `memst` itself: set `MEMST_LLM_API_URL`,
+`MEMST_LLM_MODEL` and `MEMST_LLM_API_KEY`. See "The offline pass" in
+[docs/mcp.md](../../docs/mcp.md).
 
 Everything Pi writes starts as **unverified**, and the model is told so.
 Approve the notes you have checked; pin the few that every session should

@@ -183,6 +183,27 @@ enum McpCommand {
         /// A revision id (or its first characters) from `history`
         revision: String,
     },
+    /// Review memory offline: check the notes against what was said, add
+    /// what was missed, and build pages. Without `--apply` the proposal is
+    /// shown and kept for you to look at; nothing changes.
+    ///
+    /// Uses the model configured in config.toml or MEMST_LLM_API_URL,
+    /// MEMST_LLM_MODEL and MEMST_LLM_API_KEY.
+    Dream {
+        /// Apply the waiting proposal, or draft one and apply it at once.
+        #[arg(long)]
+        apply: bool,
+        /// Throw the waiting proposal away.
+        #[arg(long, conflicts_with = "apply")]
+        discard: bool,
+        /// Extra fields for the model request, as JSON (for example
+        /// '{"thinking":{"type":"disabled"}}').
+        #[arg(long)]
+        llm_extra: Option<String>,
+        /// Most transcript text to read in one pass, in characters.
+        #[arg(long, default_value_t = 60_000)]
+        max_chars: usize,
+    },
     /// Put an approved note at the top of the index.
     Pin {
         /// The note's id
@@ -1125,6 +1146,66 @@ fn main() -> Result<()> {
                     println!("The notes are as they were at {revision}.");
                     if skipped > 0 {
                         println!("{skipped} note(s) that were forgotten since then were not brought back.");
+                    }
+                }
+                McpCommand::Dream { apply, discard, llm_extra, max_chars } => {
+                    use memst_mcp::dream::{self, DreamConfig, Proposal};
+                    let memory = mine()?;
+                    if *discard {
+                        println!("{}", if memory.discard_pending().map_err(refused)? { "The waiting proposal was thrown away." } else { "No proposal was waiting." });
+                        return Ok(());
+                    }
+                    let show = |proposal: &Proposal| {
+                        for c in &proposal.corrections {
+                            println!("correct {}\n    to:      {}\n    because the user said: \"{}\" ({})", c.note, c.text, c.evidence.quote, c.evidence.source.key());
+                        }
+                        for n in &proposal.notes {
+                            println!("add a note ({})\n    {}\n    from: \"{}\" ({})", n.kind, n.text, n.evidence.quote, n.evidence.source.key());
+                        }
+                        for page in &proposal.pages {
+                            println!("write the page \"{}\" with {} fact(s)", page.title, page.facts.len());
+                            for fact in &page.facts {
+                                println!("    - {}  [{}]", fact.statement, fact.source.key());
+                            }
+                        }
+                        for (id, reason) in &proposal.pins {
+                            println!("suggestion: pin {id} ({reason})");
+                        }
+                        for dropped in &proposal.dropped {
+                            println!("dropped: {dropped}");
+                        }
+                    };
+                    let proposal = match memory.pending().map_err(refused)? {
+                        Some(waiting) if *apply => waiting,
+                        _ => {
+                            let mut config = DreamConfig { max_transcript_chars: *max_chars, ..DreamConfig::default() };
+                            if let Some(extra) = llm_extra {
+                                config.request_extra = serde_json::from_str(extra).map_err(|e| anyhow::anyhow!("--llm-extra is not a JSON object: {e}"))?;
+                            }
+                            let llm = memst_core::llm::LlmLoader::default_provider()?;
+                            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                            runtime.block_on(dream::propose(&memory, llm, &config)).map_err(refused)?
+                        }
+                    };
+                    show(&proposal);
+                    if proposal.is_empty() {
+                        println!("Nothing to change.");
+                    }
+                    if *apply {
+                        let done = dream::apply(&memory, &proposal).map_err(refused)?;
+                        println!(
+                            "Applied: {} corrected, {} disputed, {} added, {} page(s); {} set aside for review.",
+                            done.corrected, done.disputed, done.added, done.pages, done.quarantined
+                        );
+                        for skipped in &done.skipped {
+                            println!("left out: {skipped}");
+                        }
+                        if let (Some(_), Some(before)) = (&done.revision, &done.before) {
+                            println!("To undo this pass: memst mcp --owner {owner} restore {}", &before[..12]);
+                        }
+                    } else if !proposal.is_empty() {
+                        memory.save_pending(&proposal).map_err(refused)?;
+                        println!("Nothing has changed. Apply with `dream --apply`, or throw it away with `dream --discard`.");
                     }
                 }
                 McpCommand::Pin { id } => {

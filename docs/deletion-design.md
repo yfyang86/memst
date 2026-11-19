@@ -69,6 +69,12 @@ of level 4.
   system or the disk keeps old blocks is outside MemSt; see below.
 - **Transcripts written through MCP: level 2**, a session at a time. They
   are not versioned, so there is no history to reach.
+- **Pages built from notes and transcripts: deleted with their sources.**
+  A page records which notes and transcript entries its statements quote.
+  Forgetting a note or a session purges every page that cites it, with the
+  page's history, and discards any waiting proposal of the offline pass.
+  This is the cascade of design B below, for the one kind of derived item
+  MCP memory has. The pass rebuilds the pages from what remains.
 - **Sessions: level 2 for messages, memories, operations and the search
   index.** `SessionStore::delete_session` removes the session's directory
   and its entries in the search index. Before November 2026 it left the

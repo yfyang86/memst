@@ -14,7 +14,9 @@
 //! `MemoryService` serves exactly one owner. There is no call that crosses
 //! owners and no argument that names one.
 
+use crate::dream::{Applied, Proposal};
 use crate::note::{path_of, Note, Status, Trust};
+use crate::page::{Source, StoredPage};
 use crate::policy::{instruction_like, RateWindow, Scope, Screening, WritePolicy};
 use chrono::{DateTime, SecondsFormat, Utc};
 use memst_repo::versioned_dir::{Change, Past, Revision, VersionedDir};
@@ -69,6 +71,8 @@ pub enum Found {
     Note(Note),
     /// One entry of a session's transcript.
     Turn(Turn),
+    /// A page built by the offline pass.
+    Page(StoredPage),
 }
 
 /// A search result with its score.
@@ -102,7 +106,9 @@ pub enum Layer {
     Notes,
     /// Transcripts only.
     Transcripts,
-    /// Both.
+    /// Pages only.
+    Pages,
+    /// Notes, pages and transcripts.
     All,
 }
 
@@ -263,13 +269,19 @@ impl MemoryService {
     /// Quarantined notes are left out.
     pub fn search(&self, query: &str, limit: usize, layer: Layer) -> Result<Vec<Hit>, Refusal> {
         let mut candidates: Vec<(Found, String)> = Vec::new();
-        if layer != Layer::Transcripts {
+        if matches!(layer, Layer::Pages | Layer::All) {
+            for page in self.pages()? {
+                let text = format!("{} {}", page.title, page.body);
+                candidates.push((Found::Page(page), text));
+            }
+        }
+        if matches!(layer, Layer::Notes | Layer::All) {
             for note in self.readable()? {
                 let text = format!("{} {}", note.body, note.tags.join(" "));
                 candidates.push((Found::Note(note), text));
             }
         }
-        if layer != Layer::Notes {
+        if matches!(layer, Layer::Transcripts | Layer::All) {
             for turn in self.turns()? {
                 let text = turn.text.clone();
                 candidates.push((Found::Turn(turn), text));
@@ -316,6 +328,11 @@ impl MemoryService {
                 return Err(Refusal::NotFound);
             }
             dir.purge(&path_of(id), &self.author(), &format!("forget note {id}")).map_err(store_error)?;
+            // Pages built on the note quote it, and so does a proposal that
+            // has not been applied yet. They go with it; the next pass
+            // rebuilds the pages from what is left.
+            self.purge_pages_citing(&dir, &Source::Note { id }.key())?;
+            let _ = fs::remove_file(self.pending_path());
             self.write_index(&dir)
         })();
         self.audit("memory_forget", outcome.clone().map(|_| Some(id)), None);
@@ -342,12 +359,13 @@ impl MemoryService {
     /// from the notes, never written by the agent, and always within the
     /// policy's size limits: pinned notes first, then the most recent.
     pub fn index(&self) -> Result<String, Refusal> {
-        Ok(build_index(&self.scope.owner, &self.all()?, self.policy.index_max_lines, self.policy.index_max_bytes))
+        Ok(build_index(&self.scope.owner, &self.all()?, &self.pages()?, self.policy.index_max_lines, self.policy.index_max_bytes))
     }
 
     fn write_index(&self, dir: &VersionedDir) -> Result<(), Refusal> {
         let notes = self.notes_in(dir)?;
-        let text = build_index(&self.scope.owner, &notes, self.policy.index_max_lines, self.policy.index_max_bytes);
+        let pages = pages_in(dir)?;
+        let text = build_index(&self.scope.owner, &notes, &pages, self.policy.index_max_lines, self.policy.index_max_bytes);
         fs::write(self.root.join(INDEX), text).map_err(store_error)
     }
 
@@ -423,7 +441,16 @@ impl MemoryService {
             return Err(Refusal::ReadOnly);
         }
         let path = self.transcript_path(session)?;
-        let outcome = if path.exists() { fs::remove_file(path).map_err(store_error) } else { Err(Refusal::NotFound) };
+        let outcome = if path.exists() {
+            fs::remove_file(path).map_err(store_error).and_then(|_| {
+                let dir = self.dir()?;
+                self.purge_pages_citing(&dir, &format!("session:{session}#"))?;
+                let _ = fs::remove_file(self.pending_path());
+                self.write_index(&dir)
+            })
+        } else {
+            Err(Refusal::NotFound)
+        };
         self.audit("forget_session", outcome.clone().map(|_| None), Some(format!("session {session}")));
         outcome
     }
@@ -441,6 +468,151 @@ impl MemoryService {
             return Err(Refusal::Invalid("a session id is 1 to 64 letters, digits, '_', '-' or '.', not starting with '.'".to_string()));
         }
         Ok(self.root.join("transcripts").join(format!("{session}.jsonl")))
+    }
+
+    // ----- pages and the offline pass -----
+
+    /// The pages, most recently built first.
+    pub fn pages(&self) -> Result<Vec<StoredPage>, Refusal> {
+        if !self.root.exists() {
+            return Ok(Vec::new());
+        }
+        pages_in(&self.dir()?)
+    }
+
+    fn purge_pages_citing(&self, dir: &VersionedDir, key: &str) -> Result<(), Refusal> {
+        for page in pages_in(dir)? {
+            // A note is cited by its whole key; a session by the key's prefix.
+            if page.sources.iter().any(|source| source == key || (key.ends_with('#') && source.starts_with(key))) {
+                dir.purge(&page.path, &self.author(), "remove a page built on something forgotten").map_err(store_error)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn dream_dir(&self) -> PathBuf {
+        self.root.join("dreams")
+    }
+
+    fn pending_path(&self) -> PathBuf {
+        self.dream_dir().join("pending.json")
+    }
+
+    /// How far into each session's transcript the offline pass has read.
+    pub fn dream_state(&self) -> Result<std::collections::BTreeMap<String, usize>, Refusal> {
+        match fs::read_to_string(self.dream_dir().join("state.json")) {
+            Ok(text) => serde_json::from_str(&text).map_err(store_error),
+            Err(_) => Ok(Default::default()),
+        }
+    }
+
+    /// Keep a proposal for the owner to look at before it is applied.
+    pub fn save_pending(&self, proposal: &Proposal) -> Result<(), Refusal> {
+        if self.scope.read_only {
+            return Err(Refusal::ReadOnly);
+        }
+        fs::create_dir_all(self.dream_dir()).map_err(store_error)?;
+        fs::write(self.pending_path(), serde_json::to_string_pretty(proposal).map_err(store_error)?).map_err(store_error)
+    }
+
+    /// The proposal waiting to be applied, if there is one.
+    pub fn pending(&self) -> Result<Option<Proposal>, Refusal> {
+        match fs::read_to_string(self.pending_path()) {
+            Ok(text) => serde_json::from_str(&text).map(Some).map_err(store_error),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Throw the waiting proposal away. Returns whether there was one.
+    pub fn discard_pending(&self) -> Result<bool, Refusal> {
+        if self.scope.read_only {
+            return Err(Refusal::ReadOnly);
+        }
+        Ok(fs::remove_file(self.pending_path()).is_ok())
+    }
+
+    /// Apply a proposal of the offline pass as one revision. See
+    /// [`crate::dream`] for what a proposal may and may not do.
+    pub(crate) fn apply_dream(&self, proposal: &Proposal) -> Result<Applied, Refusal> {
+        if self.scope.read_only {
+            return Err(Refusal::ReadOnly);
+        }
+        let dir = self.dir()?;
+        let notes = self.notes_in(&dir)?;
+        let mut applied = Applied { before: dir.head().map_err(store_error)?.map(|id| id.to_hex()), ..Applied::default() };
+        let mut held = notes.len();
+        let mut write = |dir: &VersionedDir, mut note: Note, applied: &mut Applied| -> Result<(), Refusal> {
+            if note.body.chars().count() > self.policy.max_chars {
+                applied.skipped.push("a note longer than the limit".to_string());
+                return Ok(());
+            }
+            if self.policy.screening != Screening::Off && crate::dream::reads_like_instruction(&note.body) {
+                note.status = Status::Quarantined;
+                applied.quarantined += 1;
+            }
+            dir.write_file(&note.path(), &note.to_markdown()).map_err(store_error)
+        };
+
+        for correction in &proposal.corrections {
+            let Some(note) = notes.iter().find(|n| n.id == correction.note && crate::dream::is_active(n)) else {
+                applied.skipped.push(format!("correction to {}: the note is gone", correction.note));
+                continue;
+            };
+            if note.updated != correction.seen {
+                applied.skipped.push(format!("correction to {}: the note changed after the pass read it", correction.note));
+                continue;
+            }
+            if note.trust == Trust::Approved {
+                // The user's approved text stands. The disagreement is put
+                // beside it for them to settle.
+                if held >= self.policy.max_memories {
+                    applied.skipped.push("a note: the owner holds the most notes allowed".to_string());
+                    continue;
+                }
+                let dispute = Note::new(&crate::dream::dispute_text(note, correction), &note.kind, "dream", vec!["dream".to_string(), "disputes".to_string()]);
+                write(&dir, dispute, &mut applied)?;
+                applied.disputed += 1;
+                held += 1;
+            } else {
+                let mut changed = note.clone();
+                changed.body = correction.text.clone();
+                changed.updated = Utc::now();
+                changed.source = "dream".to_string();
+                changed.pinned = false;
+                write(&dir, changed, &mut applied)?;
+                applied.corrected += 1;
+            }
+        }
+        for new in &proposal.notes {
+            if held >= self.policy.max_memories {
+                applied.skipped.push("a note: the owner holds the most notes allowed".to_string());
+                continue;
+            }
+            write(&dir, Note::new(&new.text, &new.kind, "dream", vec!["dream".to_string()]), &mut applied)?;
+            applied.added += 1;
+            held += 1;
+        }
+        for page in &proposal.pages {
+            let text = page.to_markdown();
+            if self.policy.screening != Screening::Off && crate::dream::reads_like_instruction(&text) {
+                applied.skipped.push("a page: part of it reads like an instruction".to_string());
+                continue;
+            }
+            dir.write_file(&page.path(), &text).map_err(store_error)?;
+            applied.pages += 1;
+        }
+
+        let summary = format!(
+            "offline pass: {} corrected, {} disputed, {} added, {} page(s)",
+            applied.corrected, applied.disputed, applied.added, applied.pages
+        );
+        applied.revision = dir.commit("dream", &summary).map_err(store_error)?.map(|id| id.to_hex());
+        fs::create_dir_all(self.dream_dir()).map_err(store_error)?;
+        fs::write(self.dream_dir().join("state.json"), serde_json::to_string(&proposal.covered).map_err(store_error)?).map_err(store_error)?;
+        let _ = fs::remove_file(self.pending_path());
+        self.write_index(&dir)?;
+        self.audit("dream", Ok(None), Some(summary));
+        Ok(applied)
     }
 
     // ----- history -----
@@ -494,6 +666,11 @@ impl MemoryService {
         let dir = self.dir()?;
         let id = dir.resolve(revision).map_err(|e| Refusal::Invalid(e.to_string()))?;
         let (_, skipped) = dir.restore(id, "owner").map_err(store_error)?;
+        // Whatever the offline pass concluded from the transcripts may have
+        // just been undone, so it starts its reading again; and a proposal
+        // drafted against the notes as they were no longer applies.
+        let _ = fs::remove_file(self.dream_dir().join("state.json"));
+        let _ = fs::remove_file(self.pending_path());
         self.write_index(&dir)?;
         self.audit("restore", Ok(None), Some(format!("revision {}", &id.to_hex()[..12])));
         Ok(skipped.len())
@@ -731,6 +908,7 @@ fn when(found: &Found) -> DateTime<Utc> {
     match found {
         Found::Note(note) => note.updated,
         Found::Turn(turn) => turn.at,
+        Found::Page(page) => page.updated,
     }
 }
 
@@ -782,11 +960,36 @@ pub fn render_turn(turn: &Turn) -> String {
     )
 }
 
+/// One page, fenced and labelled. A page is built by the offline pass from
+/// notes and transcripts, and is no more trusted than they are.
+pub fn render_page(page: &StoredPage) -> String {
+    let body: String = if page.body.chars().count() > 4000 { format!("{}...", page.body.chars().take(4000).collect::<String>()) } else { page.body.clone() };
+    format!(
+        "<<page title=\"{}\" built={} trust=unverified>>\n{}\n<<end page>>",
+        fenced(&page.title).replace('"', "'"),
+        page.updated.format("%Y-%m-%d"),
+        fenced(body.trim_end()),
+    )
+}
+
+fn pages_in(dir: &VersionedDir) -> Result<Vec<StoredPage>, Refusal> {
+    let mut pages: Vec<StoredPage> = dir
+        .working()
+        .map_err(store_error)?
+        .into_iter()
+        .filter(|(path, _)| path.starts_with("pages/"))
+        .filter_map(|(path, text)| StoredPage::parse(&path, &text))
+        .collect();
+    pages.sort_by(|a, b| b.updated.cmp(&a.updated).then(a.path.cmp(&b.path)));
+    Ok(pages)
+}
+
 /// A search result, fenced and labelled.
 pub fn render_found(found: &Found) -> String {
     match found {
         Found::Note(note) => render_one(note),
         Found::Turn(turn) => render_turn(turn),
+        Found::Page(page) => render_page(page),
     }
 }
 
@@ -816,7 +1019,7 @@ fn render(hits: &[Hit], token_budget: usize) -> String {
 /// It names notes by their first line, so it stays small however much the
 /// notes hold. Quarantined notes are counted, never listed. It is cut at
 /// `max_lines` lines and `max_bytes` bytes, pinned notes first.
-pub fn build_index(owner: &str, notes: &[Note], max_lines: usize, max_bytes: usize) -> String {
+pub fn build_index(owner: &str, notes: &[Note], pages: &[StoredPage], max_lines: usize, max_bytes: usize) -> String {
     let active: Vec<&Note> = notes.iter().filter(|n| n.status == Status::Active).collect();
     let waiting = notes.len() - active.len();
     let mut lines = vec![
@@ -834,6 +1037,11 @@ pub fn build_index(owner: &str, notes: &[Note], max_lines: usize, max_bytes: usi
         body.push(String::new());
         body.push("## Pinned by the user".to_string());
         body.extend(pinned.iter().map(|n| line(n)));
+    }
+    if !pages.is_empty() {
+        body.push(String::new());
+        body.push("## Pages (what memory holds on a topic, with its evidence; search with scope \"pages\")".to_string());
+        body.extend(pages.iter().map(|p| format!("- page ({}) {}", p.updated.format("%Y-%m-%d"), fenced(&p.title))));
     }
     if !recent.is_empty() {
         body.push(String::new());
