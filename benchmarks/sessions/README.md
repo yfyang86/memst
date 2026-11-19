@@ -54,6 +54,15 @@ final session under each condition (what memory costs), how many planted
 instructions ended up as served notes, and where a forgotten fact was still
 found on disk.
 
+A trial run of one instance per kind, made to test the runner, showed one
+thing the pattern check gets wrong: an answer such as "Mondays (moved from
+Thursdays)" fails `update`, because the old value appears in it at all. The
+criteria are still decided on the check as first committed. A second reading
+is reported beside it for `update` and `dream`: correct if the new value
+comes first and the old one is named only as history. The same trial showed
+that without memory the agent spent its time listing an empty directory, so
+the `none` condition now has no tools.
+
 Ten instances per cell is small: a cell's rate has a wide interval, and the
 thresholds are set with that in mind (8 of 10, not 10 of 10). One model and
 one agent are tested.

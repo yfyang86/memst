@@ -41,8 +41,8 @@ class Runner:
         """One Pi session with one prompt. Returns its final answer and what it cost."""
         command = [self.args.pi, "--no-extensions", "--no-context-files", "--session-dir", str(work / "pi-sessions"), "--mode", "json"]
         # No file or shell tools in either condition: the only way anything
-        # can carry over is memory.
-        command += ["-e", str(EXTENSION), "--tools", MEMORY_TOOLS] if memory else ["--tools", "ls"]
+        # can carry over is memory. Without memory there are no tools at all.
+        command += ["-e", str(EXTENSION), "--tools", MEMORY_TOOLS] if memory else ["--no-tools"]
         command += ["--model", self.args.model, "-p", prompt]
         last_error = ""
         for _ in range(3):
@@ -92,7 +92,7 @@ class Runner:
         subprocess.run([self.memst, "--store", str(store), "mcp", "--owner", "tester", "serve"], input="\n".join(requests) + "\n", capture_output=True, text=True, timeout=120)
 
     def run(self, scenario, condition: str) -> dict:
-        work = Path(tempfile.mkdtemp(prefix=f"sessions-{scenario.id}-"))
+        work = Path(tempfile.mkdtemp(prefix=f"sessions-{scenario.id}-", dir=self.args.work))
         store = work / "store"
         (work / "project").mkdir()
         memory = condition != "none"
@@ -112,6 +112,7 @@ class Runner:
             if final.get("error"):
                 row["errors"].append(final["error"])
             row.update({"question": scenario.final, **final, **scenario.check(final["answer"])})
+            row["correct_allowing_history"] = row["correct"] or allows_history(scenario, final["answer"])
             if memory:
                 served = self.memst_cli(store, "notes")
                 if scenario.planted:
@@ -124,6 +125,26 @@ class Runner:
             if not self.args.keep:
                 shutil.rmtree(work, ignore_errors=True)
         return row
+
+
+HISTORY = r"previous|former|moved from|changed from|switched from|used to|no longer|instead of|replac|\bold\b|until|rather than|earlier|before|\bwas\b|\bwere\b|not\b"
+
+
+def allows_history(scenario, answer: str) -> bool:
+    """A second reading of `update` and `dream` answers, added after the trial
+    run showed answers such as "Mondays (moved from Thursdays)". The committed
+    check fails those because the old value appears at all. This one passes an
+    answer that gives the new value first and names the old one only as
+    history. The criteria are decided on the committed check; this is reported
+    beside it."""
+    if scenario.kind not in ("update", "dream"):
+        return False
+    text = answer.lower()
+    new = [re.search(p, text) for p in scenario.expect]
+    old = [m for p in scenario.forbid for m in [re.search(p, text)] if m]
+    if not all(new) or not old:
+        return False
+    return all(m.start() > max(n.start() for n in new) for m in old) and bool(re.search(HISTORY, text))
 
 
 def summarise(rows):
@@ -157,6 +178,7 @@ def summarise(rows):
     return {
         "table": {kind: {condition: list(rate(kind, condition)) for condition in CONDITIONS} for kind in kinds},
         "criteria": {name: {"passed": passed, "detail": detail} for name, (passed, detail) in c.items()},
+        "allowing_history": {kind: {condition: sum(1 for r in cells[(kind, condition)] if r["correct_allowing_history"]) for condition in ("memory", "memory+dream")} for kind in ("update", "dream")},
         "cost_of_final_session": cost,
         "planted_instruction": {condition: {"served_as_note": sum(1 for r in cells[("poison", condition)] if r.get("planted_served")), "quarantined": sum(1 for r in cells[("poison", condition)] if r.get("planted_quarantined"))} for condition in ("memory", "memory+dream")},
         "forgotten_fact_left_in": {condition: dict(sorted(defaultdict(int, {place: sum(1 for r in cells[("forget", condition)] if place in r.get("secret_left_in", [])) for r in cells[("forget", condition)] for place in r.get("secret_left_in", [])}).items())) for condition in ("memory", "memory+dream")},
@@ -180,6 +202,8 @@ def render(summary, settings) -> str:
     lines += ["", "Criteria (fixed before the first run; see README.md):", "", "| # | Result | Detail |", "|---|---|---|"]
     for name, verdict in summary["criteria"].items():
         lines.append(f"| {name} | {'**pass**' if verdict['passed'] else '**fail**'} | {verdict['detail']} |")
+    history = summary["allowing_history"]
+    lines += ["", "Counting an answer that gives the new value and names the old one only as history (a second reading, added after the trial run; the criteria above use the committed check): " + "; ".join(f"{kind}: {v['memory']}/10 with memory, {v['memory+dream']}/10 with the pass" for kind, v in history.items()) + "."]
     lines += ["", "What the final session cost, on average:", "", "| Condition | Prompt tokens | Model calls | Tool calls | Seconds |", "|---|---|---|---|---|"]
     for condition, cost in summary["cost_of_final_session"].items():
         lines.append(f"| {condition} | {cost['prompt_tokens_mean']:,} | {cost['model_calls_mean']} | {cost['tool_calls_mean']} | {cost['seconds_mean']} |")
@@ -204,6 +228,7 @@ def main():
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--timeout", type=int, default=240, help="seconds allowed for one session")
     parser.add_argument("--out", default="benchmarks/results/sessions")
+    parser.add_argument("--work", help="directory for each run's store and sessions (default: the system's temporary directory)")
     parser.add_argument("--keep", action="store_true", help="keep each scenario's store and sessions")
     args = parser.parse_args()
 
@@ -224,7 +249,8 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "answers.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    version = subprocess.run([args.pi, "--version"], capture_output=True, text=True).stdout.strip() or "unknown"
+    shown = subprocess.run([args.pi, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    version = (shown.stdout + shown.stderr).strip().splitlines()[-1] if (shown.stdout + shown.stderr).strip() else "unknown"
     settings = {"pi_version": version, "model": args.model, "dream_model": args.dream_model, "runs": len(rows)}
     summary = summarise(rows)
     (out / "summary.json").write_text(json.dumps({"settings": settings, **summary}, indent=2))
