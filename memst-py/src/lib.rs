@@ -85,7 +85,7 @@ fn lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ExtractionService>()?;
     m.add_class::<Ontology>()?;
     m.add_class::<OntologyManager>()?;
-    m.add("__version__", "0.1.0")?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
     // Initialize Phase 8/12/16 aliases and __all__
     _init_phase8_aliases(m.py(), m)?;

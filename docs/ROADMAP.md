@@ -30,7 +30,7 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 7 | Four-layer memory in the store | **Done** | Every note change can be diffed and reverted; existing MCP notes migrate; the index stays within its cap |
 | 8 | Pi as the default agent | **Done** | A fresh Pi session recalls something from an earlier one, in a scripted test |
 | 9 | Dreaming on a branch | **Done** | A planted wrong note is corrected against the transcript; a bad pass can be rolled back; unverified notes are not laundered into the trusted index |
-| 10 | Evaluate memory in use | Next | Cross-session tasks with and without memory, operation tests and cost, with criteria fixed beforehand |
+| 10 | Evaluate memory in use | Done | 60 cross-session scenarios under three conditions, seven criteria fixed beforehand: five pass, one fails on the answer check, one failed and led to a fix (forgetting did not reach transcripts) |
 | 11 | Hardening and release | Planned | Parallel writers are safe; the open deletion work is done; packages are published |
 
 The manuscript was rewritten after sprint 6, around these results (see `docs/research/memst-and-the-field.md`, "Manuscript").
@@ -249,7 +249,7 @@ under `<store>/memory/<owner>/`.
   `history`, `restore`, `pin`, `unpin`.
 
 Limits: each operation reads every note, so writes slow down as notes
-accumulate (limit 10,000 per owner); search has no stemming; pages (the
+accumulate (limit 10,000 per owner); search had no stemming (added in sprint 11); pages (the
 third layer) are not built until sprint 9.
 
 **8. Pi as the default agent.** Done. `integrations/pi` is a native Pi
@@ -304,9 +304,54 @@ Limits: the pass checks that something was said, not that it is true; one
 model has been tried; it runs on demand, not on a schedule; history is
 linear, so two passes at once are not supported.
 
-**10. Evaluate memory in use**, with criteria fixed beforehand, as in 5c.
+**10. Evaluate memory in use** *(done)*, with criteria fixed beforehand, as
+in 5c. Sixty scenarios (recall, update, correction by the offline pass,
+forgetting, a planted instruction, abstention), each under three conditions
+(no memory, memory, memory with the offline pass), with Pi and
+`deepseek-flash`; every session a separate process. Details and every
+answer: [benchmarks/sessions](../benchmarks/sessions/README.md).
 
-**11. Hardening and release.**
+- Passed: recall across sessions (10/10 against 0/10 without memory); the
+  offline pass correcting a wrong note (10/10 against 0/10 without the
+  pass); a planted instruction never followed (0 of 20) with the page's fact
+  still given; abstention (10/10); the pass doing no harm.
+- Failed on the check as committed: updates (6/10). Every failing answer
+  gives the new value and names the old one as history; the check was too
+  strict, and the criterion is still reported as failed.
+- Failed: forgetting. The note was gone, the fact was still in the
+  transcripts in 20 of 20 runs, and one answer found it. Fixed
+  (`memory_forget` now removes transcript entries by their words); on
+  re-run, 0 of 20.
+- Cost: about 5,200 prompt tokens for a final session with memory against
+  560 without, and one second more.
+
+Limits: short scenarios written by us, a nearly empty memory, ten instances
+per cell, one model and one agent. Not done: pages plus search against
+search alone in the question-answering harness.
+
+**11. Hardening and release** *(done, except where marked open)*.
+
+- **A store in use no longer makes the next process wait in silence.** A
+  store handle holds the lock for as long as it lives; a second process now
+  waits 30 seconds (`MEMST_LOCK_TIMEOUT_SECS`) and then says the store is in
+  use. The lock is still held for the handle's life: per-operation locking
+  in the engine is **open**.
+- **One offline pass at a time** on a memory; a second is refused.
+- **Search matches a word with its own endings** ("seat"/"seats",
+  "deploy"/"deployed").
+- **Forgetting reaches the transcripts** (from sprint 10).
+- **Release.** Workspace, Python module and command line all report 1.1.0
+  (the module said 0.1.0 and the command line 0.1.0). A release workflow
+  builds `memst` for Linux x86-64 and macOS arm64 on a `v*` tag or by hand;
+  it has **not been run**, since it only runs from the default branch or a
+  tag.
+- **Manuscript.** A section on memory in use, with the sprint 10 results.
+
+Open after this sprint: three-way merge; deletion of single messages with
+cascade to derived facts, and from history, for the session store; the cost
+of reading every note per operation; a note contradicted by something said
+later is not flagged at read time; forgetting by words misses a paraphrase;
+the store is within reach of an agent that has a shell.
 
 ## Known gaps not yet scheduled
 
@@ -316,6 +361,5 @@ linear, so two passes at once are not supported.
   engine's.
 
 - Three-way merge in `memst-repo` does not load memories from commits.
-- `memst-py` reports version 0.1.x while the workspace is 1.0.0.
 - Root-level Python helpers (`llm/`, `demo/`, `pyproject.toml`) sit in the Rust
   workspace root.

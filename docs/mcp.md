@@ -104,7 +104,7 @@ notes, whose first lines may then appear in it.
 | `memory_status` | Whose memory this is, whether it can be changed, how much it holds |
 | `memory_write` | Store a note |
 | `memory_update` | Replace a note's text. The earlier text stays in the history, and the note becomes unverified again |
-| `memory_forget` | Delete a note and every earlier version of it |
+| `memory_forget` | Delete a note and every earlier version of it (`id`), and remove every transcript entry that contains given words (`phrases`) |
 | `transcript_append` | Record one entry of the current session |
 
 With `--read-only`, the last four are not offered and nothing in the store is
@@ -142,6 +142,7 @@ memst --store ~/.memst mcp --owner alice restore <revision>          # put the n
 
 ```bash
 memst --store ~/.memst mcp --owner alice forget <id>   # delete a note and its history
+memst --store ~/.memst mcp --owner alice forget --said "48151"   # remove transcript entries containing these words
 ```
 
 `notes`, `index` and `audit` list the notes, print the index, and show who
@@ -271,8 +272,18 @@ its text as the body.
 `memory_forget` and `mcp forget` delete a note's file and the stored content
 of every earlier version of it. The history still shows that a note with
 that id existed and when it changed; its text is gone from every revision,
-and restoring an earlier revision does not bring it back. A session's
-transcript is deleted whole. What deletion means across the rest of MemSt is
+and restoring an earlier revision does not bring it back.
+
+A note is not the only place a fact is kept: the transcripts hold what the
+user said. Deleting the note alone leaves the fact searchable there, which
+the cross-session evaluation showed (`benchmarks/sessions`). So
+`memory_forget` also takes `phrases`, the distinctive words of what is to be
+forgotten, and `mcp forget --said` does the same from the command line.
+Every transcript entry containing one of them (letter case ignored) loses
+its text and keeps its place, time and speaker; pages built on that session
+are deleted; and for the rest of that server's life, an entry that repeats
+the words is not recorded. This is matching by words: a paraphrase that
+does not use them stays. A session's transcript can also be deleted whole. What deletion means across the rest of MemSt is
 in [deletion-design.md](deletion-design.md).
 
 ## Limits
@@ -281,6 +292,10 @@ in [deletion-design.md](deletion-design.md).
   notes accumulate (tens of milliseconds at a few hundred notes). The limit
   of 10,000 notes per owner reflects that; an index over the notes is future
   work.
-- Search is keyword matching without stemming: "seat" does not find "seats".
+- Search is keyword matching. A word finds its own common English endings
+  ("seat" finds "seats", "deploy" finds "deployed"); it does not find
+  synonyms, and other languages get exact matching only.
+- One offline pass runs at a time on a memory; a second is refused while
+  the first is at work.
 - Transcripts are not versioned and not screened; they are a log.
 - The offline pass has been run with one model.

@@ -61,7 +61,8 @@ async fn write_search_read_get_forget() {
     assert!(status.contains("owner: alice") && status.contains("notes: 3") && status.contains("read and write"));
 
     // Forget removes it for good.
-    assert_eq!(call(&adapter, "memory_forget", json!({"id": id})).await.unwrap(), "Forgotten.");
+    assert!(call(&adapter, "memory_forget", json!({"id": id})).await.unwrap().starts_with("Forgotten: the note."));
+    assert_eq!(call(&adapter, "memory_forget", json!({})).await.unwrap_err(), "give the note's id, phrases, or both");
     assert_eq!(call(&adapter, "memory_get", json!({"id": id})).await.unwrap_err(), "no memory with that id");
     assert_eq!(call(&adapter, "memory_forget", json!({"id": id})).await.unwrap_err(), "no memory with that id");
     assert!(!call(&adapter, "memory_search", json!({"query": "dark mode"})).await.unwrap().contains("dark mode"));
@@ -131,4 +132,27 @@ fn screening_can_be_turned_off_or_made_strict() {
     assert!(matches!(write(Screening::Reject), Err(Refusal::InstructionLike(_))));
     assert!(!write(Screening::Quarantine).unwrap().quarantined_because.is_empty());
     assert!(write(Screening::Off).unwrap().quarantined_because.is_empty());
+}
+
+#[tokio::test]
+async fn forgetting_with_phrases_takes_the_words_out_of_the_transcripts_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let adapter = McpAdapter::connected(service(dir.path(), "alice", false));
+    let stored = call(&adapter, "memory_write", json!({"content": "The door code is 48151."})).await.unwrap();
+    let id = stored.trim_start_matches("Stored as note ").trim_end_matches('.').to_string();
+    call(&adapter, "transcript_append", json!({"session": "s1", "role": "user", "text": "The door code is 48151."})).await.unwrap();
+    call(&adapter, "transcript_append", json!({"session": "s1", "role": "user", "text": "Lunch is at noon."})).await.unwrap();
+
+    // A refused phrase leaves the note where it was.
+    assert!(call(&adapter, "memory_forget", json!({"id": id, "phrases": ["4"]})).await.is_err());
+    assert!(call(&adapter, "memory_get", json!({"id": id})).await.is_ok());
+
+    let done = call(&adapter, "memory_forget", json!({"id": id, "phrases": ["48151"]})).await.unwrap();
+    assert_eq!(done, "Forgotten: the note, and 1 transcript entries that contained those words.");
+    let found = call(&adapter, "memory_search", json!({"query": "door code 48151 lunch", "scope": "all"})).await.unwrap();
+    assert!(!found.contains("48151") && found.contains("Lunch is at noon"));
+
+    // Phrases alone, for something that never became a note.
+    let done = call(&adapter, "memory_forget", json!({"phrases": ["lunch is at"]})).await.unwrap();
+    assert_eq!(done, "Forgotten: 1 transcript entries that contained those words.");
 }

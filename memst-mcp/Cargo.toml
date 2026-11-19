@@ -9,6 +9,7 @@ repository.workspace = true
 description = "MCP (Model Context Protocol) adapter for MemSt"
 
 [dependencies]
+fs2 = "0.4"
 memst-core = { path = "../memst-core" }
 memst-repo = { path = "../memst-repo" }
 
