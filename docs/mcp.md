@@ -104,7 +104,7 @@ notes, whose first lines may then appear in it.
 | `memory_status` | Whose memory this is, whether it can be changed, how much it holds |
 | `memory_write` | Store a note |
 | `memory_update` | Replace a note's text. The earlier text stays in the history, and the note becomes unverified again |
-| `memory_forget` | Delete a note and every earlier version of it (`id`), and remove every transcript entry that contains given words (`phrases`) |
+| `memory_forget` | Delete a note and every earlier version of it (`id`), remove every transcript entry that contains given words (`phrases`), or single entries (`entries`, as `session#number`). The reply lists entries on the same subject that were not removed |
 | `transcript_append` | Record one entry of the current session |
 
 With `--read-only`, the last four are not offered and nothing in the store is
@@ -267,6 +267,22 @@ its text as the body.
 - **Other ways into the store bypass all of this.** The checks are in the
   MCP server. The command line and the Python module write without them.
 
+## A note and what was said since
+
+A note is the agent's summary; what the user said is the source. When a
+note is read (`memory_read`, `memory_search`, `memory_get`), anything the
+user said on the same subject after the note was last written is shown
+below it, with the rule that the later statement holds if the two differ
+and that the note should then be corrected. The index marks such notes.
+Without this, an agent answered from an out-of-date note every time
+(`benchmarks/sessions`, round 1).
+
+The match is by shared words (at least a third of the shorter text's
+content words, and two unless that text has three or fewer). It does not
+judge whether the two disagree, misses a statement in wholly different
+words, and skips questions. At most the latest 5,000 statements are
+considered.
+
 ## Deleting
 
 `memory_forget` and `mcp forget` delete a note's file and the stored content
@@ -283,7 +299,11 @@ Every transcript entry containing one of them (letter case ignored) loses
 its text and keeps its place, time and speaker; pages built on that session
 are deleted; and for the rest of that server's life, an entry that repeats
 the words is not recorded. This is matching by words: a paraphrase that
-does not use them stays. A session's transcript can also be deleted whole. What deletion means across the rest of MemSt is
+does not use them stays. So the reply to `memory_forget` lists the entries
+that share the subject and were not removed, and they can be removed one by
+one with `entries`. For the rest of the session the assistant's own replies
+on that subject are not recorded either, since a confirmation tends to
+restate what was removed. A session's transcript can also be deleted whole. What deletion means across the rest of MemSt is
 in [deletion-design.md](deletion-design.md).
 
 ## Limits

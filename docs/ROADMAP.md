@@ -347,7 +347,27 @@ search alone in the question-answering harness.
   tag.
 - **Manuscript.** A section on memory in use, with the sprint 10 results.
 
-Open after this sprint: three-way merge; deletion of single messages with
+**12. Contradicted notes and a sounder forget** *(done)*.
+
+- A note is shown with what the user said on its subject since it was
+  written, and marked in the index; the later statement holds if they
+  differ.
+- After a forget, entries on the same subject that were not removed are
+  listed and can be removed singly; the assistant's replies on that subject
+  are not recorded for the rest of the session.
+- The session evaluation judges an update by which value is given first.
+- Round 2 of the evaluation (70 runs, criteria fixed beforehand): one of
+  three criteria passed on the first run (forgetting a fact said in other
+  words). The stale-note criterion reached 6/10 and one forget run left the
+  assistant's confirmation on disk. After two fixes, all three pass on a
+  second run (stale 10/10, against 0/10 in round 1 without the offline
+  pass).
+
+Next: **13** memory at realistic size; **14** deletion and locking in the
+session store; **15** what versioning is worth; **16** a second agent and
+the release.
+
+Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost
 of reading every note per operation; a note contradicted by something said
 later is not flagged at read time; forgetting by words misses a paraphrase;

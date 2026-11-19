@@ -151,7 +151,38 @@ For `update` and `stale` an answer is judged by the value it gives first:
 Also reported without a threshold: in how many `stale` runs the agent
 corrected the note, and the cost of the final session.
 
+### Round 2 results
+
+First run (`benchmarks/results/sessions-round2`), 70 scenario runs, none
+failed: **one of three criteria passed.**
+
+| # | Result | |
+|---|---|---|
+| R1 | **fail** | `stale` 6/10. In the six runs where the note was marked, the agent answered from the later statement and corrected the note. In the other four the note was not marked: the later statement shared one word with a short note where two were required, and "theme" was stemmed to a word on the list of common ones |
+| R2 | pass | `forget2`: 0/10 answers gave the fact in either wording, and neither wording was on disk in any run |
+| R3 | **fail** | `recall`, `update`, `poison`, `abstain` 10/10; `forget`: no answer gave the fact, but in one run the assistant's confirmation ("nothing about the 340 requests/minute limit remains") was recorded after the forgetting |
+
+Two changes followed: a short note is matched on one shared word, with
+common words dropped before stemming; and for the rest of a session, the
+assistant's replies on a subject just forgotten are not recorded. All 70
+scenarios were then run again
+(`benchmarks/results/sessions-round2-after-fix`): `stale` 10/10 with the
+note corrected in 10/10, `forget` and `forget2` clean in 20 of 20, and the
+other four kinds 10/10. As in round 1, that is a second run after changes
+the first run prompted; the first run is the test's outcome, and the second
+shows the changes do what they were made for on the same scenarios.
+
+The final session cost about 7,800 prompt tokens and 5.0 s after the
+changes (7,000 and 4.6 s before them): the `stale` runs now read the note,
+search, and correct it.
+
 ## Limits
+
+The second runs of both rounds were made on the scenarios the fixes were
+written against, so they cannot show that the fixes hold in general. The
+matching that marks a note and that finds related entries is by shared
+words: a later statement in wholly different words is not shown, and one
+that merely agrees is.
 
 The scenarios are short and written by the people who built the system; the
 facts are told plainly, one or two sessions before they are needed, and the
