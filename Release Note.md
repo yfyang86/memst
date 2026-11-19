@@ -1,5 +1,56 @@
 # MemSt Release Notes
 
+## v1.1.0 - Agent memory
+
+*Release Date: 2026-11-19*
+
+### What's new
+
+- **Memory for agents, over MCP.** `memst mcp --owner <name> serve` is a real
+  Model Context Protocol server (it was a mock-up in 1.0.0). An owner's
+  memory has four layers: session transcripts, notes as Markdown files with
+  full history, pages of sourced facts, and a short index for the prompt.
+  See `docs/mcp.md`.
+- **An extension for the Pi coding agent** (`integrations/pi`): the index at
+  the start of a session, the session recorded, memory tools for the model,
+  and `/memory` for you.
+- **An offline pass** (`memst mcp --owner <name> dream`) that corrects and
+  adds notes from what was said, checks every quotation against its source,
+  and can be undone with one `restore`.
+- **Safeguards**: one owner per server, notes that read like instructions
+  set aside for review, labelled and fenced reads, an audit log without
+  content, a read-only mode.
+- **Forgetting**: a note goes with every earlier version of it, and the
+  words can be removed from the transcripts as well.
+- **An evaluation harness** (`benchmarks/harness`) with configurable
+  retrieval pipelines and traces, and a cross-session test of memory in use
+  (`benchmarks/sessions`).
+- **Knowledge graph**: an embedded HelixDB backend; a fact's date is now the
+  date it became true, kept apart from the date it was said.
+
+### What we found
+
+- On LoCoMo and LongMemEval-S, the knowledge graph does not answer questions
+  better than retrieval over the conversation's own turns. Letting the
+  reader reason over what was retrieved helps most. See the manuscript.
+
+### Changed behaviour
+
+- A process that opens a store another process holds now waits 30 seconds
+  (`MEMST_LOCK_TIMEOUT_SECS`) and reports that the store is in use, where it
+  used to wait without end.
+- Deleting a session also removes it from the search index.
+- `memst --version` and `memst.__version__` report the workspace version.
+
+### Known limits
+
+- Three-way merge, and deletion of single messages from the session store
+  and its history, are not implemented.
+- Forgetting from transcripts matches words; a paraphrase stays.
+- An agent with a shell can reach the memory files directly.
+
+---
+
 ## v1.0.0 - Formal Release
 
 *Release Date: 2026-03-06*

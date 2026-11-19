@@ -14,7 +14,7 @@ use uuid::Uuid;
 #[derive(Parser, Debug)]
 #[command(name = "memst")]
 #[command(author = "MemSt Team")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "Git-like memory architecture for LLM session management", long_about = None)]
 struct Args {
     #[command(subcommand)]
@@ -1188,6 +1188,7 @@ fn main() -> Result<()> {
                             println!("dropped: {dropped}");
                         }
                     };
+                    let _one_at_a_time = memory.begin_pass().map_err(refused)?;
                     let proposal = match memory.pending().map_err(refused)? {
                         Some(waiting) if *apply => waiting,
                         _ => {

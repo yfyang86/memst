@@ -165,6 +165,8 @@ Each store has one knowledge graph, kept in an embedded HelixDB database that pr
 
 \texttt{memst mcp serve} exposes one owner's memory to any client of the Model Context Protocol \citep{mcpspec} over standard input and output, with tools to search, read within a token budget, write and forget. \Cref{sec:security} describes how it limits what a client can do.
 
+Behind the tools, an owner's memory is a directory of four layers: an append-only transcript of each session; notes, one Markdown file each, with every change kept as a revision that can be read and restored; pages that gather facts on a topic, each fact with the quotation it rests on; and a short index, built by the server, that is placed in the agent's prompt at the start of a session. An offline pass, run between sessions, reads the transcripts since its last run and proposes corrections to notes, new notes and pages. Every proposal must quote its source and the quotation is checked against the source before anything is written; a note the owner approved is never rewritten; and a pass lands as one revision that one command undoes. An extension for the Pi coding agent gives a session its index, records the session, and offers the tools.
+
 \subsection{The evaluation harness}
 
 Retrieval in the harness is a pipeline: a list of stages, each adding facts from the graph or turns of the conversation to what the reader will see. Pipelines are defined in JSON. The stages are: raw turns ranked by BM25, by embedding or by both fused; facts found by relationship search, by embedding or both; entities with the facts around them; the source messages of the facts selected so far; the turns adjacent to those selected; and a rerank, in which the model reads the candidates and keeps the most useful. A pipeline may also set the reader to answer directly or to work through the evidence first. For every question the harness records what each stage returned, how long it took, and whether it reached a turn that the dataset marks as containing the answer.
@@ -317,7 +319,40 @@ An agent that can write to its own memory can be made to write an instruction fo
 
 The limits should be stated plainly. Screening catches instructions phrased as instructions; a false statement written as a fact passes, which is why notes written by an agent are marked unverified until a person approves them. Owners are separated by the server, not by the file system. The command line and the Python module bypass these checks.
 
-Deletion is harder in a store built to keep history. We distinguish hiding an item, removing it from the current state and every index derived from it, removing it from history, and removing it from places the store cannot reach, such as backups and a model provider's logs. Notes written through the server are removed at the second level and exist nowhere else in the store; a test searches every byte of the store for the deleted text. For messages, the facts derived from them, and the versioned history, the repository contains a design (per-item encryption with deletion of the key, so that every snapshot's copy becomes unreadable without rewriting history) but not an implementation.
+Deletion is harder in a store built to keep history. We distinguish hiding an item, removing it from the current state and every index derived from it, removing it from history, and removing it from places the store cannot reach, such as backups and a model provider's logs. Notes written through the server are removed with every earlier version of them, and a test searches every byte of the store for the deleted text. A note is not the only place a fact is kept, as \cref{sec:inuse} found: forgetting now also removes the transcript entries that contain the words, which is matching by words and so misses a paraphrase. For messages, the facts derived from them, and the versioned history, the repository contains a design (per-item encryption with deletion of the key, so that every snapshot's copy becomes unreadable without rewriting history) but not an implementation.
+
+%==============================================================================
+\section{Memory in Use}
+\label{sec:inuse}
+
+The benchmarks above ask about a fixed transcript. They do not test an agent that is told something in one session and needs it in a later one while its memory changes in between. We wrote a small test of that, and fixed its pass criteria in the repository before the first run.
+
+Sixty scenarios, ten for each of six kinds, were run under three conditions: the Pi agent without memory, with memory, and with memory and the offline pass applied before the last session. Each session is a separate process, the agent has no file or shell tools, and the facts are invented so that the model cannot know them otherwise. The agent's model is the reader used elsewhere in this paper. Answers are checked by pattern.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Scenario (correct final answers of 10) & No memory & Memory & Memory and pass \\
+\midrule
+Recall a fact told two sessions earlier & 0 & 10 & 10 \\
+Give the new value after an update (strict check) & 0 & 6 & 5 \\
+Answer from what the user said, against a wrong note & 0 & 0 & 10 \\
+Do not give a fact the user asked to forget & 10 & 10 & 9 \\
+Give a pasted page's fact, ignore its instruction & 0 & 10 & 10 \\
+Say so when never told & 7 & 10 & 10 \\
+\bottomrule
+\end{tabular}
+\caption{Memory in use: 180 scenario runs. Criteria were fixed beforehand; five of seven passed.}
+\label{tab:inuse}
+\end{table}
+
+Five of the seven criteria passed (\cref{tab:inuse}). Recall across sessions, abstention, and resistance to an instruction planted in pasted text all held in every run. The offline pass did what it is for: given a wrong note and a transcript in which the user says otherwise, the agent answered from the note in ten runs of ten, and from what the user said in ten of ten once the pass had corrected the note. The first half of that result is a fault as much as the second is a success: at read time nothing tells the agent that a note has been contradicted since.
+
+Two criteria failed. The update criterion failed on the check as written: all nine failing answers give the new value and name the old one as history (``Tallinn, having relocated from Lisbon''), which the check counts as wrong. We report it as failed because the check was fixed in advance. The forgetting criterion failed in substance. Forgetting deleted the note and every earlier version of it, and left what the user had said in the transcripts, in twenty runs of twenty; in one, the agent found the fact there by searching and gave it. The tool now also takes the words to be forgotten and removes every transcript entry that contains them. On a second run of those scenarios no answer gave the fact and no file held it; being a rerun after a change prompted by the first, it does not alter the first result.
+
+A final session with memory used about 5,200 prompt tokens against 560 without, and took about one second longer. The test is small and written by the authors, the memory in it is nearly empty, and one agent and one model were tried; it shows that the operations work and where one did not, and says nothing about recall from a memory of thousands of notes.
 
 %==============================================================================
 \section{Discussion}
@@ -343,7 +378,7 @@ None of this says a time-aware graph of a user's world is without value. It says
 
 \textbf{Scale.} At about 127,000 tokens, LongMemEval-S histories still fit in a large context window and their answer turns are easy to retrieve. Histories of millions of tokens, where retrieval can no longer return everything relevant, are the remaining setting in which a pre-built structure might win; we have not tested it.
 
-\textbf{Benchmarks.} Both benchmarks ask questions about a fixed transcript. Neither tests correction, deletion, rollback or use of memory in action. LoCoMo's reference answers contain errors.
+\textbf{Benchmarks.} Both benchmarks ask questions about a fixed transcript. Neither tests correction, deletion, rollback or use of memory in action; our own test of those (\cref{sec:inuse}) is sixty short scenarios. LoCoMo's reference answers contain errors.
 
 \textbf{Not evaluated.} The memory tiers, sleep-time consolidation and the versioned repository are described but not measured. We make no claim about what versioning is worth; the experiments that would show it (answering as of an earlier state, merging two agents' memories) remain to be done.
 

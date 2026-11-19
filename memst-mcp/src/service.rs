@@ -580,6 +580,20 @@ impl MemoryService {
         self.root.join("dreams")
     }
 
+    /// Hold this while an offline pass reads, proposes and applies, so that
+    /// two passes cannot run over the same memory at once. Each would read
+    /// the same transcripts and write the same corrections twice. Released
+    /// when the returned file is dropped.
+    pub fn begin_pass(&self) -> Result<fs::File, Refusal> {
+        if self.scope.read_only {
+            return Err(Refusal::ReadOnly);
+        }
+        fs::create_dir_all(self.dream_dir()).map_err(store_error)?;
+        let lock = OpenOptions::new().create(true).write(true).truncate(false).open(self.dream_dir().join("pass.lock")).map_err(store_error)?;
+        fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| Refusal::Limit("another offline pass is running on this memory".to_string()))?;
+        Ok(lock)
+    }
+
     fn pending_path(&self) -> PathBuf {
         self.dream_dir().join("pending.json")
     }
@@ -945,7 +959,36 @@ pub(crate) fn clean_tags(tags: &[String]) -> Vec<String> {
 }
 
 fn terms(text: &str) -> Vec<String> {
-    text.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|t| !t.is_empty()).map(str::to_string).collect()
+    text.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|t| !t.is_empty()).map(stem).collect()
+}
+
+/// Strip the commonest English endings, so that "seat" finds "seats" and
+/// "deploy" finds "deploys", "deployed" and "deploying". Deliberately small:
+/// it only has to make a word and its own inflections meet, and it leaves
+/// short words, numbers and anything not ASCII alone.
+fn stem(word: &str) -> String {
+    if word.len() < 5 || !word.bytes().all(|b| b.is_ascii_lowercase()) {
+        return word.to_string();
+    }
+    let cut = |suffix: &str, add: &str| word.strip_suffix(suffix).filter(|base| base.len() >= 3).map(|base| format!("{base}{add}"));
+    let stemmed = cut("ies", "y")
+        .or_else(|| cut("sses", "ss"))
+        .or_else(|| cut("ches", "ch"))
+        .or_else(|| cut("shes", "sh"))
+        .or_else(|| cut("xes", "x"))
+        .or_else(|| cut("ing", ""))
+        .or_else(|| cut("ed", ""))
+        .or_else(|| if word.ends_with("ss") || word.ends_with("us") || word.ends_with("is") { None } else { cut("s", "") })
+        .unwrap_or_else(|| word.to_string());
+    // "deployed" and "moved" should meet "deploy" and "move"; a final "e"
+    // goes too, and a doubled consonant ("planned") is halved.
+    let stemmed = stemmed.strip_suffix('e').filter(|base| base.len() >= 3).map(str::to_string).unwrap_or(stemmed);
+    let bytes = stemmed.as_bytes();
+    let n = bytes.len();
+    if n >= 4 && bytes[n - 1] == bytes[n - 2] && !matches!(bytes[n - 1], b'l' | b's' | b'z' | b'a' | b'e' | b'i' | b'o' | b'u') {
+        return stemmed[..n - 1].to_string();
+    }
+    stemmed
 }
 
 /// BM25 over the candidates. An owner holds at most tens of thousands of

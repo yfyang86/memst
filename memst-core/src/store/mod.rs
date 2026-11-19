@@ -67,6 +67,27 @@ impl Drop for SessionStore {
     }
 }
 
+/// Take the store's lock, waiting a bounded time. A store handle holds the
+/// lock for as long as it lives, so another process with the store open (a
+/// server, a notebook) would otherwise make this one wait for ever, in
+/// silence. The wait is 30 seconds, or `MEMST_LOCK_TIMEOUT_SECS`.
+fn lock_store(file: &File, path: &Path) -> Result<()> {
+    let wait = std::env::var("MEMST_LOCK_TIMEOUT_SECS").ok().and_then(|s| s.parse::<f64>().ok()).unwrap_or(30.0).max(0.0);
+    let started = std::time::Instant::now();
+    loop {
+        match file.try_lock_exclusive() {
+            Ok(()) => return Ok(()),
+            Err(_) if started.elapsed().as_secs_f64() < wait => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_) => {
+                return Err(Error::LockError(format!(
+                    "the store at {} is in use by another MemSt process (waited {wait} s). Close it, or set MEMST_LOCK_TIMEOUT_SECS to wait longer",
+                    path.parent().unwrap_or(path).display()
+                )))
+            }
+        }
+    }
+}
+
 impl SessionStore {
     /// Initialize a new session store at the given path.
     pub fn init(base_path: &Path) -> Result<Self> {
@@ -90,7 +111,7 @@ impl SessionStore {
             .write(true)
             .create(true)
             .open(&lock_path)?;
-        lock_file.lock_exclusive()?;
+        lock_store(&lock_file, &lock_path)?;
 
         Ok(Self {
             _base_path: base_path.to_path_buf(),
@@ -115,7 +136,7 @@ impl SessionStore {
         // Open lock file
         let lock_path = base_path.join("store.lock");
         let lock_file = OpenOptions::new().read(true).write(true).open(&lock_path)?;
-        lock_file.lock_exclusive()?;
+        lock_store(&lock_file, &lock_path)?;
 
         Ok(Self {
             _base_path: base_path.to_path_buf(),
@@ -927,6 +948,20 @@ mod tests {
         assert!(temp_dir.path().join("store.lock").exists());
         assert!(temp_dir.path().join("sessions").is_dir());
         assert!(temp_dir.path().join("attachments").is_dir());
+    }
+
+    #[test]
+    fn a_store_in_use_is_reported_instead_of_waited_for_without_end() {
+        let temp_dir = TempDir::new().unwrap();
+        let held = SessionStore::init(temp_dir.path()).unwrap();
+        std::env::set_var("MEMST_LOCK_TIMEOUT_SECS", "0.2");
+        let started = std::time::Instant::now();
+        let refused = SessionStore::open(temp_dir.path());
+        std::env::remove_var("MEMST_LOCK_TIMEOUT_SECS");
+        assert!(matches!(&refused, Err(Error::LockError(reason)) if reason.contains("in use by another MemSt process")));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        drop(held);
+        assert!(SessionStore::open(temp_dir.path()).is_ok());
     }
 
     #[test]

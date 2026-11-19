@@ -267,3 +267,35 @@ fn what_was_said_can_be_forgotten_by_its_words() {
     let reader = MemoryService::open(dir.path(), Scope::new("alice", true).unwrap(), WritePolicy::default()).unwrap();
     assert_eq!(reader.forget_said(&["meeting".to_string()]), Err(Refusal::ReadOnly));
 }
+
+#[test]
+fn search_matches_a_word_with_its_own_endings() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    memory.write("Alice prefers aisle seats on long flights.", "semantic", &[]).unwrap();
+    memory.write("The team deploys on Thursdays.", "semantic", &[]).unwrap();
+    memory.write("Release branches were renamed last spring.", "semantic", &[]).unwrap();
+    let first = |query: &str| match memory.search(query, 5, Layer::Notes).unwrap().first().map(|h| h.found.clone()) {
+        Some(Found::Note(note)) => note.body,
+        _ => String::new(),
+    };
+    assert!(first("seat").contains("aisle"));
+    assert!(first("flight").contains("aisle"));
+    assert!(first("deploying").contains("Thursdays"));
+    assert!(first("deployed on which thursday").contains("Thursdays"));
+    assert!(first("renaming a branch").contains("Release"));
+    // Short words, and words that only look alike, are left alone.
+    assert!(memory.search("seal", 5, Layer::Notes).unwrap().is_empty());
+    assert!(memory.search("team", 5, Layer::Notes).unwrap().len() == 1);
+}
+
+#[test]
+fn only_one_offline_pass_runs_at_a_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    let other = open(dir.path());
+    let first = memory.begin_pass().unwrap();
+    assert!(matches!(other.begin_pass(), Err(Refusal::Limit(reason)) if reason.contains("another offline pass")));
+    drop(first);
+    assert!(other.begin_pass().is_ok());
+}

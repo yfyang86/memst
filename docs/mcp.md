@@ -292,6 +292,10 @@ in [deletion-design.md](deletion-design.md).
   notes accumulate (tens of milliseconds at a few hundred notes). The limit
   of 10,000 notes per owner reflects that; an index over the notes is future
   work.
-- Search is keyword matching without stemming: "seat" does not find "seats".
+- Search is keyword matching. A word finds its own common English endings
+  ("seat" finds "seats", "deploy" finds "deployed"); it does not find
+  synonyms, and other languages get exact matching only.
+- One offline pass runs at a time on a memory; a second is refused while
+  the first is at work.
 - Transcripts are not versioned and not screened; they are a log.
 - The offline pass has been run with one model.

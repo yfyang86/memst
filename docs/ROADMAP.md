@@ -249,7 +249,7 @@ under `<store>/memory/<owner>/`.
   `history`, `restore`, `pin`, `unpin`.
 
 Limits: each operation reads every note, so writes slow down as notes
-accumulate (limit 10,000 per owner); search has no stemming; pages (the
+accumulate (limit 10,000 per owner); search had no stemming (added in sprint 11); pages (the
 third layer) are not built until sprint 9.
 
 **8. Pi as the default agent.** Done. `integrations/pi` is a native Pi
@@ -329,7 +329,29 @@ Limits: short scenarios written by us, a nearly empty memory, ten instances
 per cell, one model and one agent. Not done: pages plus search against
 search alone in the question-answering harness.
 
-**11. Hardening and release.**
+**11. Hardening and release** *(done, except where marked open)*.
+
+- **A store in use no longer makes the next process wait in silence.** A
+  store handle holds the lock for as long as it lives; a second process now
+  waits 30 seconds (`MEMST_LOCK_TIMEOUT_SECS`) and then says the store is in
+  use. The lock is still held for the handle's life: per-operation locking
+  in the engine is **open**.
+- **One offline pass at a time** on a memory; a second is refused.
+- **Search matches a word with its own endings** ("seat"/"seats",
+  "deploy"/"deployed").
+- **Forgetting reaches the transcripts** (from sprint 10).
+- **Release.** Workspace, Python module and command line all report 1.1.0
+  (the module said 0.1.0 and the command line 0.1.0). A release workflow
+  builds `memst` for Linux x86-64 and macOS arm64 on a `v*` tag or by hand;
+  it has **not been run**, since it only runs from the default branch or a
+  tag.
+- **Manuscript.** A section on memory in use, with the sprint 10 results.
+
+Open after this sprint: three-way merge; deletion of single messages with
+cascade to derived facts, and from history, for the session store; the cost
+of reading every note per operation; a note contradicted by something said
+later is not flagged at read time; forgetting by words misses a paraphrase;
+the store is within reach of an agent that has a shell.
 
 ## Known gaps not yet scheduled
 
@@ -339,6 +361,5 @@ search alone in the question-answering harness.
   engine's.
 
 - Three-way merge in `memst-repo` does not load memories from commits.
-- `memst-py` reports version 0.1.x while the workspace is 1.0.0.
 - Root-level Python helpers (`llm/`, `demo/`, `pyproject.toml`) sit in the Rust
   workspace root.
