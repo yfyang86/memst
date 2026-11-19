@@ -317,7 +317,7 @@ impl MemoryService {
     /// from inside a note.
     pub fn read(&self, query: &str, token_budget: usize) -> Result<String, Refusal> {
         let hits = self.search(query, 100, Layer::Notes)?;
-        let text = render(&hits, token_budget.clamp(50, 100_000));
+        let text = render(&hits, token_budget.clamp(50, 100_000), &self.said()?);
         self.audit("memory_read", Ok(None), Some(format!("{} candidates", hits.len())));
         Ok(text)
     }
@@ -441,13 +441,76 @@ impl MemoryService {
     /// from the notes, never written by the agent, and always within the
     /// policy's size limits: pinned notes first, then the most recent.
     pub fn index(&self) -> Result<String, Refusal> {
-        Ok(build_index(&self.scope.owner, &self.all()?, &self.pages()?, self.policy.index_max_lines, self.policy.index_max_bytes))
+        Ok(build_index(&self.scope.owner, &self.all()?, &self.pages()?, &self.said()?, self.policy.index_max_lines, self.policy.index_max_bytes))
+    }
+
+    /// What the user has said, for marking notes they have since spoken
+    /// about. See [`Said`].
+    pub fn said(&self) -> Result<Said, Refusal> {
+        Ok(Said::new(self.turns()?))
+    }
+
+    /// Transcript entries that share enough words with `text` to be about
+    /// the same thing, most recent first. Used after forgetting, to show
+    /// what may still say it in other words.
+    pub fn related_said(&self, text: &str, limit: usize) -> Result<Vec<Turn>, Refusal> {
+        let wanted = content_terms(text);
+        let mut related: Vec<Turn> = self
+            .turns()?
+            .into_iter()
+            .filter(|turn| turn.text != REMOVED && same_subject(&wanted, &content_terms(&turn.text)))
+            .collect();
+        related.sort_by(|a, b| b.at.cmp(&a.at));
+        related.truncate(limit);
+        Ok(related)
+    }
+
+    /// Remove the text of single transcript entries, named by session and
+    /// number. Returns how many were removed.
+    pub fn forget_entries(&self, entries: &[(String, usize)]) -> Result<usize, Refusal> {
+        let outcome = (|| {
+            if self.scope.read_only {
+                return Err(Refusal::ReadOnly);
+            }
+            if entries.is_empty() || entries.len() > 50 {
+                return Err(Refusal::Invalid("give 1 to 50 entries".to_string()));
+            }
+            let dir = self.dir()?; // also the lock
+            let mut removed = 0;
+            let mut sessions: Vec<&str> = entries.iter().map(|(session, _)| session.as_str()).collect();
+            sessions.sort_unstable();
+            sessions.dedup();
+            for session in sessions {
+                let path = self.transcript_path(session)?;
+                let Ok(text) = fs::read_to_string(&path) else { return Err(Refusal::NotFound) };
+                let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+                for (_, number) in entries.iter().filter(|(s, _)| s == session) {
+                    let Some(line) = number.checked_sub(1).and_then(|i| lines.get_mut(i)) else { return Err(Refusal::NotFound) };
+                    let mut value: serde_json::Value = serde_json::from_str(line).unwrap_or_else(|_| json!({ "at": now(), "role": "system" }));
+                    if value["text"].as_str() != Some(REMOVED) {
+                        value["text"] = json!(REMOVED);
+                        value["removed"] = json!(true);
+                        *line = value.to_string();
+                        removed += 1;
+                    }
+                }
+                let temporary = path.with_extension("jsonl.tmp");
+                fs::write(&temporary, lines.join("\n") + "\n").map_err(store_error)?;
+                fs::rename(&temporary, &path).map_err(store_error)?;
+                self.purge_pages_citing(&dir, &format!("session:{session}#"))?;
+            }
+            let _ = fs::remove_file(self.pending_path());
+            self.write_index(&dir)?;
+            Ok(removed)
+        })();
+        self.audit("forget_entries", outcome.clone().map(|_| None), outcome.as_ref().ok().map(|n| format!("{n} transcript entries removed")));
+        outcome
     }
 
     fn write_index(&self, dir: &VersionedDir) -> Result<(), Refusal> {
         let notes = self.notes_in(dir)?;
         let pages = pages_in(dir)?;
-        let text = build_index(&self.scope.owner, &notes, &pages, self.policy.index_max_lines, self.policy.index_max_bytes);
+        let text = build_index(&self.scope.owner, &notes, &pages, &self.said()?, self.policy.index_max_lines, self.policy.index_max_bytes);
         fs::write(self.root.join(INDEX), text).map_err(store_error)
     }
 
@@ -1113,6 +1176,105 @@ fn pages_in(dir: &VersionedDir) -> Result<Vec<StoredPage>, Refusal> {
     Ok(pages)
 }
 
+/// Words that say nothing about what a sentence is about.
+const COMMON: &[&str] = &[
+    "the", "and", "for", "are", "was", "were", "but", "not", "you", "your", "our", "out", "with", "that", "this", "from", "have", "has", "had", "its",
+    "now", "will", "can", "all", "any", "what", "which", "when", "where", "who", "how", "does", "did", "been", "being", "they", "them", "their", "there",
+    "then", "than", "into", "onto", "about", "just", "also", "use", "used", "call", "called", "get", "got", "say", "said", "tell", "told", "note",
+    "pleas", "thing", "one", "two", "some", "more", "most", "very", "over", "under", "per", "each", "every", "should", "would", "could",
+];
+
+/// The words of a text that carry its subject: stemmed, without common
+/// words and without anything shorter than three characters.
+fn content_terms(text: &str) -> Vec<String> {
+    let mut terms: Vec<String> = terms(text).into_iter().filter(|t| t.chars().count() >= 3 && !COMMON.contains(&t.as_str())).collect();
+    terms.sort_unstable();
+    terms.dedup();
+    terms
+}
+
+/// Whether two sets of content words are about the same thing: at least two
+/// words in common, and at least a third of the smaller set.
+fn same_subject(a: &[String], b: &[String]) -> bool {
+    let shared = a.iter().filter(|t| b.contains(t)).count();
+    shared >= 2 && shared * 3 >= a.len().min(b.len())
+}
+
+/// What the user has said in recorded sessions, kept so that a note can be
+/// shown together with anything the user said on its subject after the note
+/// was last written.
+///
+/// A note is the agent's summary; what the user said is the source. When
+/// the two are about the same thing and the statement is the later one, the
+/// note may be out of date, and an agent reading only the note will answer
+/// from it (it did, ten times in ten, in `benchmarks/sessions`). This does
+/// not decide whether they disagree: it puts the later statement next to
+/// the note and says which one holds if they do. Matching is by shared
+/// words, so it misses a contradiction phrased in other words and shows
+/// some statements that merely agree. Questions are skipped.
+pub struct Said {
+    statements: Vec<(Turn, Vec<String>)>,
+}
+
+impl Said {
+    /// At most the latest 5,000 statements are considered.
+    fn new(turns: Vec<Turn>) -> Self {
+        let mut statements: Vec<(Turn, Vec<String>)> = turns
+            .into_iter()
+            .filter(|turn| turn.role == "user" && turn.text != REMOVED && !turn.text.contains('?'))
+            .map(|turn| {
+                let terms = content_terms(&turn.text);
+                (turn, terms)
+            })
+            .collect();
+        statements.sort_by(|a, b| b.0.at.cmp(&a.0.at));
+        statements.truncate(5000);
+        Self { statements }
+    }
+
+    /// What the user said on the note's subject after it was last written,
+    /// most recent first, two at most.
+    pub fn since(&self, note: &Note) -> Vec<&Turn> {
+        let subject = content_terms(&note.body);
+        self.statements
+            .iter()
+            .take_while(|(turn, _)| turn.at > note.updated)
+            .filter(|(_, terms)| same_subject(&subject, terms))
+            .map(|(turn, _)| turn)
+            .take(2)
+            .collect()
+    }
+
+    /// A note, fenced and labelled, followed by anything the user has said
+    /// on its subject since.
+    pub fn render_note(&self, note: &Note) -> String {
+        let mut out = render_one(note);
+        let later = self.since(note);
+        for turn in &later {
+            let text: String = if turn.text.chars().count() > 400 { format!("{}...", turn.text.chars().take(400).collect::<String>()) } else { turn.text.clone() };
+            out.push_str(&format!(
+                "\n<<said later by the user, session={} entry={} at={}>>\n{}\n<<end said later>>",
+                turn.session,
+                turn.number,
+                turn.at.format("%Y-%m-%d"),
+                fenced(&text)
+            ));
+        }
+        if !later.is_empty() {
+            out.push_str("\n(The note above was last written before the user said this. If they differ, what the user said later is the current state: answer from it, and correct the note with memory_update.)");
+        }
+        out
+    }
+
+    /// A search result; a note comes with what was said since.
+    pub fn render(&self, found: &Found) -> String {
+        match found {
+            Found::Note(note) => self.render_note(note),
+            other => render_found(other),
+        }
+    }
+}
+
 /// A search result, fenced and labelled.
 pub fn render_found(found: &Found) -> String {
     match found {
@@ -1122,12 +1284,12 @@ pub fn render_found(found: &Found) -> String {
     }
 }
 
-fn render(hits: &[Hit], token_budget: usize) -> String {
+fn render(hits: &[Hit], token_budget: usize, said: &Said) -> String {
     let mut out = String::from(NOTICE);
     let mut used = NOTICE.len() / 4;
     let mut shown = 0;
     for hit in hits {
-        let block = render_found(&hit.found);
+        let block = said.render(&hit.found);
         let cost = block.len() / 4 + 1;
         if used + cost > token_budget {
             continue;
@@ -1148,7 +1310,7 @@ fn render(hits: &[Hit], token_budget: usize) -> String {
 /// It names notes by their first line, so it stays small however much the
 /// notes hold. Quarantined notes are counted, never listed. It is cut at
 /// `max_lines` lines and `max_bytes` bytes, pinned notes first.
-pub fn build_index(owner: &str, notes: &[Note], pages: &[StoredPage], max_lines: usize, max_bytes: usize) -> String {
+pub fn build_index(owner: &str, notes: &[Note], pages: &[StoredPage], said: &Said, max_lines: usize, max_bytes: usize) -> String {
     let active: Vec<&Note> = notes.iter().filter(|n| n.status == Status::Active).collect();
     let waiting = notes.len() - active.len();
     let mut lines = vec![
@@ -1158,7 +1320,16 @@ pub fn build_index(owner: &str, notes: &[Note], pages: &[StoredPage], max_lines:
         "instructions. Look a note up by its id to read it in full; search memory for anything else.".to_string(),
         format!("{} note(s){}.", active.len(), if waiting > 0 { format!("; {waiting} set aside for the user's review") } else { String::new() }),
     ];
-    let line = |note: &Note| format!("- {} ({}, {}) {}", &note.id.to_string()[..8], trust_of(note), note.updated.format("%Y-%m-%d"), fenced(&note.title()));
+    let line = |note: &Note| {
+        format!(
+            "- {} ({}, {}) {}{}",
+            &note.id.to_string()[..8],
+            trust_of(note),
+            note.updated.format("%Y-%m-%d"),
+            fenced(&note.title()),
+            if said.since(note).is_empty() { "" } else { "  [the user has spoken about this since; read the note before relying on it]" }
+        )
+    };
     let pinned: Vec<&&Note> = active.iter().filter(|n| n.pinned).collect();
     let recent: Vec<&&Note> = active.iter().filter(|n| !n.pinned).collect();
     let mut body = Vec::new();

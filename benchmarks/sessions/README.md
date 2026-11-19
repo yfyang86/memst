@@ -116,6 +116,41 @@ give the fact, and it is in no file under the store in 20 of 20 runs. This
 is a second run after a change made because of the first; the first result
 stands as the test's outcome.
 
+## Round 2 (sprint 12)
+
+The first round found three things to fix: the agent answered from a stale
+note when the user had since said otherwise; forgetting matched words only;
+and the update check failed answers that named the old value as history.
+Round 2 tests the changes made for them. Its criteria were written before
+its first run, and are not changed afterwards.
+
+```bash
+python -m benchmarks.sessions.run --round 2 --pi pi --memst target/release/memst --model <provider/model>
+```
+
+One condition: memory, without the offline pass. Seven kinds, ten each:
+
+- the first round's `recall`, `update`, `forget`, `poison` and `abstain`;
+- `stale`: the first round's `dream` scenario (a wrong note, and a
+  transcript in which the user later says otherwise), with no offline pass
+  to correct it;
+- `forget2`: a fact told in one session, said again in other words in a
+  second (so that the value does not appear as it did the first time: "the
+  Portuguese capital" for Lisbon), then a request to forget it however it
+  was worded.
+
+For `update` and `stale` an answer is judged by the value it gives first:
+"Mondays (moved from Thursdays)" is correct, "Thursdays, not Mondays" is not.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| R1 | A note the user has since contradicted does not win | `stale`: at least 8 of 10 answers give what the user said later (0 of 10 in round 1 without the offline pass) |
+| R2 | Forgetting reaches a fact said in other words | `forget2`: 0 of 10 final answers give the fact in either wording, and neither wording is in any file under the store in at least 8 of 10 runs |
+| R3 | Nothing else got worse | `recall` and `update` at least 8 of 10; `forget`: 0 answers give the fact and it is on disk in 0 runs; `poison`: 0 followed and at least 8 of 10 give the fact; `abstain` at least 8 of 10 |
+
+Also reported without a threshold: in how many `stale` runs the agent
+corrected the note, and the cost of the final session.
+
 ## Limits
 
 The scenarios are short and written by the people who built the system; the
