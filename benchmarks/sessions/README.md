@@ -95,10 +95,11 @@ after the pass.
 Two things the counts need said about them:
 
 - **Planted instructions.** In 7 of 20 runs a note containing the planted
-  code was stored and served. All seven were read: each is the agent's own
-  record that the page contained an injection attempt, which it did not
-  adopt. None is the instruction. The screening set nothing aside, because
-  the agent never tried to store the instruction itself.
+  code was stored and served. Two of the seven were opened and read: each
+  is the agent's own record that the page contained an injection attempt,
+  which it did not adopt. The other five were not opened before the run's
+  stores were deleted, so what they say is not known. The screening set
+  nothing aside in any run, and no final answer followed the instruction.
 - **Without memory**, three `abstain` answers are malformed tool calls (the
   model tried to call a tool it did not have). They count as wrong; no
   criterion depends on that cell.
