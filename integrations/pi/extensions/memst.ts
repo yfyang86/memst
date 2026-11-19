@@ -340,10 +340,10 @@ export default function memst(pi: ExtensionAPI, settings: Settings = settingsFro
 
 	// For the user, not the model: typed as /memory ...
 	pi.registerCommand("memory", {
-		description: "Your memory: /memory [index | notes | review | approve <id> | pin <id> | forget <id> | history | restore <revision>]",
+		description: "Your memory: /memory [index | notes | review | approve <id> | pin <id> | forget <id> | history | restore <revision> | dream [--apply]]",
 		handler: async (args: string, ctx: any) => {
 			const words = (args || "index").trim().split(/\s+/);
-			const allowed = ["index", "notes", "review", "approve", "pin", "unpin", "forget", "history", "restore", "show", "audit"];
+			const allowed = ["index", "notes", "review", "approve", "pin", "unpin", "forget", "history", "restore", "show", "audit", "dream"];
 			if (!allowed.includes(words[0])) {
 				ctx.ui.notify(`Unknown: /memory ${words[0]}. Try: ${allowed.join(", ")}`, "warning");
 				return;
@@ -354,7 +354,7 @@ export default function memst(pi: ExtensionAPI, settings: Settings = settingsFro
 				});
 			});
 			// What the user approved or forgot should show in the next prompt's index.
-			if (["approve", "pin", "unpin", "forget", "restore"].includes(words[0])) index = undefined;
+			if (["approve", "pin", "unpin", "forget", "restore", "dream"].includes(words[0])) index = undefined;
 			ctx.ui.notify(output.trim() || "Done.", "info");
 		},
 	});

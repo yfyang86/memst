@@ -50,8 +50,9 @@ An owner's memory is a directory of plain files in the store, in four layers:
 <store>/memory/<owner>/
   MEMORY.md        the index: a short list of what is stored, given to every session
   notes/<id>.md    notes: what the agent or you wrote down, one Markdown file each
-  pages/           pages built from notes and transcripts by the offline pass (not yet built)
+  pages/<topic>.md pages: what memory holds on a topic, with the words each fact rests on
   transcripts/     what was said, one file per session, append-only
+  dreams/          the offline pass's waiting proposal and how far it has read
   .history/        every earlier state of the notes and pages
 ```
 
@@ -59,6 +60,7 @@ An owner's memory is a directory of plain files in the store, in four layers:
 |---|---|---|
 | Transcripts | The client, as the session goes | A record of what was said, never more |
 | Notes | The agent, with `memory_write`; or you, in an editor | Unverified until you approve them |
+| Pages | The offline pass, from notes and transcripts | Unverified. Every statement quotes its source |
 | Index | The server, from the notes. Nobody writes it by hand | Lists approved and unverified notes, marked as such; pinned ones first |
 
 A note is a Markdown file with a short header that the server writes:
@@ -95,7 +97,7 @@ notes, whose first lines may then appear in it.
 | Tool | What it does |
 |---|---|
 | `memory_context` | The index. Call it once at the start of a session |
-| `memory_search` | Notes matching some words, best first, with their ids. With `scope` set to `transcripts` or `all`, entries of earlier sessions too |
+| `memory_search` | Notes matching some words, best first, with their ids. With `scope` set to `pages`, `transcripts` or `all`, pages and entries of earlier sessions too |
 | `memory_read` | The notes most relevant to a question, as text that fits a token budget |
 | `memory_get` | One note by id |
 | `memory_history` | Recent changes to the notes: when, by whom, which notes |
@@ -146,6 +148,60 @@ memst --store ~/.memst mcp --owner alice forget <id>   # delete a note and its h
 wrote and deleted what. `review` prints each note with hidden characters made
 visible. You can also edit a note's file directly; see "Editing the files"
 below for what the server makes of that.
+
+## The offline pass
+
+A session writes notes in the moment and moves on. `dream` reviews memory
+between sessions, with a model:
+
+```bash
+memst --store ~/.memst mcp --owner alice dream           # draft a proposal and show it
+```
+
+```bash
+memst --store ~/.memst mcp --owner alice dream --apply   # apply the waiting proposal, or draft and apply
+```
+
+```bash
+memst --store ~/.memst mcp --owner alice dream --discard # throw the waiting proposal away
+```
+
+It reads the notes and the transcript entries it has not read before, and
+proposes corrections to notes the user has since contradicted, notes for
+things that were said and never written down, pages that gather what is
+known about a topic, and notes you might pin. The model is the one set in
+`config.toml` or `MEMST_LLM_API_URL`, `MEMST_LLM_MODEL` and
+`MEMST_LLM_API_KEY`; `--llm-extra` adds provider-specific request fields.
+
+The model drafts; the server decides what stands:
+
+| Rule | Why |
+|---|---|
+| Every item quotes the words it rests on and names the entry or note they are in. The quote is looked up there, and an item whose quote is not found is dropped | A model can state things nobody said |
+| A correction must rest on something the **user** said | The assistant's own earlier mistakes are not evidence |
+| A note you approved is never rewritten. A correction to one becomes a new, unverified note that says which note it disputes and quotes what you said | Your approval was for that text |
+| Everything it writes is unverified and is screened like any write. Quarantined notes are not shown to the model | So that nothing untrusted comes out looking trusted |
+| It cannot pin. Pins are printed as suggestions | The index goes into every session |
+| It is applied as **one revision**, by "dream", and prints the command that undoes it | A bad pass is one `restore` away |
+| A note that changed after the proposal was drafted is left alone | Sessions keep working while a proposal waits |
+| Forgetting a note or a session also removes the pages that quote it, and any waiting proposal | A page is a copy of its sources |
+
+A page looks like this:
+
+```text
+# Release process
+
+- Deploys go out on Tuesdays.
+  > "deploys go out on Tuesdays now" (session 2026-11-18-a, entry 3, user)
+```
+
+Pages are listed in the index by title and found with `memory_search` and
+`scope: "pages"`.
+
+What the pass does not do: it does not check that what the user said is
+true, only that it was said; it reads at most 60,000 characters of
+transcript per run (the rest waits for the next run); and it runs when you
+run it, not on a schedule.
 
 ## Security model
 
@@ -227,3 +283,4 @@ in [deletion-design.md](deletion-design.md).
   work.
 - Search is keyword matching without stemming: "seat" does not find "seats".
 - Transcripts are not versioned and not screened; they are a log.
+- The offline pass has been run with one model.

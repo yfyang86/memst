@@ -108,8 +108,8 @@ impl McpManifest {
                     "limit": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Most results to return (default 10)" },
                     "scope": {
                         "type": "string",
-                        "enum": ["notes", "transcripts", "all"],
-                        "description": "notes (default): what was written down; transcripts: what was said in earlier sessions; all: both",
+                        "enum": ["notes", "pages", "transcripts", "all"],
+                        "description": "notes (default): what was written down; pages: what memory holds on a topic, with its evidence; transcripts: what was said in earlier sessions; all: everything",
                     },
                 }),
                 &["query"],
@@ -243,8 +243,9 @@ impl McpAdapter {
                 let layer = match args.optional_text("scope")? {
                     None | Some("notes") => Layer::Notes,
                     Some("transcripts") => Layer::Transcripts,
+                    Some("pages") => Layer::Pages,
                     Some("all") => Layer::All,
-                    Some(other) => return Err(format!("scope must be notes, transcripts or all, not {other:?}")),
+                    Some(other) => return Err(format!("scope must be notes, pages, transcripts or all, not {other:?}")),
                 };
                 let hits = service.search(args.text("query")?, args.integer("limit", 10)?, layer).map_err(refused)?;
                 if hits.is_empty() {

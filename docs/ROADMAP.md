@@ -29,8 +29,8 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 6 | Security and MCP | **Done** | The MCP adapter is connected to a store and refuses unscoped access; deletion design written |
 | 7 | Four-layer memory in the store | **Done** | Every note change can be diffed and reverted; existing MCP notes migrate; the index stays within its cap |
 | 8 | Pi as the default agent | **Done** | A fresh Pi session recalls something from an earlier one, in a scripted test |
-| 9 | Dreaming on a branch | Next | A planted wrong note is corrected against the transcript; a bad pass can be rolled back; unverified notes are not laundered into the trusted index |
-| 10 | Evaluate memory in use | Planned | Cross-session tasks with and without memory, operation tests and cost, with criteria fixed beforehand |
+| 9 | Dreaming on a branch | **Done** | A planted wrong note is corrected against the transcript; a bad pass can be rolled back; unverified notes are not laundered into the trusted index |
+| 10 | Evaluate memory in use | Next | Cross-session tasks with and without memory, operation tests and cost, with criteria fixed beforehand |
 | 11 | Hardening and release | Planned | Parallel writers are safe; the open deletion work is done; packages are published |
 
 The manuscript was rewritten after sprint 6, around these results (see `docs/research/memst-and-the-field.md`, "Manuscript").
@@ -277,9 +277,32 @@ the extension has been run with one Pi version and one model; the index is
 fixed at the start of a session, so a note written during a session shows in
 the index only from the next one.
 
-**9. Dreaming on a branch.** An offline pass that checks notes against
-transcripts, builds pages, and proposes what to pin, as one revision that
-can be reverted.
+**9. Dreaming on a branch.** Done. `memst mcp dream` is an offline pass that
+reads the notes against what was said and proposes corrections, missing
+notes, pages and pins. A model drafts; the server checks.
+
+- Every item must quote its source, and the quote is looked up there. A
+  correction must rest on the user's own words.
+- An approved note is never rewritten: a correction to one becomes an
+  unverified note that disputes it.
+- Everything the pass writes is unverified and screened; quarantined notes
+  are not shown to the model; pins are only suggested.
+- A proposal waits for review, then lands as one revision by "dream".
+  Restoring the revision before it undoes the pass. A note that changed
+  while the proposal waited is left alone, which is what "on a branch" comes
+  to without real branches.
+- Pages (the third layer) are Markdown files in which every statement
+  carries the words it rests on. Forgetting a source removes the pages built
+  on it.
+
+All three criteria were met, in tests with a scripted model and in a run
+with a real one: three wrong notes were found and corrected or disputed from
+the transcript, three missing notes and a page were added, and one `restore`
+undid the pass.
+
+Limits: the pass checks that something was said, not that it is true; one
+model has been tried; it runs on demand, not on a schedule; history is
+linear, so two passes at once are not supported.
 
 **10. Evaluate memory in use**, with criteria fixed beforehand, as in 5c.
 
