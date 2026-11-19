@@ -142,6 +142,11 @@ pub struct MemoryService {
     /// open. Kept in memory only, so that what is said about them for the
     /// rest of the session is not recorded either.
     forgotten: Mutex<Vec<String>>,
+    /// The subjects of what was forgotten while this service has been open,
+    /// as content words. The assistant's own replies on those subjects are
+    /// not recorded for the rest of the session: its confirmation tends to
+    /// restate what it has just removed.
+    forgotten_subjects: Mutex<Vec<Vec<String>>>,
 }
 
 /// What a removed transcript entry is replaced with.
@@ -163,6 +168,7 @@ impl MemoryService {
             client: Mutex::new("unknown".to_string()),
             rate: Mutex::new(RateWindow::default()),
             forgotten: Mutex::new(Vec::new()),
+            forgotten_subjects: Mutex::new(Vec::new()),
         };
         if !service.scope.read_only {
             fs::create_dir_all(service.root.join("transcripts")).map_err(store_error)?;
@@ -332,9 +338,10 @@ impl MemoryService {
                 return Err(Refusal::ReadOnly);
             }
             let dir = self.dir()?;
-            if !self.notes_in(&dir)?.iter().any(|n| n.id == id) {
+            let Some(note) = self.notes_in(&dir)?.into_iter().find(|n| n.id == id) else {
                 return Err(Refusal::NotFound);
-            }
+            };
+            self.forgotten_subjects.lock().unwrap_or_else(|e| e.into_inner()).push(content_terms(&note.body));
             dir.purge(&path_of(id), &self.author(), &format!("forget note {id}")).map_err(store_error)?;
             // Pages built on the note quote it, and so does a proposal that
             // has not been applied yet. They go with it; the next pass
@@ -404,6 +411,7 @@ impl MemoryService {
                 }
             }
             let _ = fs::remove_file(self.pending_path());
+            self.forgotten_subjects.lock().unwrap_or_else(|e| e.into_inner()).push(content_terms(&phrases.join(" ")));
             let mut forgotten = self.forgotten.lock().unwrap_or_else(|e| e.into_inner());
             for phrase in phrases {
                 if !forgotten.contains(&phrase) {
@@ -538,7 +546,13 @@ impl MemoryService {
         // What the user asked to have forgotten in this session is not
         // written down again when it is repeated.
         let lowered = text.to_lowercase();
-        let text = if self.forgotten.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| lowered.contains(p)) { REMOVED } else { text };
+        let mut text = if self.forgotten.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| lowered.contains(p)) { REMOVED } else { text };
+        if role == "assistant" && text != REMOVED {
+            let about = content_terms(text);
+            if self.forgotten_subjects.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|subject| same_subject(subject, &about)) {
+                text = REMOVED;
+            }
+        }
         let _lock = self.dir()?; // one writer at a time
         let number = fs::read_to_string(&path).map(|t| t.lines().count()).unwrap_or(0) + 1;
         let line = json!({ "at": now(), "role": role, "text": text });
@@ -1181,23 +1195,32 @@ const COMMON: &[&str] = &[
     "the", "and", "for", "are", "was", "were", "but", "not", "you", "your", "our", "out", "with", "that", "this", "from", "have", "has", "had", "its",
     "now", "will", "can", "all", "any", "what", "which", "when", "where", "who", "how", "does", "did", "been", "being", "they", "them", "their", "there",
     "then", "than", "into", "onto", "about", "just", "also", "use", "used", "call", "called", "get", "got", "say", "said", "tell", "told", "note",
-    "pleas", "thing", "one", "two", "some", "more", "most", "very", "over", "under", "per", "each", "every", "should", "would", "could",
+    "please", "user", "thing", "one", "two", "some", "more", "most", "very", "over", "under", "per", "each", "every", "should", "would", "could",
 ];
 
 /// The words of a text that carry its subject: stemmed, without common
 /// words and without anything shorter than three characters.
 fn content_terms(text: &str) -> Vec<String> {
-    let mut terms: Vec<String> = terms(text).into_iter().filter(|t| t.chars().count() >= 3 && !COMMON.contains(&t.as_str())).collect();
+    // Common words are dropped before stemming: "theme" stems to "them".
+    let mut terms: Vec<String> = text
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.chars().count() >= 3 && !COMMON.contains(t))
+        .map(stem)
+        .collect();
     terms.sort_unstable();
     terms.dedup();
     terms
 }
 
-/// Whether two sets of content words are about the same thing: at least two
-/// words in common, and at least a third of the smaller set.
+/// Whether two sets of content words are about the same thing: at least a
+/// third of the smaller set in common, and at least two words unless the
+/// smaller set has three or fewer. "The user's cat is called Biscotti" has
+/// two content words, and "my cat is actually called Marzipan" shares one.
 fn same_subject(a: &[String], b: &[String]) -> bool {
     let shared = a.iter().filter(|t| b.contains(t)).count();
-    shared >= 2 && shared * 3 >= a.len().min(b.len())
+    let smaller = a.len().min(b.len());
+    shared >= 1 && shared * 3 >= smaller && (shared >= 2 || smaller <= 3)
 }
 
 /// What the user has said in recorded sessions, kept so that a note can be

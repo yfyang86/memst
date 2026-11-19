@@ -245,7 +245,7 @@ fn what_was_said_can_be_forgotten_by_its_words() {
     for bad in [vec![], vec!["ab".to_string()], vec!["x".repeat(201)], vec!["abc".to_string(); 21]] {
         assert!(matches!(memory.forget_said(&bad), Err(Refusal::Invalid(_))));
     }
-    assert_eq!(memory.forget_said(&["31-07-22".to_string()]).unwrap(), 2);
+    assert_eq!(memory.forget_said(&["31-07-22".to_string(), "locker combination".to_string()]).unwrap(), 2);
     assert!(!contains_bytes(dir.path(), b"31-07-22"));
 
     // The entries keep their place, time and speaker, so numbering holds.
@@ -258,6 +258,13 @@ fn what_was_said_can_be_forgotten_by_its_words() {
     memory.record("s2", "assistant", "I have removed the combination 31-07-22 from memory.").unwrap();
     assert_eq!(memory.transcript("s2").unwrap()[2].text, memst_mcp::service::REMOVED);
     assert!(!contains_bytes(dir.path(), b"31-07-22"));
+
+    // Nor is the assistant's confirmation, which tends to restate what it
+    // removed in another form; what the user says next is kept.
+    memory.record("s2", "assistant", "Done: nothing about your locker or its combination (31 07 22) remains.").unwrap();
+    assert_eq!(memory.transcript("s2").unwrap()[3].text, memst_mcp::service::REMOVED);
+    memory.record("s2", "user", "Thanks. The locker room closes at nine.").unwrap();
+    assert_eq!(memory.transcript("s2").unwrap()[4].text, "Thanks. The locker room closes at nine.");
 
     // Nothing is said about the words in the audit log.
     let log = std::fs::read_to_string(memory.audit_path()).unwrap();
@@ -316,7 +323,7 @@ fn a_note_is_shown_with_what_the_user_said_on_its_subject_since() {
     // A question about it, and talk about something else, change nothing.
     pause();
     memory.record("s2", "user", "On which weekday do our team deploys go out?").unwrap();
-    memory.record("s2", "user", "The deploy pipeline is slow today.").unwrap();
+    memory.record("s2", "user", "The build pipeline is slow today.").unwrap();
     memory.record("s2", "assistant", "Team deploys go out on Fridays, I believe.").unwrap();
     assert!(!get(deploys).contains("said later"));
 
@@ -358,4 +365,19 @@ fn single_entries_can_be_forgotten_and_related_ones_found() {
     assert_eq!(memory.transcript("s1").unwrap()[1].text, "Lunch is at noon.");
     assert_eq!(memory.forget_entries(&[("s2".to_string(), 9)]), Err(Refusal::NotFound));
     assert_eq!(memory.forget_entries(&[("nope".to_string(), 1)]), Err(Refusal::NotFound));
+}
+
+#[test]
+fn a_short_note_is_matched_on_one_shared_word() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    let cat = memory.write("The user's cat is called Biscotti.", "semantic", &[]).unwrap().id;
+    let theme = memory.write("The user's editor theme is called Solarized Dusk.", "semantic", &[]).unwrap().id;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    memory.record("s1", "user", "I misspoke earlier about my cat: she is actually called Marzipan.").unwrap();
+    memory.record("s1", "user", "I switched editor themes: I now use Gruvbox Ember.").unwrap();
+    let said = memory.said().unwrap();
+    assert!(said.render_note(&memory.get(cat).unwrap()).contains("Marzipan"));
+    let shown = said.render_note(&memory.get(theme).unwrap());
+    assert!(shown.contains("Gruvbox Ember") && !shown.contains("Marzipan"));
 }
