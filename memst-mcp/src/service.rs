@@ -138,7 +138,14 @@ pub struct MemoryService {
     /// Name the connected client gave, for provenance.
     client: Mutex<String>,
     rate: Mutex<RateWindow>,
+    /// Words the user asked to have forgotten while this service has been
+    /// open. Kept in memory only, so that what is said about them for the
+    /// rest of the session is not recorded either.
+    forgotten: Mutex<Vec<String>>,
 }
+
+/// What a removed transcript entry is replaced with.
+pub const REMOVED: &str = "[removed at the user's request]";
 
 impl MemoryService {
     /// Open one owner's memory in the store at `path`. It is created if it
@@ -155,6 +162,7 @@ impl MemoryService {
             policy,
             client: Mutex::new("unknown".to_string()),
             rate: Mutex::new(RateWindow::default()),
+            forgotten: Mutex::new(Vec::new()),
         };
         if !service.scope.read_only {
             fs::create_dir_all(service.root.join("transcripts")).map_err(store_error)?;
@@ -339,6 +347,80 @@ impl MemoryService {
         outcome
     }
 
+    /// Remove from the transcripts every entry that contains one of
+    /// `phrases` (letter case ignored), and keep such entries out of what is
+    /// recorded for as long as this service is open. The entry's place, time
+    /// and speaker stay; its text does not. Pages built on a session that
+    /// lost an entry go too. Returns how many entries were removed.
+    pub fn forget_said(&self, phrases: &[String]) -> Result<usize, Refusal> {
+        let outcome = (|| {
+            if self.scope.read_only {
+                return Err(Refusal::ReadOnly);
+            }
+            let phrases: Vec<String> = phrases.iter().map(|p| p.trim().to_lowercase()).collect();
+            if phrases.is_empty() || phrases.len() > 20 {
+                return Err(Refusal::Invalid("give 1 to 20 phrases".to_string()));
+            }
+            if phrases.iter().any(|p| p.chars().count() < 3 || p.chars().count() > 200) {
+                return Err(Refusal::Invalid("a phrase is 3 to 200 characters: the distinctive words of what is to be forgotten".to_string()));
+            }
+            let dir = self.dir()?; // also the lock
+            let mut removed = 0;
+            for session in self.sessions()? {
+                let path = self.transcript_path(&session)?;
+                let text = fs::read_to_string(&path).map_err(store_error)?;
+                let mut changed = false;
+                let mut lines = Vec::new();
+                for line in text.lines() {
+                    let mut value: serde_json::Value = match serde_json::from_str(line) {
+                        Ok(value) => value,
+                        Err(_) => {
+                            // Not an entry this server wrote. If it holds the
+                            // words it is dropped rather than kept unread.
+                            if phrases.iter().any(|p| line.to_lowercase().contains(p)) {
+                                lines.push(json!({ "at": now(), "role": "system", "text": REMOVED, "removed": true }).to_string());
+                                changed = true;
+                                removed += 1;
+                            } else {
+                                lines.push(line.to_string());
+                            }
+                            continue;
+                        }
+                    };
+                    let said = value["text"].as_str().unwrap_or_default().to_lowercase();
+                    if phrases.iter().any(|p| said.contains(p)) {
+                        value["text"] = json!(REMOVED);
+                        value["removed"] = json!(true);
+                        changed = true;
+                        removed += 1;
+                    }
+                    lines.push(value.to_string());
+                }
+                if changed {
+                    let temporary = path.with_extension("jsonl.tmp");
+                    fs::write(&temporary, lines.join("\n") + "\n").map_err(store_error)?;
+                    fs::rename(&temporary, &path).map_err(store_error)?;
+                    self.purge_pages_citing(&dir, &format!("session:{session}#"))?;
+                }
+            }
+            let _ = fs::remove_file(self.pending_path());
+            let mut forgotten = self.forgotten.lock().unwrap_or_else(|e| e.into_inner());
+            for phrase in phrases {
+                if !forgotten.contains(&phrase) {
+                    forgotten.push(phrase);
+                }
+            }
+            self.write_index(&dir)?;
+            Ok(removed)
+        })();
+        self.audit(
+            "forget_said",
+            outcome.clone().map(|_| None),
+            outcome.as_ref().ok().map(|removed| format!("{removed} transcript entries removed")),
+        );
+        outcome
+    }
+
     /// Counts for this owner.
     pub fn status(&self) -> Result<Status_, Refusal> {
         let all = self.all()?;
@@ -390,6 +472,10 @@ impl MemoryService {
                 self.policy.max_transcript_chars
             )));
         }
+        // What the user asked to have forgotten in this session is not
+        // written down again when it is repeated.
+        let lowered = text.to_lowercase();
+        let text = if self.forgotten.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| lowered.contains(p)) { REMOVED } else { text };
         let _lock = self.dir()?; // one writer at a time
         let number = fs::read_to_string(&path).map(|t| t.lines().count()).unwrap_or(0) + 1;
         let line = json!({ "at": now(), "role": role, "text": text });

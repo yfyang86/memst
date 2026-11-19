@@ -67,8 +67,10 @@ of level 4.
   with several versions is forgotten
   (`forgetting_removes_every_earlier_version_too`). Where the operating
   system or the disk keeps old blocks is outside MemSt; see below.
-- **Transcripts written through MCP: level 2**, a session at a time. They
-  are not versioned, so there is no history to reach.
+- **Transcripts written through MCP: level 2**, a session at a time, or
+  entry by entry by the words an entry contains (`memory_forget` with
+  `phrases`). They are not versioned, so there is no history to reach.
+  Matching is by words, so a paraphrase survives.
 - **Pages built from notes and transcripts: deleted with their sources.**
   A page records which notes and transcript entries its statements quote.
   Forgetting a note or a session purges every page that cites it, with the

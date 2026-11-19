@@ -151,7 +151,10 @@ enum McpCommand {
     /// Delete a note.
     Forget {
         /// The note's id
-        id: Uuid,
+        id: Option<Uuid>,
+        /// Also remove every transcript entry containing these words (may be repeated)
+        #[arg(long = "said")]
+        said: Vec<String>,
     },
     /// Show the most recent entries of the audit log.
     Audit {
@@ -1082,9 +1085,19 @@ fn main() -> Result<()> {
                     mine()?.approve(*id).map_err(refused)?;
                     println!("Approved {id}.");
                 }
-                McpCommand::Forget { id } => {
-                    mine()?.forget(*id).map_err(refused)?;
-                    println!("Forgot {id}, and every earlier version of it.");
+                McpCommand::Forget { id, said } => {
+                    if id.is_none() && said.is_empty() {
+                        anyhow::bail!("give a note's id, --said <words>, or both");
+                    }
+                    let service = mine()?;
+                    if !said.is_empty() {
+                        let removed = service.forget_said(said).map_err(refused)?;
+                        println!("Removed {removed} transcript entries containing those words.");
+                    }
+                    if let Some(id) = id {
+                        service.forget(*id).map_err(refused)?;
+                        println!("Forgot {id}, and every earlier version of it.");
+                    }
                 }
                 McpCommand::Audit { last } => {
                     let log = std::fs::read_to_string(mine()?.audit_path()).unwrap_or_default();

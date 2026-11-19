@@ -107,7 +107,7 @@ test("the model's tools cover reading, correcting and forgetting; a refusal reac
 	assert.match(await host.run("memory_update", { id, content: "Alice lives in Paris." }), /^Updated note/);
 	assert.match(await host.run("memory_read", { query: "where does Alice live" }), /Paris/);
 	assert.match(await host.run("memory_history", {}), /by mcp:pi: changed /);
-	assert.equal(await host.run("memory_forget", { id }), "Forgotten.");
+	assert.match(await host.run("memory_forget", { id, phrases: ["Alice lives in"] }), /^Forgotten: the note, and \d+ transcript entries/);
 	await assert.rejects(host.run("memory_get", { id }), /no memory with that id/);
 	await assert.rejects(host.run("memory_get", { id: "../../etc/passwd" }), /is not a note id/);
 

@@ -166,9 +166,12 @@ impl McpManifest {
             ));
             tools.push(tool(
                 "memory_forget",
-                "Delete one stored note and every earlier version of it, when the user asks for something to be forgotten.",
-                json!({ "id": { "type": "string", "description": "The note's id" } }),
-                &["id"],
+                "Forget something, when the user asks. Give the note's id to delete the note and every earlier version of it. Give phrases as well: the distinctive words of what is to be forgotten (the value itself, such as a name, a number or a command), so that the record of earlier sessions loses every entry that contains them. Without phrases, what was said stays searchable.",
+                json!({
+                    "id": { "type": "string", "description": "The id of the note to delete, if there is one" },
+                    "phrases": { "type": "array", "items": { "type": "string" }, "description": "Distinctive words of what is to be forgotten; every transcript entry containing one of them is removed" },
+                }),
+                &[],
             ));
             tools.push(tool(
                 "transcript_append",
@@ -315,8 +318,26 @@ impl McpAdapter {
                 Ok(Self::written("Updated", &written))
             }
             "memory_forget" => {
-                service.forget(args.id()?).map_err(refused)?;
-                Ok("Forgotten.".to_string())
+                let phrases = args.strings("phrases")?;
+                let id = match args.optional_text("id")? {
+                    Some(_) => Some(args.id()?),
+                    None => None,
+                };
+                if id.is_none() && phrases.is_empty() {
+                    return Err("give the note's id, phrases, or both".to_string());
+                }
+                // The transcripts first: if the phrases are refused, nothing
+                // has been half forgotten.
+                let removed = if phrases.is_empty() { None } else { Some(service.forget_said(&phrases).map_err(refused)?) };
+                if let Some(id) = id {
+                    service.forget(id).map_err(refused)?;
+                }
+                Ok(match (id, removed) {
+                    (Some(_), Some(n)) => format!("Forgotten: the note, and {n} transcript entries that contained those words."),
+                    (Some(_), None) => "Forgotten: the note. What was said in earlier sessions is still in the transcripts; call again with phrases to remove it.".to_string(),
+                    (None, Some(n)) => format!("Forgotten: {n} transcript entries that contained those words."),
+                    (None, None) => unreachable!(),
+                })
             }
             "transcript_append" => {
                 let number = service.record(args.text("session")?, args.text("role")?, args.text("text")?).map_err(refused)?;

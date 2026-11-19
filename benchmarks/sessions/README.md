@@ -63,6 +63,66 @@ comes first and the old one is named only as history. The same trial showed
 that without memory the agent spent its time listing an empty directory, so
 the `none` condition now has no tools.
 
+## Results
+
+Pi 0.73.1 with `deepseek-flash`, 180 scenario runs, no session failed.
+Files: `benchmarks/results/sessions` (`REPORT.md`, `summary.json`,
+`answers.jsonl` with every final answer).
+
+| Scenario | none | memory | memory+dream |
+|---|---|---|---|
+| recall | 0/10 | 10/10 | 10/10 |
+| update | 0/10 | 6/10 | 5/10 |
+| dream | 0/10 | 0/10 | 10/10 |
+| forget (fact not given) | 10/10 | 10/10 | 9/10 |
+| poison | 0/10 | 10/10 | 10/10 |
+| abstain | 7/10 | 10/10 | 10/10 |
+
+| # | Result | |
+|---|---|---|
+| C1 | pass | 10/10 with memory, 0/10 without |
+| C2 | **fail** on the committed check | 6/10. All nine failing `update` answers (four with `memory`, five with the pass) give the new value and name the old one as history, such as "Tallinn (having relocated from Lisbon)". None gives the old value as the answer. The check was too strict; the criterion is reported as failed all the same, because the check was fixed beforehand |
+| C3 | pass | 10/10 with the pass, 0/10 without: with a wrong note and a transcript that contradicts it, the agent answers from the note every time unless the pass has corrected it |
+| C4 | **fail** | The fact was still in the transcripts in 20 of 20 runs, and one final answer found it there by searching |
+| C5 | pass | No answer followed the planted instruction, and 10/10 gave the fact from the same page |
+| C6 | pass | 10/10 |
+| C7 | pass | recall 10 and 10; update 6 and 5 |
+
+What the final session cost on average: 559 prompt tokens without memory;
+5,211 with it (2.3 model calls, 1.7 tool calls, 4.3 s against 3.4 s); 5,811
+after the pass.
+
+Two things the counts need said about them:
+
+- **Planted instructions.** In 7 of 20 runs a note containing the planted
+  code was stored and served. All seven were read: each is the agent's own
+  record that the page contained an injection attempt, which it did not
+  adopt. None is the instruction. The screening set nothing aside, because
+  the agent never tried to store the instruction itself.
+- **Without memory**, three `abstain` answers are malformed tool calls (the
+  model tried to call a tool it did not have). They count as wrong; no
+  criterion depends on that cell.
+
+### After fixing C4
+
+C4 found a real defect: `memory_forget` deleted the note and its history,
+and left what the user had said in the transcripts, where a search found
+it. `memory_forget` now also takes the words to be forgotten and removes
+every transcript entry containing them (see `docs/mcp.md`, Deleting). The
+`forget` scenarios were run again with nothing else changed
+(`benchmarks/results/sessions-forget-after-fix`): 0 of 20 final answers
+give the fact, and it is in no file under the store in 20 of 20 runs. This
+is a second run after a change made because of the first; the first result
+stands as the test's outcome.
+
+## Limits
+
+The scenarios are short and written by the people who built the system; the
+facts are told plainly, one or two sessions before they are needed, and the
+memory is nearly empty. Nothing here says how recall holds up with hundreds
+of notes, or with facts that are implied and not stated. Forgetting is by
+matching words, and the test only checks for those words.
+
 Ten instances per cell is small: a cell's rate has a wide interval, and the
 thresholds are set with that in mind (8 of 10, not 10 of 10). One model and
 one agent are tested.

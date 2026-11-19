@@ -30,7 +30,7 @@ evaluation, then the manuscript. Findings behind these choices are in
 | 7 | Four-layer memory in the store | **Done** | Every note change can be diffed and reverted; existing MCP notes migrate; the index stays within its cap |
 | 8 | Pi as the default agent | **Done** | A fresh Pi session recalls something from an earlier one, in a scripted test |
 | 9 | Dreaming on a branch | **Done** | A planted wrong note is corrected against the transcript; a bad pass can be rolled back; unverified notes are not laundered into the trusted index |
-| 10 | Evaluate memory in use | Next | Cross-session tasks with and without memory, operation tests and cost, with criteria fixed beforehand |
+| 10 | Evaluate memory in use | Done | 60 cross-session scenarios under three conditions, seven criteria fixed beforehand: five pass, one fails on the answer check, one failed and led to a fix (forgetting did not reach transcripts) |
 | 11 | Hardening and release | Planned | Parallel writers are safe; the open deletion work is done; packages are published |
 
 The manuscript was rewritten after sprint 6, around these results (see `docs/research/memst-and-the-field.md`, "Manuscript").
@@ -304,7 +304,30 @@ Limits: the pass checks that something was said, not that it is true; one
 model has been tried; it runs on demand, not on a schedule; history is
 linear, so two passes at once are not supported.
 
-**10. Evaluate memory in use**, with criteria fixed beforehand, as in 5c.
+**10. Evaluate memory in use** *(done)*, with criteria fixed beforehand, as
+in 5c. Sixty scenarios (recall, update, correction by the offline pass,
+forgetting, a planted instruction, abstention), each under three conditions
+(no memory, memory, memory with the offline pass), with Pi and
+`deepseek-flash`; every session a separate process. Details and every
+answer: [benchmarks/sessions](../benchmarks/sessions/README.md).
+
+- Passed: recall across sessions (10/10 against 0/10 without memory); the
+  offline pass correcting a wrong note (10/10 against 0/10 without the
+  pass); a planted instruction never followed (0 of 20) with the page's fact
+  still given; abstention (10/10); the pass doing no harm.
+- Failed on the check as committed: updates (6/10). Every failing answer
+  gives the new value and names the old one as history; the check was too
+  strict, and the criterion is still reported as failed.
+- Failed: forgetting. The note was gone, the fact was still in the
+  transcripts in 20 of 20 runs, and one answer found it. Fixed
+  (`memory_forget` now removes transcript entries by their words); on
+  re-run, 0 of 20.
+- Cost: about 5,200 prompt tokens for a final session with memory against
+  560 without, and one second more.
+
+Limits: short scenarios written by us, a nearly empty memory, ten instances
+per cell, one model and one agent. Not done: pages plus search against
+search alone in the question-answering harness.
 
 **11. Hardening and release.**
 

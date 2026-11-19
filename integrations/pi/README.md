@@ -63,6 +63,7 @@ has written:
 /memory approve <id>    mark a note as checked by you
 /memory pin <id>        put an approved note at the top of the index
 /memory forget <id>     delete a note and every earlier version of it
+/memory forget --said <word>    remove transcript entries containing this word
 /memory history         what changed, when, and who changed it
 /memory restore <rev>   put the notes back as they were at a revision
 /memory dream           review memory against what was said; shows a proposal

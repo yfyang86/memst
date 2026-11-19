@@ -232,3 +232,38 @@ fn two_servers_on_one_memory_take_turns() {
     let authors: Vec<String> = first.history(0).unwrap().into_iter().map(|r| r.author).collect();
     assert_eq!(authors, ["mcp:cursor", "mcp:pi"]);
 }
+
+#[test]
+fn what_was_said_can_be_forgotten_by_its_words() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    memory.record("s1", "user", "My locker combination is 31-07-22, keep it handy.").unwrap();
+    memory.record("s1", "assistant", "Noted.").unwrap();
+    memory.record("s2", "user", "Remind me: the LOCKER COMBINATION is 31-07-22?").unwrap();
+    memory.record("s2", "user", "The meeting moved to Friday.").unwrap();
+
+    for bad in [vec![], vec!["ab".to_string()], vec!["x".repeat(201)], vec!["abc".to_string(); 21]] {
+        assert!(matches!(memory.forget_said(&bad), Err(Refusal::Invalid(_))));
+    }
+    assert_eq!(memory.forget_said(&["31-07-22".to_string()]).unwrap(), 2);
+    assert!(!contains_bytes(dir.path(), b"31-07-22"));
+
+    // The entries keep their place, time and speaker, so numbering holds.
+    let first = memory.transcript("s1").unwrap();
+    assert_eq!((first.len(), first[0].text.as_str(), first[0].role.as_str()), (2, memst_mcp::service::REMOVED, "user"));
+    assert_eq!(memory.transcript("s2").unwrap()[1].text, "The meeting moved to Friday.");
+    assert!(memory.search("locker combination", 10, Layer::Transcripts).unwrap().is_empty());
+
+    // For the rest of this session, saying it again is not recorded either.
+    memory.record("s2", "assistant", "I have removed the combination 31-07-22 from memory.").unwrap();
+    assert_eq!(memory.transcript("s2").unwrap()[2].text, memst_mcp::service::REMOVED);
+    assert!(!contains_bytes(dir.path(), b"31-07-22"));
+
+    // Nothing is said about the words in the audit log.
+    let log = std::fs::read_to_string(memory.audit_path()).unwrap();
+    assert!(log.contains("forget_said") && log.contains("2 transcript entries removed"));
+
+    // A read-only server cannot do it.
+    let reader = MemoryService::open(dir.path(), Scope::new("alice", true).unwrap(), WritePolicy::default()).unwrap();
+    assert_eq!(reader.forget_said(&["meeting".to_string()]), Err(Refusal::ReadOnly));
+}
