@@ -28,6 +28,7 @@ use crate::types::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use uuid::Uuid;
 
 /// Embedder id recorded for vectors supplied through
 /// [`KnowledgeGraph::set_entity_embedding`].
@@ -110,6 +111,19 @@ pub struct MergeRecord {
 
 /// A relationship together with its subject and object entities.
 pub type Triple = (Relationship, Entity, Entity);
+
+/// What [`KnowledgeGraph::forget_message`] and
+/// [`KnowledgeGraph::forget_session`] removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Forgotten {
+    /// Relationships deleted, counting earlier versions.
+    pub relationships: usize,
+    /// Entities deleted.
+    pub entities: usize,
+    /// Entities that came from there and were kept, because another session
+    /// saw them or a remaining relationship refers to them.
+    pub entities_kept: usize,
+}
 
 /// Knowledge graph over a pluggable storage backend.
 pub struct KnowledgeGraph {
@@ -506,6 +520,55 @@ impl KnowledgeGraph {
     /// Delete a relationship.
     pub fn delete_relationship(&mut self, relationship_id: RelationshipId) -> Result<bool> {
         self.backend.delete_relationship(relationship_id)
+    }
+
+    /// Remove what the graph took from one message: the relationships
+    /// extracted from it, in every version, and then the entities that were
+    /// first seen in it and that nothing else refers to.
+    ///
+    /// A relationship records the one message it was extracted from. A fact
+    /// that was stated again in a later message was reinforced, not stored
+    /// twice, and the later message is not recorded; so deleting the first
+    /// message deletes the fact, though the later message still states it.
+    /// Extracting again from the remaining messages brings it back.
+    pub fn forget_message(&mut self, message_id: Uuid) -> Result<Forgotten> {
+        self.forget_where(|relationship| relationship.source_message_id == Some(message_id), |entity| entity.source_message_id == Some(message_id))
+    }
+
+    /// Remove what the graph took from one session: its relationships, in
+    /// every version, and the entities first seen in it that no other
+    /// session saw and nothing else refers to.
+    pub fn forget_session(&mut self, session_id: Uuid) -> Result<Forgotten> {
+        self.forget_where(|relationship| relationship.session_id == session_id, |entity| entity.session_id == session_id)
+    }
+
+    fn forget_where(&mut self, relationship_goes: impl Fn(&Relationship) -> bool, entity_from: impl Fn(&Entity) -> bool) -> Result<Forgotten> {
+        let everything = RelationshipQuery { limit: 0, include_superseded: true, ..Default::default() };
+        let all = self.backend.scan_relationships(&everything)?;
+        let mut forgotten = Forgotten::default();
+        let mut still_referred: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
+        for relationship in &all {
+            if relationship_goes(relationship) {
+                if self.backend.delete_relationship(relationship.id)? {
+                    forgotten.relationships += 1;
+                }
+            } else {
+                still_referred.insert(relationship.subject_id);
+                still_referred.insert(relationship.object_id);
+            }
+        }
+        for entity in self.backend.scan_entities(&EntityQuery { limit: 0, ..Default::default() })? {
+            if !entity_from(&entity) {
+                continue;
+            }
+            if still_referred.contains(&entity.id) || !entity.seen_in.is_empty() {
+                forgotten.entities_kept += 1;
+            } else if self.backend.delete_entity(entity.id)? {
+                forgotten.entities += 1;
+            }
+        }
+        self.backend.flush()?;
+        Ok(forgotten)
     }
 
     /// Update a relationship's confidence.
@@ -960,6 +1023,42 @@ impl std::fmt::Display for GraphStats {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn forgetting_a_message_or_a_session_removes_what_came_from_it() {
+        let dir = TempDir::new().unwrap();
+        let mut graph = KnowledgeGraph::new(dir.path()).unwrap();
+        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+        let (m1, m2, m3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let alice = graph.add_entity(Entity::new("Alice", "person", first).with_source(m1)).unwrap();
+        let lyon = graph.add_entity(Entity::new("Lyon", "place", first).with_source(m1)).unwrap();
+        let acme = graph.add_entity(Entity::new("Acme", "organisation", first).with_source(m2)).unwrap();
+        let bob = graph.add_entity(Entity::new("Bob", "person", second).with_source(m3)).unwrap();
+        graph.add_relationship(Relationship::new(alice.id, "lives_in", lyon.id, first).with_source(m1)).unwrap();
+        graph.add_relationship(Relationship::new(alice.id, "works_at", acme.id, first).with_source(m2)).unwrap();
+        graph.add_relationship(Relationship::new(bob.id, "knows", alice.id, second).with_source(m3)).unwrap();
+
+        // The first message said where Alice lives. Alice is still referred
+        // to by what the other messages said; Lyon is not.
+        let gone = graph.forget_message(m1).unwrap();
+        assert_eq!(gone, Forgotten { relationships: 1, entities: 1, entities_kept: 1 });
+        assert!(graph.get_entity(lyon.id).unwrap().is_none());
+        assert!(graph.get_entity(alice.id).unwrap().is_some());
+        assert_eq!(graph.backend().relationship_count().unwrap(), 2);
+
+        // The rest of the first session. Alice stays: Bob, in the second
+        // session, knows her.
+        let gone = graph.forget_session(first).unwrap();
+        assert_eq!(gone, Forgotten { relationships: 1, entities: 1, entities_kept: 1 });
+        assert!(graph.get_entity(acme.id).unwrap().is_none());
+        assert!(graph.get_entity(alice.id).unwrap().is_some());
+        assert_eq!(graph.forget_message(Uuid::new_v4()).unwrap(), Forgotten::default());
+
+        // It is gone from the file too.
+        drop(graph);
+        let text = std::fs::read_to_string(dir.path().join("graph.json")).unwrap();
+        assert!(!text.contains("Lyon") && !text.contains("Acme") && text.contains("Bob"));
+    }
 
     #[test]
     fn json_backend_conforms() {

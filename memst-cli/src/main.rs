@@ -245,10 +245,19 @@ enum SessionCommand {
         id: Uuid,
     },
 
-    #[command(about = "Delete a session")]
+    /// Delete a session: its messages, memories, search entries, and the
+    /// facts the knowledge graph took from it.
     Delete {
         /// Session ID
         id: Uuid,
+
+        /// Graph backend holding the session's facts: auto, json or helix
+        #[arg(long, default_value = "auto")]
+        graph_backend: String,
+
+        /// Whose graph to remove the session's facts from
+        #[arg(long, default_value = "default")]
+        owner: String,
     },
 }
 
@@ -284,6 +293,24 @@ enum MessageCommand {
         /// Skip first N messages
         #[arg(long, default_value = "0")]
         offset: u32,
+    },
+
+    /// Delete one message for good, with its search entry and the facts
+    /// the knowledge graph took from it.
+    Delete {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Message ID (shown by `message list`)
+        message_id: Uuid,
+
+        /// Graph backend holding the session's facts: auto, json or helix
+        #[arg(long, default_value = "auto")]
+        graph_backend: String,
+
+        /// Whose graph to remove the message's facts from
+        #[arg(long, default_value = "default")]
+        owner: String,
     },
 }
 
@@ -603,6 +630,17 @@ fn open_graph(
     }
 }
 
+/// Whether there is a knowledge graph that could hold this session's facts.
+/// Deleting must not create one as a side effect.
+fn graph_exists(store_dir: &std::path::Path, session_dir: &std::path::Path) -> bool {
+    #[cfg(feature = "helix")]
+    if memst_graph_helix::HelixGraphBackend::exists(store_dir) || memst_graph_helix::HelixGraphBackend::exists(session_dir) {
+        return true;
+    }
+    let _ = store_dir;
+    session_dir.join("graph.json").exists()
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -659,7 +697,21 @@ fn main() -> Result<()> {
                     }
                 }
 
-                SessionCommand::Delete { id } => {
+                SessionCommand::Delete { id, graph_backend, owner } => {
+                    if store.get_session(*id)?.is_none() {
+                        anyhow::bail!("Session not found: {id}");
+                    }
+                    // The graph first: a session from an older MemSt keeps
+                    // its graph in its own directory, which is about to go.
+                    let session_path = store.session_path(*id);
+                    if graph_exists(&args.store, &session_path) {
+                        let mut graph = open_graph(&args.store, &session_path, graph_backend, owner, false)?;
+                        let gone = graph.forget_session(*id)?;
+                        println!(
+                            "Removed from the knowledge graph: {} fact(s), {} entit(ies); {} entit(ies) kept because something else refers to them.",
+                            gone.relationships, gone.entities, gone.entities_kept
+                        );
+                    }
                     store.delete_session(*id)?;
                     println!("Deleted session: {}", id);
                 }
@@ -699,6 +751,22 @@ fn main() -> Result<()> {
                 println!("Added message to session {}: {}", session_id, message_id);
             }
 
+            MessageCommand::Delete { session_id, message_id, graph_backend, owner } => {
+                let store = SessionStore::open(&args.store)?;
+                store.delete_message(*session_id, *message_id)?;
+                println!("Deleted message {message_id}, and its entry in the search index.");
+                let session_path = store.session_path(*session_id);
+                if graph_exists(&args.store, &session_path) {
+                    let mut graph = open_graph(&args.store, &session_path, graph_backend, owner, false)?;
+                    let gone = graph.forget_message(*message_id)?;
+                    println!(
+                        "Removed from the knowledge graph: {} fact(s), {} entit(ies); {} entit(ies) kept because something else refers to them.",
+                        gone.relationships, gone.entities, gone.entities_kept
+                    );
+                }
+                println!("Not reached: memory items and summaries made from the message, and the operations log.");
+            }
+
             MessageCommand::List {
                 session_id,
                 limit,
@@ -733,10 +801,11 @@ fn main() -> Result<()> {
                                 .join("\n"),
                         };
                         println!(
-                            "\n{}{} {}:",
+                            "\n{}{} {} (id {}):",
                             role_str,
                             i + *offset as usize,
-                            msg.timestamp.format("%Y-%m-%d %H:%M")
+                            msg.timestamp.format("%Y-%m-%d %H:%M"),
+                            msg.id
                         );
                         println!("{}", content);
                     }

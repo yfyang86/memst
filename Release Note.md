@@ -1,5 +1,22 @@
 # MemSt Release Notes
 
+## Unreleased
+
+- Notes are shown with what the user said on their subject since they were
+  written; forgetting lists related transcript entries and can remove them
+  singly.
+- Memory operations read each note once: at 5,000 notes a write takes about
+  130 ms and a search about 50 ms.
+- `memst message delete` removes one message, its search entry and the
+  knowledge-graph facts taken from it; `memst session delete` now removes
+  the session's facts from the graph too. `memst message list` shows ids.
+- Deleting from the tantivy search index now removes the text from disk,
+  not only from results.
+- The store is locked per operation: a long-running process no longer
+  blocks others.
+
+---
+
 ## v1.1.0 - Agent memory
 
 *Release Date: 2026-11-19*
