@@ -268,6 +268,19 @@ its text as the body.
 - **Other ways into the store bypass all of this.** The checks are in the
   MCP server. The command line and the Python module write without them.
 
+## What the offline pass is shown
+
+A pass reads the transcript since its last run, up to a budget, beside the
+notes it might need to correct. With a few notes it is shown all of them.
+With more than 80 it is shown 80: for each thing the user said in that
+stretch, the two notes nearest to it in wording (notes about the user
+first, for a statement in the first person), and of all those the best
+matches. It can cite and change only what it was shown. Its prompt stays
+near 18,000 tokens whatever the memory holds; `dream` prints what it read.
+
+Choosing by wording has the limit it has everywhere here: a statement
+that contradicts a note in other words will not bring that note up.
+
 ## Whom a note is about
 
 A note says whom or what it is about: `the user` (the user, their own team

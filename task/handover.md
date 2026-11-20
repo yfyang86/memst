@@ -1,14 +1,14 @@
 # Handover
 
-Written 2026-11-20 and updated the same day after sprint 16. Sprints 1 to
-15 are merged into `dev` (pull requests 1 to 7). Sprint 16 is on the
-working branch `claude/loving-allen-qbfcg1` until its pull request is
+Written 2026-11-20 and updated after sprint 20. Sprints 1 to 16 are merged
+into `dev` (pull requests 1 to 8). Sprints 17 to 20 are on the working
+branch `claude/loving-allen-qbfcg1` until a pull request is opened and
 merged.
 
 Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
-`CodeReview/CR-20261114.md` (findings 1 to 103, each marked fixed or open),
+`CodeReview/CR-20261114.md` (findings 1 to 106, each marked fixed or open),
 `benchmarks/sessions/README.md` (the memory-in-use evaluation, rounds 1 to
-8), `docs/mcp.md` (the agent memory and its tools),
+9), `docs/mcp.md` (the agent memory and its tools),
 `docs/deletion-design.md`.
 
 ## Sprints
@@ -36,8 +36,12 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 17 | A harder, independent test | Done: Pi passes a long history of facts said in passing (96/96), a plain client fails it (20/96); an agent on LongMemEval questions is 20 to 30 points below the harness's read paths |
 | 18 | Whom a note is about | Done: wrong answers at 5,000 notes fell from 9 to 3 of 120 (could be chance one time in seven) |
 | 19 | What deletion and forgetting do not reach | Done in two of three parts; matching by meaning not done |
-| 20 | Pages and the offline pass at size | Next |
+| 20 | Pages and the offline pass at size | Done: the pass is bounded at 5,000 notes and corrects 8 of 10 after a fix; pages and notes not shown to help or hurt |
 | 21 | Release and a client we did not write | Planned |
+
+Candidates ahead of 21, by size of the known gap: give `memory_read` the
+harness's read path (finding 98); record a plain client's sessions
+(finding 97); matching by meaning (finding 103).
 
 ## Sprint 16: done, except the release
 

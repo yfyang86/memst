@@ -231,7 +231,12 @@ pub async fn propose(memory: &MemoryService, llm: Arc<dyn LlmProvider>, config: 
     // user's entries choose them.
     let said: String = entries.iter().filter(|t| t.role == "user").map(|t| t.text.as_str()).collect::<Vec<_>>().join("\n");
     let (notes, pages) = if notes.len() > config.max_notes || pages.len() > config.max_pages {
-        memory.nearest(&said, config.max_notes, config.max_pages)?
+        // Pages by what the stretch as a whole is about; notes statement by
+        // statement, so that each thing the user said is set beside the
+        // notes it could correct.
+        let statements: Vec<String> = entries.iter().filter(|t| t.role == "user").map(|t| t.text.clone()).collect();
+        let (_, pages) = memory.nearest(&said, 0, config.max_pages)?;
+        (memory.nearest_to_each(&statements, 2, config.max_notes)?, pages)
     } else {
         (notes, pages)
     };

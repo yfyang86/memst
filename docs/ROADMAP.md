@@ -507,8 +507,25 @@ done)*.
   are still by shared words. An embedding model at read time was not
   chosen, and the local one did not fit on this machine's disk.
 
-Next: **20** pages and the offline pass at size. Round 7 adds a candidate
-ahead of it: give `memory_read` the read path the harness found.
+**20. Pages and the offline pass at size** *(done)*.
+
+- **The pass was shown every note**, about 350,000 tokens' worth at 5,000
+  notes. It is shown 80 at most, chosen statement by statement: for each
+  thing the user said, the notes nearest to it. Prompt: about 17,600
+  tokens whatever the memory holds.
+- **Round 9, the pass over 5,000 notes** (criteria first): the prompt
+  bound held; the wrong note was corrected in 3 of 10 on the first run,
+  when notes were chosen for a whole stretch of transcript at once, and in
+  8 of 10 after choosing them per statement.
+- **Round 9, notes and pages beside transcripts**, thirty LongMemEval-S
+  questions: 76.7% with the pass against 70.0% with transcripts only (-6.7
+  to +20.0 points). Not shown to help; not shown to hurt.
+
+Next, in the order we would take them: give `memory_read` the read path
+the harness found (round 7: a gap of 20 to 30 points, the largest known);
+have a plain client's sessions recorded (round 6); matching by meaning
+(sprint 19's undone part); then **21**, the release and a client we did
+not write.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost

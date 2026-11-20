@@ -530,6 +530,69 @@ impl MemoryService {
         Ok(build_index(&self.scope.owner, &self.all()?, &self.pages()?, &self.said()?, self.policy.index_max_lines, self.policy.index_max_bytes))
     }
 
+    /// For each of `statements`, the served notes nearest to it in wording;
+    /// then the union, best matches first, `limit` at most.
+    ///
+    /// This is how the offline pass chooses which notes to look at. Taking
+    /// the notes nearest to a whole stretch of transcript at once does not
+    /// work: a stretch is mostly about other things, and the one note that
+    /// one statement contradicts is crowded out (it was shown in 3 runs of
+    /// 10 among 5,000 notes). Each statement has to be given its own
+    /// candidates. A statement in the first person prefers notes about the
+    /// user, as a search does.
+    pub fn nearest_to_each(&self, statements: &[String], per_statement: usize, limit: usize) -> Result<Vec<Note>, Refusal> {
+        let notes = self.readable()?;
+        // Index the notes once: word, then the notes that have it.
+        let documents: Vec<Vec<String>> = notes.iter().map(|note| terms(&format!("{} {}", note.body, note.tags.join(" ")))).collect();
+        let count = documents.len() as f32;
+        let average = documents.iter().map(Vec::len).sum::<usize>() as f32 / count.max(1.0);
+        let mut postings: HashMap<&str, Vec<(usize, f32)>> = HashMap::new();
+        for (index, document) in documents.iter().enumerate() {
+            let mut frequency: HashMap<&str, f32> = HashMap::new();
+            for term in document {
+                *frequency.entry(term.as_str()).or_default() += 1.0;
+            }
+            for (term, times) in frequency {
+                postings.entry(term).or_default().push((index, times));
+            }
+        }
+        let (k1, b) = (1.2, 0.75);
+        let mut best: HashMap<usize, f32> = HashMap::new();
+        for statement in statements {
+            let wanted = content_terms(statement);
+            let lowered = statement.to_lowercase();
+            let first_person = lowered.split(|c: char| !c.is_alphanumeric()).any(|w| matches!(w, "i" | "my" | "me" | "mine" | "we" | "our" | "ours" | "us"));
+            let mut scores: HashMap<usize, f32> = HashMap::new();
+            for term in &wanted {
+                let Some(list) = postings.get(term.as_str()) else { continue };
+                let idf = ((count - list.len() as f32 + 0.5) / (list.len() as f32 + 0.5) + 1.0).ln();
+                for (index, frequency) in list {
+                    let length = documents[*index].len() as f32;
+                    *scores.entry(*index).or_default() += idf * frequency * (k1 + 1.0) / (frequency + k1 * (1.0 - b + b * length / average.max(1.0)));
+                }
+            }
+            let mut ranked: Vec<(usize, f32)> = scores
+                .into_iter()
+                .map(|(index, score)| {
+                    let about = notes[index].about.as_str();
+                    let factor = if !first_person || about.is_empty() { 1.0 } else if about == "the user" { 2.0 } else { 0.5 };
+                    (index, score * factor)
+                })
+                .collect();
+            ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            for (index, score) in ranked.into_iter().take(per_statement) {
+                let held = best.entry(index).or_insert(0.0);
+                if score > *held {
+                    *held = score;
+                }
+            }
+        }
+        let mut chosen: Vec<(usize, f32)> = best.into_iter().collect();
+        chosen.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        let keep: HashSet<usize> = chosen.into_iter().take(limit).map(|(index, _)| index).collect();
+        Ok(notes.into_iter().enumerate().filter(|(index, _)| keep.contains(index)).map(|(_, note)| note).collect())
+    }
+
     /// The served notes and the pages nearest in wording to `text`, best
     /// first: what a long text is about, among everything memory holds.
     pub fn nearest(&self, text: &str, notes: usize, pages: usize) -> Result<(Vec<Note>, Vec<StoredPage>), Refusal> {

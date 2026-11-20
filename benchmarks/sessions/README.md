@@ -783,6 +783,58 @@ and writes what it judges worth keeping, and a detail the question turns
 on may not be among it, while its notes may crowd the search results.
 Thirty questions will show only a large effect either way.
 
+### Round 9 results
+
+**The offline pass over 5,000 notes.** First run
+(`sessions-round9-pass-at-size`): **P2 passed, P1 failed.**
+
+| | First run | After the fix |
+|---|---|---|
+| The wrong note corrected, of 10 | 3 | 8 |
+| Largest prompt, tokens (about) | 17,700 | 17,600 |
+| Notes shown, of 5,001 | 80 | 80 |
+| Time for a pass | 7.2 s | 4.1 s |
+
+Showing the pass every note, as before this sprint, would have taken about
+350,000 tokens for the notes alone; that was not run.
+
+The failure was in how the 80 notes were chosen. A pass reads some 500
+transcript entries at a time, nearly all about other things, and the notes
+were those nearest to that stretch as a whole. The one note that one
+statement contradicts was not among them. Notes are now chosen statement
+by statement (the two nearest to each thing the user said, then the best
+of those), and a statement in the first person prefers notes about the
+user. On a second run (`...-after-fix`) the note was corrected in 8 of 10,
+which is the threshold exactly. The two it missed were not examined.
+
+In the first run a pass also corrected about sixteen of the filler's notes
+each time, from the filler's own sessions ("for the record, the billing
+team moved its standup to Fridays"), which is the pass doing its job on
+notes we were not counting; after the fix, with notes chosen per
+statement, it corrected none of them. We did not look into why, and it may
+be that the per-statement choice now leaves those notes out.
+
+**Notes and pages beside transcripts** (`sessions-round9-longmemeval`),
+thirty questions, one run of each, nothing changed afterwards:
+
+| | All 30 | knowledge-update (13) | multi-session (15) | abstention (2) |
+|---|---|---|---|---|
+| Transcripts only | 70.0% | 92.3% | 60.0% | 0.0% |
+| With notes and pages from the pass | 76.7% | 84.6% | 80.0% | 0.0% |
+| `dense-wide-reason` (the harness) | 96.7% | 100.0% | 93.3% | 100.0% |
+
+**P3 passes**: 6.7 points above transcripts only, with an interval of -6.7
+to +20.0 that includes no difference. `multi-session` questions went from
+9 of 15 to 12 of 15 and `knowledge-update` from 12 of 13 to 11 of 13;
+neither is more than the run-to-run variation seen elsewhere. The pass
+read each history in 4.6 passes taking 49 s in all, and left 56 notes and
+20 pages. (The two abstention answers are again scored wrong by the
+harness's phrase list though both say they do not know.)
+
+So pages and notes from the pass did not hurt and may help on questions
+that span sessions; thirty questions cannot say more. Both conditions
+remain about twenty points below the harness's reasoning read path.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

@@ -344,6 +344,11 @@ fn with_many_notes_a_pass_is_shown_the_ones_the_transcript_is_about() {
     for i in 0..150 {
         memory.write(&format!("Ticket ENG-{i} tracks a flaky test in the search service."), "semantic", &[]).unwrap();
     }
+    // Most of what was said is about something else, and there is more of
+    // it than there are places in the prompt.
+    for i in 0..60 {
+        memory.record("s0", "user", &format!("For the record, ticket ENG-{i} about the flaky test in the search service is still open.")).unwrap();
+    }
     memory.record("s1", "user", "Our team deploys have moved: we deploy on Mondays now.").unwrap();
 
     let reply = json!({
@@ -364,8 +369,8 @@ fn with_many_notes_a_pass_is_shown_the_ones_the_transcript_is_about() {
     assert!(!prompt.contains(&format!("[note:{far} ")));
     // Only notes that share words with what the user said are shown, up to the limit.
     assert!(prompt.matches("[note:").count() <= 10);
-    assert_eq!((proposal.read.notes_shown, proposal.read.notes_held, proposal.read.entries), (1, 152, 1));
-    assert!(proposal.read.prompt_chars < 12_000);
+    assert_eq!((proposal.read.notes_shown, proposal.read.notes_held, proposal.read.entries), (3, 152, 61));
+    assert!(proposal.read.prompt_chars < 20_000);
 
     assert_eq!(proposal.corrections.len(), 1);
     assert_eq!(proposal.corrections[0].note, wrong);
