@@ -1242,6 +1242,8 @@ fn same_subject(a: &[String], b: &[String]) -> bool {
 /// some statements that merely agree. Questions are skipped.
 pub struct Said {
     statements: Vec<(Turn, Vec<String>)>,
+    /// In how many statements each word appears.
+    spread: HashMap<String, usize>,
 }
 
 impl Said {
@@ -1257,20 +1259,43 @@ impl Said {
             .collect();
         statements.sort_by(|a, b| b.0.at.cmp(&a.0.at));
         statements.truncate(5000);
-        Self { statements }
+        let mut spread: HashMap<String, usize> = HashMap::new();
+        for (_, terms) in &statements {
+            for term in terms {
+                *spread.entry(term.clone()).or_default() += 1;
+            }
+        }
+        Self { statements, spread }
     }
 
-    /// What the user said on the note's subject after it was last written,
-    /// most recent first, two at most.
+    /// What the user said on the note's subject after it was last written:
+    /// the two statements that share the most with it, counting a rare word
+    /// for more than a frequent one.
+    ///
+    /// With a few statements any shared word tells something. With
+    /// thousands, a word such as "team" is in a fifth of them, and the two
+    /// most recent statements sharing it pushed out the one that corrected
+    /// the note. So a statement whose only shared words are frequent ones
+    /// (in more than one statement in twenty) does not count.
     pub fn since(&self, note: &Note) -> Vec<&Turn> {
         let subject = content_terms(&note.body);
-        self.statements
+        let total = self.statements.len() as f32;
+        let frequent = (self.statements.len() / 20).max(3);
+        let mut matched: Vec<(f32, &Turn)> = self
+            .statements
             .iter()
             .take_while(|(turn, _)| turn.at > note.updated)
             .filter(|(_, terms)| same_subject(&subject, terms))
-            .map(|(turn, _)| turn)
-            .take(2)
-            .collect()
+            .filter_map(|(turn, terms)| {
+                let shared: Vec<usize> = subject.iter().filter(|t| terms.contains(t)).map(|t| self.spread.get(t).copied().unwrap_or(1)).collect();
+                if shared.iter().all(|count| *count > frequent) {
+                    return None;
+                }
+                Some((shared.iter().map(|count| (1.0 + total / *count as f32).ln()).sum(), turn))
+            })
+            .collect();
+        matched.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.at.cmp(&a.1.at)));
+        matched.into_iter().map(|(_, turn)| turn).take(2).collect()
     }
 
     /// A note, fenced and labelled, followed by anything the user has said

@@ -85,12 +85,22 @@ class Runner:
         requests = []
         def call(tool, arguments):
             requests.append(json.dumps({"jsonrpc": "2.0", "id": len(requests) + 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}}))
+        def send():
+            subprocess.run([self.memst, "--store", str(store), "mcp", "--owner", "tester", "serve"], input="\n".join(requests) + "\n", capture_output=True, text=True, timeout=120)
+            requests.clear()
         if scenario.seed_note:
+            # The note first, and the statements a moment later: times are
+            # kept to the millisecond, and a statement recorded in the same
+            # millisecond as the note does not count as later than it. With
+            # a fast build the two could land together.
             call("memory_write", {"content": scenario.seed_note})
+            send()
+            time.sleep(0.05)
         for said in scenario.seed_said:
             call("transcript_append", {"session": "earlier-session", "role": "user", "text": said})
             call("transcript_append", {"session": "earlier-session", "role": "assistant", "text": "Understood."})
-        subprocess.run([self.memst, "--store", str(store), "mcp", "--owner", "tester", "serve"], input="\n".join(requests) + "\n", capture_output=True, text=True, timeout=120)
+        if requests:
+            send()
 
     def run(self, scenario, condition: str) -> dict:
         work = Path(tempfile.mkdtemp(prefix=f"sessions-{scenario.id}-", dir=self.args.work))

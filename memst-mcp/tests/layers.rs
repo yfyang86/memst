@@ -381,3 +381,22 @@ fn a_short_note_is_matched_on_one_shared_word() {
     let shown = said.render_note(&memory.get(theme).unwrap());
     assert!(shown.contains("Gruvbox Ember") && !shown.contains("Marzipan"));
 }
+
+#[test]
+fn among_many_statements_the_one_about_the_note_is_shown() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    let deploys = memory.write("Our team's deploys go out on Thursdays.", "semantic", &[]).unwrap().id;
+    let quiet = memory.write("The docs team's mascot is a heron.", "semantic", &[]).unwrap().id;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    memory.record("s1", "user", "Our deploys have moved: they now go out on Mondays.").unwrap();
+    // A great deal of later talk that shares only a frequent word.
+    for i in 0..200 {
+        memory.record("s2", "user", &format!("For the record, the team number {i} moved its standup to Fridays.")).unwrap();
+    }
+    let said = memory.said().unwrap();
+    let shown = said.render_note(&memory.get(deploys).unwrap());
+    assert!(shown.contains("they now go out on Mondays"), "{shown}");
+    // A note that shares nothing but the frequent word is left unmarked.
+    assert!(!said.render_note(&memory.get(quiet).unwrap()).contains("said later"));
+}
