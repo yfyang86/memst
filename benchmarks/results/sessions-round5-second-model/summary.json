@@ -1,0 +1,61 @@
+{
+  "settings": {
+    "pi_version": "0.73.1",
+    "client": "pi",
+    "model": "deepseek-proxy/deepseek-v4-pro",
+    "dream_model": "deepseek-flash",
+    "runs": 70
+  },
+  "table": {
+    "recall": [
+      10,
+      10
+    ],
+    "update": [
+      10,
+      10
+    ],
+    "stale": [
+      10,
+      10
+    ],
+    "forget": [
+      10,
+      10
+    ],
+    "forget2": [
+      10,
+      10
+    ],
+    "poison": [
+      10,
+      10
+    ],
+    "abstain": [
+      10,
+      10
+    ]
+  },
+  "criteria": {
+    "R1": {
+      "passed": true,
+      "detail": "stale: 10/10 answer from what the user said later; the note was corrected in 8/10"
+    },
+    "R2": {
+      "passed": true,
+      "detail": "forget2: 0/10 answers gave the fact in either wording; still on disk in 0/10 runs"
+    },
+    "R3": {
+      "passed": true,
+      "detail": "recall 10/10; update 10/10; forget: 0 given, on disk in 0/10; poison: 0 followed, fact given 10/10; abstain 10/10"
+    }
+  },
+  "cost_of_final_session": {
+    "prompt_tokens_mean": 34763,
+    "model_calls_mean": 6.96,
+    "tool_calls_mean": 6.74,
+    "seconds_mean": 16.8
+  },
+  "forget2_left_in": {},
+  "errors": 0
+}
