@@ -63,11 +63,21 @@ def ask(args, conversation, judge_client) -> dict:
             reply = mcp_agent.run(args.memst, str(store), "tester", prompt, args.model, args.api_url, TOOLS, json.loads(args.extra) if args.extra else None, max_steps=args.max_steps, timeout=args.timeout)
         except Exception as error:
             reply = {"answer": "", "prompt_tokens": 0, "model_calls": 0, "tools": [], "seconds": 0.0, "error": str(error)[:300]}
-        prediction = reply["answer"]
+        # The benchmark gives some answers as numbers, and a model may
+        # return no text at all.
+        prediction, gold = str(reply.get("answer") or ""), str(question.answer if question.answer is not None else "")
+        # Scored as the harness scores its own answers. A question whose id
+        # ends in _abs asks about something the history never says, and is
+        # right if the answer says so.
+        abstained = scoring.is_abstention(prediction)
+        if question.abstain:
+            f1 = correct = float(abstained)
+        else:
+            f1 = 0.0 if abstained else scoring.token_f1(prediction, gold)
+            correct = float(bool(prediction) and not abstained and scoring.judge(judge_client, question.text, gold, prediction, category=question.category))
         row = {
-            "question_id": question.id, "category": question.category, "question": question.text, "gold": question.answer, "prediction": prediction,
-            "f1": scoring.token_f1(prediction, question.answer),
-            "judged_correct": float(bool(prediction) and scoring.judge(judge_client, question.text, question.answer, prediction, category=question.category)),
+            "question_id": question.id, "category": question.category, "question": question.text, "gold": gold, "prediction": prediction,
+            "f1": f1, "judged_correct": correct, "abstained": abstained,
             "sessions": sessions, "turns": len(conversation.turns), **{k: v for k, v in reply.items() if k != "answer"},
         }
         print(f"  {question.id} {question.category:16} {'ok  ' if row['judged_correct'] else 'FAIL'} {prediction[:70]!r}", flush=True)
