@@ -486,9 +486,29 @@ chance one time in seven. Told the user's fact beside the same facts about
 named others, the agent answered both ways correctly in 30 of 30 and
 labelled 125 notes about others correctly.
 
-Next: **19** what deletion and forgetting do not reach; **20** pages and
-the offline pass at size. Round 7 adds a candidate ahead of them: give
-`memory_read` the read path the harness found.
+**19. What deletion and forgetting do not reach** *(two of three parts
+done)*.
+
+- **Memory items made from a message go with it.** A memory item can say
+  which messages and memories it was made from; consolidation records its
+  inputs; deleting a message removes what was made from it, and summaries
+  made from that, with their search entries. A memory item that does not
+  say where it came from is still not reached.
+- **The native search index** was rewritten in full on every drop of a
+  handle, searches included. Additions now go to a journal: 32 ms to 12.6
+  ms per message at 2,000 messages. Still linear, since the index is loaded
+  afresh for each operation.
+- **A correction.** Sprint 14 recorded that a build with the native backend
+  alone never wrote its search index. That was wrong: it wrote it on every
+  drop. The test that suggested otherwise failed on how the native
+  tokenizer splits a hyphenated word. The commit added then made things
+  slower, and is superseded by the journal.
+- **Not done: matching by meaning.** Forgetting and the stale-note match
+  are still by shared words. An embedding model at read time was not
+  chosen, and the local one did not fit on this machine's disk.
+
+Next: **20** pages and the offline pass at size. Round 7 adds a candidate
+ahead of it: give `memory_read` the read path the harness found.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost

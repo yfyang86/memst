@@ -100,8 +100,12 @@ of level 4.
   keep the old record. Entities and relationships can be deleted one at a
   time.
 
-What a deleted message does not reach: memory items and summaries made
-from it (they carry no record of their sources), the operations log, and a
+Memory items that say which messages they were made from
+(`MemoryItem::derived`) are removed with the message, and so are summaries
+made from those (sprint 19); consolidation records its inputs this way.
+
+What a deleted message does not reach: memory items that do not say where
+they came from, the operations log, and a
 fact that a later message restated (the graph records one source message
 per fact, so the fact goes with the first; extracting again from what
 remains brings it back).

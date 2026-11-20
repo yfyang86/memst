@@ -245,7 +245,16 @@ impl ConsolidationEngine {
         Some(MemoryItem {
             id: uuid::Uuid::new_v4(),
             content: summary_content.clone(),
-            source: format!("consolidation:{}", cluster.id),
+            // The summary says what it was made from: the memories of the
+            // cluster, and the messages those say they came from. Deleting
+            // one of those messages then removes the summary too.
+            source: {
+                let memories: Vec<uuid::Uuid> = cluster.memories.iter().map(|m| m.id).collect();
+                let mut messages: Vec<uuid::Uuid> = cluster.memories.iter().flat_map(|m| m.derived_from().0).collect();
+                messages.sort_unstable();
+                messages.dedup();
+                memst_core::types::derivation(&format!("consolidation:{}", cluster.id), &messages, &memories)
+            },
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             access_count: 0,

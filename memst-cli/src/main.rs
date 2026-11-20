@@ -765,8 +765,11 @@ fn main() -> Result<()> {
 
             MessageCommand::Delete { session_id, message_id, graph_backend, owner } => {
                 let store = SessionStore::open(&args.store)?;
-                store.delete_message(*session_id, *message_id)?;
+                let memories = store.delete_message(*session_id, *message_id)?;
                 println!("Deleted message {message_id}, and its entry in the search index.");
+                if memories > 0 {
+                    println!("Removed {memories} memory item(s) made from it, with their search entries.");
+                }
                 let session_path = store.session_path(*session_id);
                 if graph_exists(&args.store, &session_path) {
                     let mut graph = open_graph(&args.store, &session_path, graph_backend, owner, false)?;
@@ -776,7 +779,7 @@ fn main() -> Result<()> {
                         gone.relationships, gone.entities, gone.entities_kept
                     );
                 }
-                println!("Not reached: memory items and summaries made from the message, and the operations log.");
+                println!("Not reached: memory items that do not say which message they came from, and the operations log.");
             }
 
             MessageCommand::List {
