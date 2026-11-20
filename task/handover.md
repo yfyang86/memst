@@ -1,14 +1,13 @@
 # Handover
 
-Written 2026-11-20 and updated after sprint 20. Sprints 1 to 16 are merged
-into `dev` (pull requests 1 to 8). Sprints 17 to 20 are on the working
-branch `claude/loving-allen-qbfcg1` until a pull request is opened and
-merged.
+Written 2026-11-20 and updated after sprint 21. Sprints 1 to 20 are merged
+into `dev` (pull requests 1 to 9). Sprint 21 is on the working branch
+`claude/loving-allen-qbfcg1` until a pull request is opened and merged.
 
 Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
-`CodeReview/CR-20261114.md` (findings 1 to 106, each marked fixed or open),
+`CodeReview/CR-20261114.md` (findings 1 to 107, each marked fixed or open),
 `benchmarks/sessions/README.md` (the memory-in-use evaluation, rounds 1 to
-9), `docs/mcp.md` (the agent memory and its tools),
+10), `docs/mcp.md` (the agent memory and its tools),
 `docs/deletion-design.md`.
 
 ## Sprints
@@ -37,7 +36,7 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 18 | Whom a note is about | Done: wrong answers at 5,000 notes fell from 9 to 3 of 120 (could be chance one time in seven) |
 | 19 | What deletion and forgetting do not reach | Done in two of three parts; matching by meaning not done |
 | 20 | Pages and the offline pass at size | Done: the pass is bounded at 5,000 notes and corrects 8 of 10 after a fix; pages and notes not shown to help or hurt |
-| 21 | The read path in the memory tools | In progress |
+| 21 | The read path in the memory tools | Done: 61.7% to 71.7% on sixty LongMemEval-S questions; ten points still to the harness's best |
 | 22 | Release and a client we did not write | Planned |
 
 Candidates ahead of 21, by size of the known gap: give `memory_read` the
@@ -104,10 +103,12 @@ the HelixDB test binaries small; `HELIX_TELEMETRY_LEVEL=off` in CI.
 
 From the code review log, the ones most likely to matter next:
 
-- **98.** The memory tools read a long history far worse than the
-  harness's read paths: 61.7% (71.7% read fairly) against 91.7% on sixty
-  LongMemEval-S questions. The read path from sprint 5b is in the
-  evaluation harness only. The largest known gap.
+- **107.** An agent with the memory tools is ten points below the
+  harness's best read path on sixty LongMemEval-S questions (81.7% against
+  91.7%, abstentions read fairly), after sprint 21 closed half the gap.
+  Retrieval in the tools is by keyword; the harness's is by embedding. An
+  embedding model at read time is the decision that item, and finding 103,
+  wait on.
 - **97.** A client without the Pi extension records no sessions, so its
   memory holds only what the model chose to note: 4 of 80 facts said in
   passing.

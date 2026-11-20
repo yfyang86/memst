@@ -521,11 +521,21 @@ done)*.
   questions: 76.7% with the pass against 70.0% with transcripts only (-6.7
   to +20.0 points). Not shown to help; not shown to hurt.
 
-Next, in the order we would take them: give `memory_read` the read path
-the harness found (round 7: a gap of 20 to 30 points, the largest known);
-have a plain client's sessions recorded (round 6); matching by meaning
-(sprint 19's undone part); then **21**, the release and a client we did
-not write.
+**21. The read path in the memory tools** *(done; half the gap closed)*.
+The harness's pilots put the gain in the reader working through the
+evidence, not in wider retrieval. `memory_read` with scope `all` now
+returns up to forty transcript entries in the order they were said, with
+dates, and ends with how to read them. Round 10, round 7's sixty
+questions on the new build (criteria first): 71.7% against 61.7%, ten
+points (-1.7 to +21.7), and above one-shot dense retrieval. With
+abstentions read fairly, 81.7% against 91.7% for the harness's best read
+path. Retrieval is still by keyword. A question costs twice the tokens.
+
+Next, in the order we would take them: retrieval by embedding in the
+memory tools (the ten points left, and matching by meaning for forgetting
+and stale notes, both need an embedding model at read time); have a plain
+client's sessions recorded (round 6); then **22**, the release and a
+client we did not write.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost

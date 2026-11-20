@@ -874,6 +874,33 @@ before, since nothing forces it. We expect to stay below
 for 91% of questions in the harness against 99% by embedding, and an agent
 decides for itself when it has read enough.
 
+### Round 10 results
+
+One run, nothing changed afterwards (`sessions-round10-read-path`).
+
+| | All 60 | knowledge-update (27) | multi-session (27) | abstention (6) | Prompt tokens |
+|---|---|---|---|---|---|
+| Round 7 (the build before) | 61.7% | 81.5% | 55.6% | 0.0% | 6,395 |
+| Round 10 (the wide read) | 71.7% | 92.6% | 66.7% | 0.0% | 12,411 |
+| `raw-dense` | 68.3% | 85.2% | 44.4% | 100.0% | 4,413 |
+| `dense-wide-reason` | 91.7% | 96.3% | 85.2% | 100.0% | 8,640 |
+
+**T1 and T2 pass**, the first at its threshold exactly: 10.0 points above
+round 7 on the same questions (95% interval -1.7 to +21.7), and 3.3 above
+`raw-dense`. The interval includes no difference; three more questions
+right in each of the two answerable types is what the ten points are.
+
+The model took to the tool without being made to: it called `memory_read`
+for 54 of the 60 questions (60 calls, beside 46 searches), where in round
+7 it searched. A question now costs twice the prompt tokens.
+
+With abstentions read fairly (all six answers say they do not know, in
+both rounds) the agent is at 81.7%, against 71.7% in round 7 and 91.7% for
+`dense-wide-reason`: half the distance closed, ten points left. What is
+left is most likely retrieval by keyword where the harness retrieves by
+embedding, and an agent that stops reading when it thinks it has enough;
+this run does not separate the two.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
