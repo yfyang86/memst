@@ -336,6 +336,7 @@ export default function memst(pi: ExtensionAPI, settings: Settings = settingsFro
 		tool("memory_forget", "Forget a note", "Forget something, when the user asks. Give the note's id to delete the note and every earlier version of it. Give phrases as well: the distinctive words of what is to be forgotten (the value itself, such as a name, a number or a command), so that the record of earlier sessions loses every entry that contains them. Without phrases, what was said stays searchable.", Type.Object({
 			id: Type.Optional(Type.String({ description: "The id of the note to delete, if there is one" })),
 			phrases: Type.Optional(Type.Array(Type.String(), { description: "Distinctive words of what is to be forgotten; every transcript entry containing one of them is removed" })),
+			entries: Type.Optional(Type.Array(Type.String(), { description: "Single transcript entries to remove, each as session#number (as shown in a transcript result)" })),
 		}));
 	}
 

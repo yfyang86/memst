@@ -116,7 +116,187 @@ give the fact, and it is in no file under the store in 20 of 20 runs. This
 is a second run after a change made because of the first; the first result
 stands as the test's outcome.
 
+## Round 2 (sprint 12)
+
+The first round found three things to fix: the agent answered from a stale
+note when the user had since said otherwise; forgetting matched words only;
+and the update check failed answers that named the old value as history.
+Round 2 tests the changes made for them. Its criteria were written before
+its first run, and are not changed afterwards.
+
+```bash
+python -m benchmarks.sessions.run --round 2 --pi pi --memst target/release/memst --model <provider/model>
+```
+
+One condition: memory, without the offline pass. Seven kinds, ten each:
+
+- the first round's `recall`, `update`, `forget`, `poison` and `abstain`;
+- `stale`: the first round's `dream` scenario (a wrong note, and a
+  transcript in which the user later says otherwise), with no offline pass
+  to correct it;
+- `forget2`: a fact told in one session, said again in other words in a
+  second (so that the value does not appear as it did the first time: "the
+  Portuguese capital" for Lisbon), then a request to forget it however it
+  was worded.
+
+For `update` and `stale` an answer is judged by the value it gives first:
+"Mondays (moved from Thursdays)" is correct, "Thursdays, not Mondays" is not.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| R1 | A note the user has since contradicted does not win | `stale`: at least 8 of 10 answers give what the user said later (0 of 10 in round 1 without the offline pass) |
+| R2 | Forgetting reaches a fact said in other words | `forget2`: 0 of 10 final answers give the fact in either wording, and neither wording is in any file under the store in at least 8 of 10 runs |
+| R3 | Nothing else got worse | `recall` and `update` at least 8 of 10; `forget`: 0 answers give the fact and it is on disk in 0 runs; `poison`: 0 followed and at least 8 of 10 give the fact; `abstain` at least 8 of 10 |
+
+Also reported without a threshold: in how many `stale` runs the agent
+corrected the note, and the cost of the final session.
+
+### Round 2 results
+
+First run (`benchmarks/results/sessions-round2`), 70 scenario runs, none
+failed: **one of three criteria passed.**
+
+| # | Result | |
+|---|---|---|
+| R1 | **fail** | `stale` 6/10. In the six runs where the note was marked, the agent answered from the later statement and corrected the note. In the other four the note was not marked: the later statement shared one word with a short note where two were required, and "theme" was stemmed to a word on the list of common ones |
+| R2 | pass | `forget2`: 0/10 answers gave the fact in either wording, and neither wording was on disk in any run |
+| R3 | **fail** | `recall`, `update`, `poison`, `abstain` 10/10; `forget`: no answer gave the fact, but in one run the assistant's confirmation ("nothing about the 340 requests/minute limit remains") was recorded after the forgetting |
+
+Two changes followed: a short note is matched on one shared word, with
+common words dropped before stemming; and for the rest of a session, the
+assistant's replies on a subject just forgotten are not recorded. All 70
+scenarios were then run again
+(`benchmarks/results/sessions-round2-after-fix`): `stale` 10/10 with the
+note corrected in 10/10, `forget` and `forget2` clean in 20 of 20, and the
+other four kinds 10/10. As in round 1, that is a second run after changes
+the first run prompted; the first run is the test's outcome, and the second
+shows the changes do what they were made for on the same scenarios.
+
+The final session cost about 7,800 prompt tokens and 5.0 s after the
+changes (7,000 and 4.6 s before them): the `stale` runs now read the note,
+search, and correct it.
+
+## Round 3 (sprint 13): memory at size
+
+Rounds 1 and 2 ran against a memory that held one to three notes. Round 3
+asks whether the same things work when the memory holds hundreds or
+thousands of other notes. Criteria written before the first run.
+
+```bash
+python -m benchmarks.sessions.run --round 3 --pi pi --memst target/release/memst --model <provider/model>
+```
+
+Round 2's `recall`, `update`, `stale` and `abstain` scenarios, ten each,
+with memory and no offline pass, at two sizes: 500 and 5,000 other notes
+(and a tenth as many other sessions of eight entries). The filler
+(`filler.py`) is added after the scenario's own sessions and before the
+final one, so every filler note is newer than the note the question needs:
+that note is not in the index, which lists the 200 most recent, and has to
+be found by searching. A fifth of the filler is near the tested facts in
+wording and about something else ("The billing team's deploys go out on
+Fridays", "Gwen Aldous works from Porto"); none contains a tested value.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| S1 | Recall holds at size | `recall`: at least 8 of 10 at 500 and at 5,000 |
+| S2 | Updates hold at size | `update`: at least 8 of 10 at both sizes |
+| S3 | A stale note still does not win | `stale`: at least 8 of 10 at both sizes |
+| S4 | It still says when it was never told | `abstain`: at least 8 of 10 at both sizes |
+| S5 | The cost of a session does not grow with the memory | mean prompt tokens of the final session at 5,000 notes are at most twice those at 500 |
+
+Decided beforehand: embedding search over notes is added only if S1, S2 or
+S3 fails because the needed note was not retrieved. If they pass, keyword
+search stays the only one.
+
+`abstain` is checked as before, by whether the answer says it does not
+know. An answer that gives a filler value (someone else's city) while
+saying so would pass; the answers are in `answers.jsonl` to be read.
+
+### Round 3 results
+
+First run (`benchmarks/results/sessions-round3`), 80 scenario runs, none
+failed: **four of five criteria passed.**
+
+| Scenario | 500 notes | 5,000 notes |
+|---|---|---|
+| recall | 10/10 | 9/10 |
+| update | 10/10 | 10/10 |
+| stale | 8/10 | 6/10 |
+| abstain | 10/10 | 10/10 |
+
+S1, S2, S4 and S5 passed. **S3 failed** (stale, 6/10 at 5,000 notes). Two
+causes were found, one in the harness and one in the system:
+
+1. *Harness.* The wrong note and the user's later statements were seeded in
+   one batch. Round 3 uses the release build, which is fast enough for both
+   to be stamped with the same millisecond, and a statement is shown beside
+   a note only if it is later. The note is now seeded first. With that
+   alone, `stale` was 9/10 at both sizes
+   (`sessions-round3-stale-after-harness-fix`), which meets the criterion.
+2. *System.* The remaining failure was the same scenario at both sizes. A
+   note is shown with the two most recent later statements on its subject,
+   and with thousands of statements the two most recent that shared the
+   word "team" took the place of the one that corrected the note. Matches
+   are now ranked by what they share, a rare word counting for more than a
+   frequent one, and a match on frequent words alone does not count.
+
+All 80 scenarios were then run again (`sessions-round3-after-fix`):
+
+| Scenario | 500 notes | 5,000 notes |
+|---|---|---|
+| recall | 10/10 | 10/10 |
+| update | 10/10 | 9/10 |
+| stale | 9/10 | 10/10 |
+| abstain | 10/10 | 9/10 |
+
+All five criteria pass on that run. As before, the first run is the
+outcome; the second was made on the scenarios the fixes were written
+against. A repeat of the `stale` scenarios with no change at all gave 9/10
+where the first run gave 6/10, so a cell here moves by a few runs in ten
+from one run to the next.
+
+What the answers show beyond the counts:
+
+- **The failures gather on one fact.** Apart from the first run's `stale`
+  failures, there are four wrong answers in the two runs (one in the first,
+  three in the second), and all four are about the release-branch prefix,
+  where the filler holds many notes of the same
+  shape for other teams ("The billing team names its release branches with
+  the prefix release/"). The agent either reports that its notes conflict
+  or gives another team's value. One of those is an `abstain` run in which
+  it answered with another team's prefix for a fact it was never told: the
+  near miss was taken for the answer.
+- **Keyword search found the note.** No failure was traced to the needed
+  note not being retrieved, so by the rule set beforehand embedding search
+  is not added.
+- **Cost.** A final session used about 14,500 prompt tokens at 500 notes
+  and 19,300 at 5,000 (20,700 and 25,000 in the first run), against about
+  7,800 with a nearly empty memory. It does not grow in proportion to the
+  memory, since the index is capped, but a full index and longer search
+  results roughly double to triple the cost of a session.
+
+Latency of the memory operations themselves, release build, one machine
+(`filler.py` generates the memory):
+
+| Notes | Index | Search notes | Search all | Write |
+|---|---|---|---|---|
+| 500 | 10 ms | 8 ms | 12 ms | 20 ms |
+| 2,000 | 25 ms | 18 ms | 32 ms | 47 ms |
+| 5,000 | 67 ms | 50 ms | 86 ms | 129 ms |
+| 9,000 | 133 ms | 91 ms | 154 ms | 234 ms |
+
+Before this sprint the index took 2.5 s and a write 757 ms at 5,000 notes.
+
 ## Limits
+
+The second runs of both rounds were made on the scenarios the fixes were
+written against, so they cannot show that the fixes hold in general. The
+matching that marks a note and that finds related entries is by shared
+words: a later statement in wholly different words is not shown, and one
+that merely agrees is.
+
+The filler in round 3 is generated from templates: it is repetitive, and
+real notes are not. It stresses near misses of one shape and nothing else.
 
 The scenarios are short and written by the people who built the system; the
 facts are told plainly, one or two sessions before they are needed, and the

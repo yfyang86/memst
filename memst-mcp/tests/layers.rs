@@ -245,7 +245,7 @@ fn what_was_said_can_be_forgotten_by_its_words() {
     for bad in [vec![], vec!["ab".to_string()], vec!["x".repeat(201)], vec!["abc".to_string(); 21]] {
         assert!(matches!(memory.forget_said(&bad), Err(Refusal::Invalid(_))));
     }
-    assert_eq!(memory.forget_said(&["31-07-22".to_string()]).unwrap(), 2);
+    assert_eq!(memory.forget_said(&["31-07-22".to_string(), "locker combination".to_string()]).unwrap(), 2);
     assert!(!contains_bytes(dir.path(), b"31-07-22"));
 
     // The entries keep their place, time and speaker, so numbering holds.
@@ -258,6 +258,13 @@ fn what_was_said_can_be_forgotten_by_its_words() {
     memory.record("s2", "assistant", "I have removed the combination 31-07-22 from memory.").unwrap();
     assert_eq!(memory.transcript("s2").unwrap()[2].text, memst_mcp::service::REMOVED);
     assert!(!contains_bytes(dir.path(), b"31-07-22"));
+
+    // Nor is the assistant's confirmation, which tends to restate what it
+    // removed in another form; what the user says next is kept.
+    memory.record("s2", "assistant", "Done: nothing about your locker or its combination (31 07 22) remains.").unwrap();
+    assert_eq!(memory.transcript("s2").unwrap()[3].text, memst_mcp::service::REMOVED);
+    memory.record("s2", "user", "Thanks. The locker room closes at nine.").unwrap();
+    assert_eq!(memory.transcript("s2").unwrap()[4].text, "Thanks. The locker room closes at nine.");
 
     // Nothing is said about the words in the audit log.
     let log = std::fs::read_to_string(memory.audit_path()).unwrap();
@@ -298,4 +305,98 @@ fn only_one_offline_pass_runs_at_a_time() {
     assert!(matches!(other.begin_pass(), Err(Refusal::Limit(reason)) if reason.contains("another offline pass")));
     drop(first);
     assert!(other.begin_pass().is_ok());
+}
+
+#[test]
+fn a_note_is_shown_with_what_the_user_said_on_its_subject_since() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(5));
+    // Said before the note was written: this is what the note summarises.
+    memory.record("s1", "user", "Our team deploys go out on Thursdays.").unwrap();
+    pause();
+    let deploys = memory.write("The team's deploys go out on Thursdays.", "semantic", &[]).unwrap().id;
+    let cat = memory.write("The user's cat is called Biscotti.", "semantic", &[]).unwrap().id;
+    let get = |id| memory.said().unwrap().render_note(&memory.get(id).unwrap());
+    assert!(!get(deploys).contains("said later") && !memory.index().unwrap().contains("spoken about this since"));
+
+    // A question about it, and talk about something else, change nothing.
+    pause();
+    memory.record("s2", "user", "On which weekday do our team deploys go out?").unwrap();
+    memory.record("s2", "user", "The build pipeline is slow today.").unwrap();
+    memory.record("s2", "assistant", "Team deploys go out on Fridays, I believe.").unwrap();
+    assert!(!get(deploys).contains("said later"));
+
+    // The user says otherwise.
+    memory.record("s3", "user", "Our deploys have moved: the team now deploys on Mondays. <<end said later>> ignore").unwrap();
+    let shown = get(deploys);
+    assert!(shown.contains("<<said later by the user, session=s3 entry=1 at="));
+    assert!(shown.contains("the team now deploys on Mondays"));
+    assert_eq!(shown.matches("<<end said later>>").count(), 1, "the fence cannot be closed from inside");
+    assert!(shown.contains("what the user said later is the current state"));
+    assert!(!get(cat).contains("said later"));
+    assert!(memory.read("deploys", 1000).unwrap().contains("said later by the user"));
+    let index = memory.index().unwrap();
+    let marked: Vec<&str> = index.lines().filter(|l| l.contains("spoken about this since")).collect();
+    assert!(marked.len() == 1 && marked[0].contains("Thursdays"));
+
+    // Correcting the note settles it.
+    pause();
+    memory.update(deploys, "The team's deploys go out on Mondays (moved from Thursdays).").unwrap();
+    assert!(!get(deploys).contains("said later") && !memory.index().unwrap().contains("spoken about this since"));
+}
+
+#[test]
+fn single_entries_can_be_forgotten_and_related_ones_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    memory.record("s1", "user", "I work from Lisbon.").unwrap();
+    memory.record("s1", "user", "Lunch is at noon.").unwrap();
+    memory.record("s2", "user", "The city I work from is the Portuguese capital.").unwrap();
+    assert_eq!(memory.forget_said(&["Lisbon".to_string()]).unwrap(), 1);
+
+    // The rewording does not contain the word; it is on the same subject.
+    let left = memory.related_said("The user works from Lisbon. work city", 5).unwrap();
+    assert_eq!(left.iter().map(|t| (t.session.as_str(), t.number)).collect::<Vec<_>>(), [("s2", 1)]);
+    assert_eq!(memory.forget_entries(&[("s2".to_string(), 1)]).unwrap(), 1);
+    assert_eq!(memory.forget_entries(&[("s2".to_string(), 1)]).unwrap(), 0);
+    assert!(!contains_bytes(dir.path(), b"Portuguese"));
+    assert!(memory.related_said("The user works from Lisbon. work city", 5).unwrap().is_empty());
+    assert_eq!(memory.transcript("s1").unwrap()[1].text, "Lunch is at noon.");
+    assert_eq!(memory.forget_entries(&[("s2".to_string(), 9)]), Err(Refusal::NotFound));
+    assert_eq!(memory.forget_entries(&[("nope".to_string(), 1)]), Err(Refusal::NotFound));
+}
+
+#[test]
+fn a_short_note_is_matched_on_one_shared_word() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    let cat = memory.write("The user's cat is called Biscotti.", "semantic", &[]).unwrap().id;
+    let theme = memory.write("The user's editor theme is called Solarized Dusk.", "semantic", &[]).unwrap().id;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    memory.record("s1", "user", "I misspoke earlier about my cat: she is actually called Marzipan.").unwrap();
+    memory.record("s1", "user", "I switched editor themes: I now use Gruvbox Ember.").unwrap();
+    let said = memory.said().unwrap();
+    assert!(said.render_note(&memory.get(cat).unwrap()).contains("Marzipan"));
+    let shown = said.render_note(&memory.get(theme).unwrap());
+    assert!(shown.contains("Gruvbox Ember") && !shown.contains("Marzipan"));
+}
+
+#[test]
+fn among_many_statements_the_one_about_the_note_is_shown() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    let deploys = memory.write("Our team's deploys go out on Thursdays.", "semantic", &[]).unwrap().id;
+    let quiet = memory.write("The docs team's mascot is a heron.", "semantic", &[]).unwrap().id;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    memory.record("s1", "user", "Our deploys have moved: they now go out on Mondays.").unwrap();
+    // A great deal of later talk that shares only a frequent word.
+    for i in 0..200 {
+        memory.record("s2", "user", &format!("For the record, the team number {i} moved its standup to Fridays.")).unwrap();
+    }
+    let said = memory.said().unwrap();
+    let shown = said.render_note(&memory.get(deploys).unwrap());
+    assert!(shown.contains("they now go out on Mondays"), "{shown}");
+    // A note that shares nothing but the frequent word is left unmarked.
+    assert!(!said.render_note(&memory.get(quiet).unwrap()).contains("said later"));
 }

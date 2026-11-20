@@ -148,11 +148,11 @@ async fn forgetting_with_phrases_takes_the_words_out_of_the_transcripts_too() {
     assert!(call(&adapter, "memory_get", json!({"id": id})).await.is_ok());
 
     let done = call(&adapter, "memory_forget", json!({"id": id, "phrases": ["48151"]})).await.unwrap();
-    assert_eq!(done, "Forgotten: the note, and 1 transcript entries that contained those words.");
+    assert!(done.starts_with("Forgotten: the note, and 1 transcript entries."));
     let found = call(&adapter, "memory_search", json!({"query": "door code 48151 lunch", "scope": "all"})).await.unwrap();
     assert!(!found.contains("48151") && found.contains("Lunch is at noon"));
 
     // Phrases alone, for something that never became a note.
     let done = call(&adapter, "memory_forget", json!({"phrases": ["lunch is at"]})).await.unwrap();
-    assert_eq!(done, "Forgotten: 1 transcript entries that contained those words.");
+    assert_eq!(done, "Forgotten: 1 transcript entries.");
 }

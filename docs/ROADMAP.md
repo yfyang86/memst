@@ -347,7 +347,48 @@ search alone in the question-answering harness.
   tag.
 - **Manuscript.** A section on memory in use, with the sprint 10 results.
 
-Open after this sprint: three-way merge; deletion of single messages with
+**12. Contradicted notes and a sounder forget** *(done)*.
+
+- A note is shown with what the user said on its subject since it was
+  written, and marked in the index; the later statement holds if they
+  differ.
+- After a forget, entries on the same subject that were not removed are
+  listed and can be removed singly; the assistant's replies on that subject
+  are not recorded for the rest of the session.
+- The session evaluation judges an update by which value is given first.
+- Round 2 of the evaluation (70 runs, criteria fixed beforehand): one of
+  three criteria passed on the first run (forgetting a fact said in other
+  words). The stale-note criterion reached 6/10 and one forget run left the
+  assistant's confirmation on disk. After two fixes, all three pass on a
+  second run (stale 10/10, against 0/10 in round 1 without the offline
+  pass).
+
+**13. Memory at realistic size** *(done; one part not done)*.
+
+- Each note file is read once per operation, not up to eight times, and
+  the index looks up later statements only for the notes it lists. At
+  5,000 notes: the index 2.5 s to 67 ms, a write 757 ms to 129 ms, a search
+  131 ms to 50 ms.
+- Round 3 of the evaluation: recall, update, stale and abstain with 500 and
+  5,000 other notes, a fifth of them near misses (80 runs, criteria fixed
+  beforehand). First run: four of five criteria passed; the stale-note
+  criterion failed (6/10 at 5,000). One cause was in the harness (a note
+  and a later statement stamped with the same millisecond) and one in the
+  system (statements sharing a frequent word pushed out the one that
+  corrected the note; matches are now ranked by what they share). On a
+  second run all five pass.
+- Keyword search retrieved the needed note in every case examined, so, as
+  decided beforehand, embedding search over notes was not added.
+- Found and open: with many notes of the same shape about other teams, the
+  agent sometimes reports a conflict or gives another team's value, once
+  for a fact it was never told. A session costs two to three times the
+  prompt tokens of one with a nearly empty memory.
+- **Not done:** pages plus search against search alone.
+
+Next: **14** deletion and locking in the session store; **15** what
+versioning is worth; **16** a second agent and the release.
+
+Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost
 of reading every note per operation; a note contradicted by something said
 later is not flagged at read time; forgetting by words misses a paraphrase;
