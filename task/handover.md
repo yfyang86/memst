@@ -37,7 +37,8 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 18 | Whom a note is about | Done: wrong answers at 5,000 notes fell from 9 to 3 of 120 (could be chance one time in seven) |
 | 19 | What deletion and forgetting do not reach | Done in two of three parts; matching by meaning not done |
 | 20 | Pages and the offline pass at size | Done: the pass is bounded at 5,000 notes and corrects 8 of 10 after a fix; pages and notes not shown to help or hurt |
-| 21 | Release and a client we did not write | Planned |
+| 21 | The read path in the memory tools | In progress |
+| 22 | Release and a client we did not write | Planned |
 
 Candidates ahead of 21, by size of the known gap: give `memory_read` the
 harness's read path (finding 98); record a plain client's sessions

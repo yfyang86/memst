@@ -835,6 +835,45 @@ So pages and notes from the pass did not hurt and may help on questions
 that span sessions; thirty questions cannot say more. Both conditions
 remain about twenty points below the harness's reasoning read path.
 
+## Round 10 (sprint 21): the read path in the memory tools
+
+Round 7 found an agent with the memory tools 20 to 30 points below the
+harness's reasoning read paths on the same questions. The harness's own
+pilots say where that gain comes from: reading the top matches and
+answering at once scored 67%; the same matches with the reader told to
+work through the evidence first scored 83%; widening retrieval added
+little by itself. Sprint 21 puts that into the tools: `memory_read` with
+scope `all` returns up to forty transcript entries in the order they were
+said, with dates, followed by how to read them (pick out the statements
+that bear on the question with their dates; the later holds; count step
+by step). Retrieval is still by keyword. Written before the first run.
+
+```bash
+python -m benchmarks.sessions.lme --data third/longmemeval/longmemeval_s_cleaned.json \
+    --memst target/release/memst --model <model> \
+    --compare benchmarks/results/sessions-round7-longmemeval/answers.jsonl \
+    --out benchmarks/results/sessions-round10-read-path
+```
+
+Round 7 again, with nothing changed but the build: the same sixty
+questions, the same plain MCP client and model, the same three tools, the
+same judge.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| T1 | The read path helps | at least 10 points above round 7's run on the same sixty questions, as scored |
+| T2 | It reaches one-shot dense retrieval | not below `raw-dense` on the same questions, as scored |
+
+Reported without a threshold: the distance left to `dense-wide-reason`;
+the figures with abstentions read fairly; by question type; prompt tokens.
+
+Expected beforehand. T1 should pass if the model uses the wide read at
+all; the risk is that it keeps calling `memory_search` with ten results as
+before, since nothing forces it. We expect to stay below
+`dense-wide-reason`: keyword retrieval put the answer's turn in context
+for 91% of questions in the harness against 99% by embedding, and an agent
+decides for itself when it has read enough.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
