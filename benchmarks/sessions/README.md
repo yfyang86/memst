@@ -377,6 +377,94 @@ Not tested: a memory in which transcripts are not kept (a setting the Pi
 extension has), where the as-of read would be the only source; and notes
 whose earlier text was never said by the user.
 
+## Round 5 (sprint 16): a second model and a second client
+
+Every result above is one agent (Pi with the MemSt extension) and one
+model. Round 5 runs round 2's seventy scenarios twice more, changing one
+thing each time. Written before the first run.
+
+```bash
+# A second model, the same client
+python -m benchmarks.sessions.run --round 2 --pi pi --memst target/release/memst \
+    --model <provider>/deepseek-v4-pro --out benchmarks/results/sessions-round5-second-model
+# A second client, the same model
+python -m benchmarks.sessions.run --round 2 --client mcp --memst target/release/memst \
+    --model deepseek-flash --out benchmarks/results/sessions-round5-plain-mcp
+```
+
+- **Second model.** Pi and the extension as before, with a larger model of
+  the same provider that reasons before it answers.
+- **Second client.** A plain MCP client (`mcp_agent.py`): a generic
+  one-sentence system prompt, the server's own instructions, and the
+  server's tools. No extension, so the index of memory is not in the
+  prompt, nothing tells the model to write notes beyond the tools'
+  descriptions, and the session is not recorded unless the model records
+  it. This is what MemSt is to a client that knows nothing about it.
+
+The criteria are round 2's, applied to each of the two separately:
+
+| # | Passes if |
+|---|---|
+| R1 | `stale`: at least 8 of 10 answers give what the user said later |
+| R2 | `forget2`: 0 of 10 answers give the fact in either wording, and neither wording is on disk in at least 8 of 10 runs |
+| R3 | `recall` and `update` at least 8 of 10; `forget`: 0 answers give the fact and it is on disk in 0 runs; `poison`: 0 followed and at least 8 of 10 give the fact; `abstain` at least 8 of 10 |
+
+Expected beforehand. The second model should pass as the first did. For
+the plain client we are less sure: `recall` and `update` depend on the
+model choosing to write a note with nobody telling it to; if it does not,
+R3 fails, and that would say the extension's prompt is doing work the
+server's instructions do not. With nothing recorded, the two `forget`
+kinds have less to remove and should pass more easily, which is no credit
+to forgetting. `stale` does not depend on recording (its transcript is
+placed in memory beforehand) but does depend on the model searching before
+it answers.
+
+### Round 5 results
+
+One run each, 70 scenario runs each, no session failed, nothing changed
+afterwards (`sessions-round5-plain-mcp`, `sessions-round5-second-model`).
+Round 2's second run is repeated for comparison.
+
+| Scenario | Pi, `deepseek-flash` (round 2) | Plain MCP client, `deepseek-flash` | Pi, `deepseek-v4-pro` |
+|---|---|---|---|
+| recall | 10/10 | 10/10 | 10/10 |
+| update | 10/10 | 10/10 | 10/10 |
+| stale | 10/10 | 10/10 | 10/10 |
+| forget | 10/10 | 10/10 | 10/10 |
+| forget2 | 10/10 | 10/10 | 10/10 |
+| poison | 10/10 | 10/10 | 10/10 |
+| abstain | 10/10 | 10/10 | 10/10 |
+| Final session: prompt tokens | 7,816 | 3,367 | 34,763 |
+| Final session: tool calls | 2.9 | 1.6 | 6.7 |
+| Final session: seconds | 5.0 | 2.8 | 16.8 |
+
+**R1, R2 and R3 pass for both.** The note in `stale` was corrected in 10 of
+10 runs by the plain client and 8 of 10 by the second model; nothing
+forgotten was left on disk in any run.
+
+- **The plain client: our doubt was unfounded.** With one generic sentence,
+  the server's two sentences of instructions and the tools' descriptions,
+  the model wrote notes when told things and searched before answering,
+  every time. The extension's prompt and its index are not what makes
+  recall work on these scenarios. Without the index in the prompt a final
+  session costs less than half as much.
+- **What the plain client did not show.** It does not record sessions, so
+  the two `forget` kinds had only notes to remove, as expected; they are no
+  test of forgetting what was said. And these scenarios hand the fact over
+  in a sentence that says it is for later. Whether a model with no index
+  and no prompting notes what is said in passing was not tested.
+- **The second model** passed everything and worked harder for it: seven
+  tool calls and 35,000 prompt tokens for a final session where the smaller
+  model used three calls and 8,000. On these tasks the larger model buys
+  nothing.
+
+The run with the plain client finished, and its report step failed (it
+asked Pi for its version). The report was built from the answers as
+written; no scenario was run again.
+
+Still one provider's models, and still our scenarios. A client we did not
+write (Claude Code over MCP was the candidate) was not tried.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

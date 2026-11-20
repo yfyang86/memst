@@ -1,14 +1,14 @@
 # Handover
 
-Written 2026-11-20, at the start of sprint 16. Everything up to and
-including sprint 15 is merged into `dev` (pull requests 1 to 6; the last
-merge commit is `16d4392`). The working branch
-`claude/loving-allen-qbfcg1` is at the same commit plus this file.
+Written 2026-11-20 and updated the same day after sprint 16. Sprints 1 to
+15 are merged into `dev` (pull requests 1 to 7). Sprint 16 is on the
+working branch `claude/loving-allen-qbfcg1` until its pull request is
+merged.
 
 Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
-`CodeReview/CR-20261114.md` (findings 1 to 94, each marked fixed or open),
+`CodeReview/CR-20261114.md` (findings 1 to 96, each marked fixed or open),
 `benchmarks/sessions/README.md` (the memory-in-use evaluation, rounds 1 to
-4), `docs/mcp.md` (the agent memory and its tools),
+5), `docs/mcp.md` (the agent memory and its tools),
 `docs/deletion-design.md`.
 
 ## Sprints
@@ -20,7 +20,7 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 3 | Extraction into HelixDB | Done |
 | 4 | Non-destructive, time-aware graph | Done |
 | 5 | Evaluation harness | Done |
-| 5b | Full evaluation and read path | Done; the full-scale read-path and 500-question runs are yours to do (see below) |
+| 5b | Full evaluation and read path | Done, including the full-scale runs |
 | 5c | A narrower job for the graph | Done: the graph did not pass; reported as a negative result |
 | 6 | Security and MCP | Done |
 | 7 | Four-layer memory in the store | Done |
@@ -32,51 +32,25 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 13 | Memory at realistic size | Done: 4 of 5 on the first run, 5 of 5 after fixes. Not done: pages plus search against search alone |
 | 14 | Deletion and locking in the session store | Done; the cascade from a deleted message is partial |
 | 15 | What versioning is worth | Done: as-of reads, merging two copies, round 4 |
-| 16 | A second agent, a second model, and the release | **Started, nothing committed.** Plan below |
+| 16 | A second agent, a second model, and the release | Done, except the release itself (below) |
 
-## Sprint 16: what is left to do
+## Sprint 16: done, except the release
 
-Nothing of sprint 16 is in the repository. Two things were checked and
-both work, so the plan below is not blocked:
+Updated 2026-11-20, after sprint 16.
 
-- The MCP server sends its `instructions` in the `initialize` reply, so a
-  plain MCP client has something to put in its prompt.
-- `deepseek-v4-pro` accepts tool calls through the same endpoint as
-  `deepseek-flash` (it returns `reasoning_content` beside `tool_calls`).
+- **Round 5** is run and written up (`benchmarks/sessions/README.md`,
+  "Round 5"): a plain MCP client with no extension
+  (`benchmarks/sessions/mcp_agent.py`, `--client mcp`) and Pi on
+  `deepseek-v4-pro` each pass all of round 2's criteria, 70 of 70.
+- **The manuscript** covers rounds 1 to 5, the deletion work and your
+  full-scale runs. Rebuilt PDF: 15 pages.
+- **A client we did not write** (Claude Code over MCP) was not tried; it
+  needs an account or key.
 
-### 16a. Round 5: a second model and a second client
-
-Every result so far is one agent (Pi with the MemSt extension) and one
-model (`deepseek-flash`). Round 5 should repeat round 2's seven kinds of
-scenario (`build_round2()` in `benchmarks/sessions/scenarios.py`: recall,
-update, stale, forget, forget2, poison, abstain; 70 runs) twice:
-
-1. **Second model, same client:** Pi with `deepseek-v4-pro`. Add the model
-   to Pi's `models.json` (probably with `"reasoning": true`) and pass
-   `--model <provider>/deepseek-v4-pro` to the runner. Check first that Pi
-   handles the model's `reasoning_content` in a tool-calling loop.
-2. **Second client, same model:** a plain MCP client with no extension. It
-   needs writing: a small loop (about 100 lines of Python) that starts
-   `memst mcp --owner <name> serve`, sends `initialize` and `tools/list`,
-   gives the model the server's instructions and the tools, and runs
-   tool calls until the model answers. Add it to
-   `benchmarks/sessions/run.py` as a `--client mcp` option beside Pi.
-   What differs from Pi, and is the point of the test: no index in the
-   prompt at the start, and nothing records the session unless the model
-   calls `transcript_append` itself. Expect `stale` and the two `forget`
-   kinds to behave differently for that reason.
-
-Do it the way rounds 1 to 4 were done: write the criteria in
-`benchmarks/sessions/README.md` and commit them before the first run; use
-round 2's thresholds (R1 to R3) for each of the two; report the first run
-as the outcome and any re-run after a fix separately. If a real second
-agent is wanted (Claude Code over MCP was the suggestion), that needs an
-account or key you supply; it was not available here.
-
-### 16b. The release (yours to do)
+### The release (yours to do)
 
 `.github/workflows/release.yml` has never run: it runs from a tag or from
-the default branch, and the work is on `dev`. To release 1.1.0:
+the default branch, and the work is on `dev`. To release:
 
 1. Merge `dev` into the default branch (`main`).
 2. Move the "Unreleased" items in `Release Note.md` under a version. They
@@ -87,39 +61,12 @@ the default branch, and the work is on `dev`. To release 1.1.0:
    builds `memst` for Linux x86-64 and macOS arm64 and attaches the
    archives to a GitHub release. Expect to fix something on its first run.
 
-### 16c. The manuscript
+## Runs that were yours
 
-`manuscript/memst/memst-yifan.tex` has a section "Memory in Use" that
-covers round 1 only (written in sprint 11). It needs:
-
-- rounds 2 to 4: the stale-note result, memory at 500 and 5,000 notes, and
-  the as-of comparison (20/20 against 19/20 with transcripts, at a quarter
-  of the prompt tokens);
-- the deletion paragraph in "Security and Deletion" brought up to date
-  (single messages, the graph cascade, the search index that kept deleted
-  text);
-- "Limitations": "Not implemented" still lists three-way merge and
-  deletion of single messages, both now built for the parts described
-  above;
-- round 5, once run;
-- your full-scale numbers (next section), once run.
-
-Tables are generated by `manuscript/memst/make_tables.py` from
-`benchmarks/results`; the "Memory in Use" table is written by hand in the
-`.tex`. Rebuild with `pdflatex`, `bibtex`, `pdflatex` twice.
-
-## Runs that are yours (they need more compute than this environment)
-
-No new results have been pushed since 16 November. Still to run on the
-Mac, with `benchmarks/harness/RUNNING.md` and `run_all.sh`:
-
-1. The read-path pipelines (`experiments/read-path.json`) on all of
-   LoCoMo. The +9 to +10 point gain is from a pilot.
-2. The 500-question LongMemEval-S run for the raw pipelines.
-3. Optional: regrade the full LoCoMo run with the stricter judge
-   (`rescore.py --judge-model deepseek-v4-pro`).
-
-Then `python manuscript/memst/make_tables.py` and rebuild the PDF.
+Done and merged on 20 November (commit `326f9c6`): the read-path pipelines
+on all of LoCoMo and the raw pipelines on all 500 LongMemEval-S questions.
+Still optional: regrade the full LoCoMo run with the stricter judge
+(`rescore.py --judge-model deepseek-v4-pro`).
 
 ## How to run things
 

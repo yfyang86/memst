@@ -337,7 +337,7 @@ An agent that can write to its own memory can be made to write an instruction fo
 
 The limits should be stated plainly. Screening catches instructions phrased as instructions; a false statement written as a fact passes, which is why notes written by an agent are marked unverified until a person approves them. Owners are separated by the server, not by the file system. The command line and the Python module bypass these checks.
 
-Deletion is harder in a store built to keep history. We distinguish hiding an item, removing it from the current state and every index derived from it, removing it from history, and removing it from places the store cannot reach, such as backups and a model provider's logs. Notes written through the server are removed with every earlier version of them, and a test searches every byte of the store for the deleted text. A note is not the only place a fact is kept, as \cref{sec:inuse} found: forgetting now also removes the transcript entries that contain the words, which is matching by words and so misses a paraphrase. For messages, the facts derived from them, and the versioned history, the repository contains a design (per-item encryption with deletion of the key, so that every snapshot's copy becomes unreadable without rewriting history) but not an implementation.
+Deletion is harder in a store built to keep history. We distinguish hiding an item, removing it from the current state and every index derived from it, removing it from history, and removing it from places the store cannot reach, such as backups and a model provider's logs. Notes written through the server are removed with every earlier version of them, and a test searches every byte of the store for the deleted text. A note is not the only place a fact is kept, as \cref{sec:inuse} found: forgetting now also removes the transcript entries that contain the words, which is matching by words and so misses a paraphrase. A single message of the session store can be deleted: its file and index are rewritten without it, a tombstone keeps its identifier and nothing else, its search entry is removed, and the facts the graph extracted from it go with it, together with the entities nothing else refers to. Testing this by searching the store's bytes found a fault in what had been thought fixed: the search index marked a deleted document and left its text in the index file until a compaction that might never come. Deletion now forces the compaction. What a deleted message still does not reach are the memory items and summaries made from it, which keep no record of their sources, and a fact that a later message restated, since the graph records one source per fact. For the versioned history of the session store the repository contains a design (per-item encryption with deletion of the key) and no implementation.
 
 %==============================================================================
 \section{Memory in Use}
@@ -370,7 +370,38 @@ Five of the seven criteria passed (\cref{tab:inuse}). Recall across sessions, ab
 
 Two criteria failed. The update criterion failed on the check as written: all nine failing answers give the new value and name the old one as history (``Tallinn, having relocated from Lisbon''), which the check counts as wrong. We report it as failed because the check was fixed in advance. The forgetting criterion failed in substance. Forgetting deleted the note and every earlier version of it, and left what the user had said in the transcripts, in twenty runs of twenty; in one, the agent found the fact there by searching and gave it. The tool now also takes the words to be forgotten and removes every transcript entry that contains them. On a second run of those scenarios no answer gave the fact and no file held it; being a rerun after a change prompted by the first, it does not alter the first result.
 
-A final session with memory used about 5,200 prompt tokens against 560 without, and took about one second longer. The test is small and written by the authors, the memory in it is nearly empty, and one agent and one model were tried; it shows that the operations work and where one did not, and says nothing about recall from a memory of thousands of notes.
+A final session with memory used about 5,200 prompt tokens against 560 without, and took about one second longer. The test is small and written by the authors, the memory in it is nearly empty, and one agent and one model were tried in this round; it shows that the operations work and where one did not, and says nothing about recall from a memory of thousands of notes.
+
+\subsection{Three further rounds}
+
+Each failure above became the subject of a further round, with criteria again fixed before its first run. In every round we report the first run as the outcome, and a second run after any fix separately, since the second is made on the scenarios the fix was written against. A cell is ten runs, and an unchanged repeat of one cell gave nine of ten where the first run gave six; differences of one or two in ten are not findings.
+
+\textbf{A note the user has since contradicted.} A note is the agent's summary and what the user said is the source. When a note is read, the server now shows beside it what the user said on the same subject after the note was last written, with the rule that the later statement holds. Matching is by shared words. Without the offline pass, the agent then answered from the user's later statement in six runs of ten on the first run, and in ten of ten after the match was loosened for notes of two or three content words; in every run where the statement was shown, the agent also corrected the note. Forgetting a fact that had been said twice in different words passed on the first run (no answer gave it and no file held it, in ten of ten), because the reply to a forget now lists what else was said on the subject.
+
+\textbf{Memory at size.} The same scenarios were run with 500 and with 5,000 other notes in memory, a fifth of them close in wording to the tested facts and about something else. Recall held (ten and nine of ten), as did updates and abstention; keyword search retrieved the needed note in every case we examined, so no embedding search over notes was added. The stale-note criterion failed at 5,000 notes (six of ten). One cause was in our harness. The other was in the system: among thousands of statements, the most recent ones sharing a frequent word took the place of the one that corrected the note, and matches are now ranked with rare words counting for more. A second run passed every criterion. The failures that remain gather on one fact, for which the filler holds many notes of the same shape about other teams: the agent reports a conflict, or gives another team's value, once for a fact it was never told. A session over a large memory used two to three times the prompt tokens of one over a nearly empty memory.
+
+\textbf{What versioning is worth.} The notes are versioned, and one tool reads them as they stood at a given time. We asked what the notes had said at a moment before a fact changed, under three conditions that differ in what the final session may read (\cref{tab:asof}), and wrote down beforehand that we expected the transcripts to do as well as the versioned read. On accuracy they did. They did so by searching, at four times the prompt tokens and five to six times the time; the versioned read answered in one call. With the current notes alone, after the owner had edited a note by hand, the agent was wrong ten times in ten and mostly reported the present text as what the notes had said then. For recalling past values, then, versioning is not more accurate than keeping transcripts; it is cheaper, and it is the only source for the earlier text of a note that was never said aloud. What transcripts do not give at all is undoing a change, the record of who made it, and the merging of two copies of a memory; the last is implemented as a three-way merge in which whatever either copy forgot stays forgotten, and is tested without a model.
+
+\textbf{A second client and a second model.} Every result above is one agent with our extension and one model. We ran the second round's seventy scenarios twice more: with a plain MCP client that has a one-sentence generic prompt, the server's own instructions and the tools, and neither the index of memory in its prompt nor a record of the session; and with the same agent on a larger model of the same provider. Both passed every criterion, seventy of seventy. We had written beforehand that we doubted a model would write notes with nothing telling it to; it did, each time, so the extension's prompt is not what makes recall work on these scenarios. A final session cost 3,400 prompt tokens with the plain client, 7,800 with the extension, and 35,000 with the larger model, which made seven tool calls where the smaller made three. These remain one provider's models and scenarios in which a fact is handed over as something to keep.
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lccc}
+\toprule
+ & Current notes & Notes and transcripts & Notes and versioned read \\
+\midrule
+The change was said in a session (correct of 10) & 8 & 10 & 10 \\
+The note was edited by hand (correct of 10) & 0 & 9 & 10 \\
+Prompt tokens of the final session & 9,486 & 13,363 & 3,342 \\
+Tool calls & 5.2 & 6.7 & 1.05 \\
+Seconds & 11.7 & 18.6 & 3.3 \\
+\bottomrule
+\end{tabular}}
+\caption{What did the notes say at an earlier moment? Sixty scenario runs; nothing was changed after this run.}
+\label{tab:asof}
+\end{table}
 
 %==============================================================================
 \section{Discussion}
@@ -396,11 +427,11 @@ None of this says a time-aware graph of a user's world is without value. It says
 
 \textbf{Scale.} At about 127,000 tokens, LongMemEval-S histories still fit in a large context window and their answer turns are easy to retrieve. Histories of millions of tokens, where retrieval can no longer return everything relevant, are the remaining setting in which a pre-built structure might win; we have not tested it.
 
-\textbf{Benchmarks.} Both benchmarks ask questions about a fixed transcript. Neither tests correction, deletion, rollback or use of memory in action; our own test of those (\cref{sec:inuse}) is sixty short scenarios. LoCoMo's reference answers contain errors.
+\textbf{Benchmarks.} Both benchmarks ask questions about a fixed transcript. Neither tests correction, deletion, rollback or use of memory in action; our own tests of those (\cref{sec:inuse}) are short scenarios that we wrote ourselves, ten runs to a cell. LoCoMo's reference answers contain errors.
 
-\textbf{Not evaluated.} The memory tiers, sleep-time consolidation and the versioned repository are described but not measured. We make no claim about what versioning is worth; the experiments that would show it (answering as of an earlier state, merging two agents' memories) remain to be done.
+\textbf{Not evaluated.} The memory tiers and sleep-time consolidation are described but not measured. What versioning is worth was measured for one thing only, recall of past values (\cref{sec:inuse}); merging is tested for correctness and not for whether two agents' memories are better merged than kept apart.
 
-\textbf{Not implemented.} Three-way merge, deletion of single messages with cascade to derived facts, and deletion from history.
+\textbf{Not implemented.} Deletion from the history of the session store; the cascade from a deleted message to the memory items and summaries made from it; merging within a note (a note changed in both copies is kept twice).
 
 %==============================================================================
 \section{Conclusion}

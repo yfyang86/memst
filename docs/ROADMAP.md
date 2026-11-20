@@ -439,7 +439,23 @@ source for a note's own earlier text. Undo, the record of who changed what,
 and merging are things transcripts do not give at all. The three-way merge
 in `memst-repo` for the session store is still not connected to anything.
 
-Next: **16** a second agent and the release.
+**16. A second agent, a second model, and the release** *(evaluation and
+manuscript done; the release is the owner's to make)*.
+
+- **Round 5** (140 runs; criteria and expectations written first): round
+  2's scenarios with a plain MCP client that has no extension, and with Pi
+  on a larger model. Both pass all three criteria, 70 of 70 each. We had
+  doubted that a model with no index in its prompt and nothing telling it
+  to write notes would do so; it did. The plain client's sessions cost less
+  than half of Pi's; the larger model's cost four times as much for the
+  same answers.
+- **Full-scale runs** (by the owner): the read-path pipelines on all of
+  LoCoMo and the raw pipelines on all 500 LongMemEval-S questions; see
+  sprint 5b above.
+- **Manuscript**: rounds 2 to 5 of memory in use, deletion and the
+  limitations brought up to date.
+- **Not done**: the release workflow has not run (it needs a tag or the
+  default branch); a client we did not write was not tried.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost
