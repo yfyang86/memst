@@ -19,6 +19,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from . import mcp_agent
 from .filler import fill
 from datetime import datetime, timezone
 
@@ -47,7 +48,15 @@ class Runner:
         return env
 
     def pi(self, prompt: str, work: Path, store: Path, memory: bool, tools: str = MEMORY_TOOLS) -> dict:
-        """One Pi session with one prompt. Returns its final answer and what it cost."""
+        """One session with one prompt. Returns its final answer and what it cost."""
+        if self.args.client == "mcp":
+            # A plain MCP client: no extension, so no index in the prompt
+            # and no record of the session.
+            extra = json.loads(self.args.dream_extra) if self.args.dream_extra and "flash" in self.args.model else None
+            try:
+                return mcp_agent.run(self.memst, str(store), "tester", prompt, self.args.model.split("/")[-1], self.args.dream_api_url, tools, extra, timeout=self.args.timeout)
+            except Exception as error:
+                return {"answer": "", "prompt_tokens": 0, "model_calls": 0, "tools": [], "seconds": 0.0, "error": str(error)[:300]}
         command = [self.args.pi, "--no-extensions", "--no-context-files", "--session-dir", str(work / "pi-sessions"), "--mode", "json"]
         # No file or shell tools in either condition: the only way anything
         # can carry over is memory. Without memory there are no tools at all.
@@ -407,6 +416,7 @@ def main():
     parser.add_argument("--dream-extra", default='{"thinking":{"type":"disabled"}}', help="extra request fields for the offline pass, as JSON ('' for none)")
     parser.add_argument("--round", type=int, default=1, choices=[1, 2, 3, 4], help="1: the first evaluation; 2: sprint 12's (memory only); 3: sprint 13's (memory at size); 4: sprint 15's (questions about the past)")
     parser.add_argument("--sizes", default="500,5000", help="round 3: how many other notes the memory holds")
+    parser.add_argument("--client", default="pi", choices=["pi", "mcp"], help="pi: Pi with the MemSt extension; mcp: a plain MCP client with no extension (mcp_agent.py)")
     parser.add_argument("--kinds", help="comma-separated scenario kinds (default: all)")
     parser.add_argument("--conditions", default=",".join(CONDITIONS))
     parser.add_argument("--instances", type=int, default=10, help="instances of each kind (at most 10)")
@@ -449,7 +459,9 @@ def main():
     (out / "answers.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     shown = subprocess.run([args.pi, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True)
     version = (shown.stdout + shown.stderr).strip().splitlines()[-1] if (shown.stdout + shown.stderr).strip() else "unknown"
-    settings = {"pi_version": version, "model": args.model, "dream_model": args.dream_model, "runs": len(rows)}
+    if args.client == "mcp":
+        version = "(not used: a plain MCP client)"
+    settings = {"pi_version": version, "client": args.client, "model": args.model, "dream_model": args.dream_model, "runs": len(rows)}
     summary = {1: summarise, 2: summarise2, 3: summarise3, 4: summarise4}[args.round](rows)
     report = {1: render, 2: render2, 3: render3, 4: render4}[args.round](summary, settings)
     (out / "summary.json").write_text(json.dumps({"settings": settings, **summary}, indent=2))

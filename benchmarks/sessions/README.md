@@ -377,6 +377,48 @@ Not tested: a memory in which transcripts are not kept (a setting the Pi
 extension has), where the as-of read would be the only source; and notes
 whose earlier text was never said by the user.
 
+## Round 5 (sprint 16): a second model and a second client
+
+Every result above is one agent (Pi with the MemSt extension) and one
+model. Round 5 runs round 2's seventy scenarios twice more, changing one
+thing each time. Written before the first run.
+
+```bash
+# A second model, the same client
+python -m benchmarks.sessions.run --round 2 --pi pi --memst target/release/memst \
+    --model <provider>/deepseek-v4-pro --out benchmarks/results/sessions-round5-second-model
+# A second client, the same model
+python -m benchmarks.sessions.run --round 2 --client mcp --memst target/release/memst \
+    --model deepseek-flash --out benchmarks/results/sessions-round5-plain-mcp
+```
+
+- **Second model.** Pi and the extension as before, with a larger model of
+  the same provider that reasons before it answers.
+- **Second client.** A plain MCP client (`mcp_agent.py`): a generic
+  one-sentence system prompt, the server's own instructions, and the
+  server's tools. No extension, so the index of memory is not in the
+  prompt, nothing tells the model to write notes beyond the tools'
+  descriptions, and the session is not recorded unless the model records
+  it. This is what MemSt is to a client that knows nothing about it.
+
+The criteria are round 2's, applied to each of the two separately:
+
+| # | Passes if |
+|---|---|
+| R1 | `stale`: at least 8 of 10 answers give what the user said later |
+| R2 | `forget2`: 0 of 10 answers give the fact in either wording, and neither wording is on disk in at least 8 of 10 runs |
+| R3 | `recall` and `update` at least 8 of 10; `forget`: 0 answers give the fact and it is on disk in 0 runs; `poison`: 0 followed and at least 8 of 10 give the fact; `abstain` at least 8 of 10 |
+
+Expected beforehand. The second model should pass as the first did. For
+the plain client we are less sure: `recall` and `update` depend on the
+model choosing to write a note with nobody telling it to; if it does not,
+R3 fails, and that would say the extension's prompt is doing work the
+server's instructions do not. With nothing recorded, the two `forget`
+kinds have less to remove and should pass more easily, which is no credit
+to forgetting. `stale` does not depend on recording (its transcript is
+placed in memory beforehand) but does depend on the model searching before
+it answers.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
