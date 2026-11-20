@@ -457,10 +457,11 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "answers.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    shown = subprocess.run([args.pi, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True)
-    version = (shown.stdout + shown.stderr).strip().splitlines()[-1] if (shown.stdout + shown.stderr).strip() else "unknown"
     if args.client == "mcp":
         version = "(not used: a plain MCP client)"
+    else:
+        shown = subprocess.run([args.pi, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        version = (shown.stdout + shown.stderr).strip().splitlines()[-1] if (shown.stdout + shown.stderr).strip() else "unknown"
     settings = {"pi_version": version, "client": args.client, "model": args.model, "dream_model": args.dream_model, "runs": len(rows)}
     summary = {1: summarise, 2: summarise2, 3: summarise3, 4: summarise4}[args.round](rows)
     report = {1: render, 2: render2, 3: render3, 4: render4}[args.round](summary, settings)
