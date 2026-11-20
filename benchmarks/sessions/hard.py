@@ -188,7 +188,7 @@ def main():
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--out")
     args = parser.parse_args()
-    runner = Runner(SimpleNamespace(memst=args.memst, pi=args.pi, model=args.model, client=args.client, timeout=args.timeout, dream_api_url=args.api_url, dream_extra=args.extra))
+    runner = Runner(SimpleNamespace(memst=args.memst, pi=args.pi, model=args.model, client=args.client, timeout=args.timeout, dream_api_url=args.api_url, dream_extra=args.extra, filler_seed=0, subjects=False))
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         rows = [row for group in pool.map(lambda seed: run_history(runner, seed, args.keep, args.work), range(args.histories)) for row in group]
     out = Path(args.out or f"benchmarks/results/sessions-round6-{'pi' if args.client == 'pi' else 'plain-mcp'}")

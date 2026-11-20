@@ -58,10 +58,27 @@ def stamp(moment: datetime) -> str:
     return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
 
 
-def fill(store: Path, owner: str, notes: int, sessions: int = 0, seed: int = 0) -> None:
+def subject_of(text: str) -> str:
+    """Whom a filler note is about, as a note written through the tools
+    would say: a team, a person, the user, or nothing."""
+    import re
+    team = re.match(r"The ([a-zA-Z ]+?) (team|internal API|repository|service)\b", text)
+    if team and team.group(1) in TEAMS:
+        return f"the {team.group(1)} team"
+    for person in PEOPLE:
+        if text.startswith(person):
+            return person
+    lead = re.match(r"The on-call lead for the ([a-zA-Z ]+?) service", text)
+    if lead:
+        return f"the {lead.group(1)} team"
+    return "the user" if text.startswith("The user") else ""
+
+
+def fill(store: Path, owner: str, notes: int, sessions: int = 0, seed: int = 0, subjects: bool = False) -> None:
     """Add `notes` notes and `sessions` transcripts of eight entries each,
     all dated from now on, so that they are newer than what a scenario has
-    stored already."""
+    stored already. With `subjects`, each note says whom it is about, as
+    notes written through the tools do from sprint 18 on."""
     r = random.Random(seed)
     root = store / "memory" / owner
     (root / "notes").mkdir(parents=True, exist_ok=True)
@@ -71,8 +88,12 @@ def fill(store: Path, owner: str, notes: int, sessions: int = 0, seed: int = 0) 
         make = r.choice(NEAR) if i % 5 == 0 else r.choice(FAR)
         note_id = uuid.UUID(int=r.getrandbits(128), version=4)
         at = stamp(now + timedelta(milliseconds=i))
+        text = make(r)
+        about = subject_of(text) if subjects else ""
         (root / "notes" / f"{note_id}.md").write_text(
-            f"---\nid: {note_id}\ntype: semantic\ncreated: {at}\nupdated: {at}\nsource: external\ntrust: unverified\nstatus: active\npinned: false\ntags: \n---\n{make(r)}\n"
+            f"---\nid: {note_id}\ntype: semantic\ncreated: {at}\nupdated: {at}\nsource: external\ntrust: unverified\nstatus: active\npinned: false\ntags: \n"
+            + (f"about: {about}\n" if about else "")
+            + f"---\n{text}\n"
         )
     for s in range(sessions):
         lines = []

@@ -630,6 +630,58 @@ search over transcripts; the harness showed months ago that wide dense
 retrieval with a reasoning read does far better on these questions, and
 nothing has carried that into `memory_search` or `memory_read`.
 
+## Round 8 (sprint 18): whom a note is about
+
+Round 3 left one recurring failure: among thousands of notes there are a
+dozen of the same shape about other teams, and the agent gives another
+team's value, or says its notes conflict, when asked for the user's own.
+From sprint 18 a note says whom it is about (`about`), the tools show it,
+and search puts the notes a question is about first. Round 8 tests that.
+Written before the first run of the new build, and before the baseline's
+results were looked at.
+
+Two parts.
+
+**At size.** Round 3's `recall`, `update`, `stale` and `abstain` scenarios
+with 5,000 other notes, three times over with three different fillers, so
+thirty runs to a cell. Three conditions:
+
+| Condition | Build | The filler's notes |
+|---|---|---|
+| baseline | before sprint 18 | do not say whom they are about |
+| subjects on the user's notes | sprint 18 | do not say (the notes the agent writes say "the user") |
+| subjects on every note | sprint 18 | say whom they are about, as notes written through the tools now do |
+
+```bash
+for seed in 1 2 3; do python -m benchmarks.sessions.run --round 3 --sizes 5000 --filler-seed $seed [--subjects] ...; done
+```
+
+**The user's own fact among others'.** No filler. The user tells a fact of
+their own, and in a second session two facts of the same kind about named
+others ("These are about other teams and people, not about us: the billing
+team's deploys go out on Fridays..."). One question then asks for the
+user's own (`others-own`) or for a named other's (`others-named`). Ten
+facts, three times over, sprint 18's build only.
+
+```bash
+python -m benchmarks.sessions.run --round 8 ...
+```
+
+| # | Criterion | Passes if |
+|---|---|---|
+| W1 | With subjects on every note, the size test holds | `recall`, `update`, `stale` and `abstain` each at least 27 of 30 |
+| W2 | The agent keeps the user's own and others' apart | `others-own` and `others-named` each at least 27 of 30 |
+| W3 | Subjects reduce wrong answers at size | with subjects on every note, fewer wrong answers over the four kinds (of 120) than the baseline |
+
+Reported beside them: the middle condition; and, in the second part, how
+many of the notes the agent wrote about others say so.
+
+Expected beforehand. W2 should pass: the facts are stated with their
+owners. W1 should pass. W3 is the uncertain one: the baseline may have too
+few failures for a difference to show (round 3's two runs had four wrong
+answers in 160), in which case the honest reading is that the problem was
+rarer than it looked and the change is not shown to matter.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

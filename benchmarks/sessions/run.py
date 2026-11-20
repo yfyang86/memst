@@ -23,7 +23,7 @@ from . import mcp_agent
 from .filler import fill
 from datetime import datetime, timezone
 
-from .scenarios import build, build_round2, build_round4
+from .scenarios import build, build_round2, build_round4, build_round8
 
 REPO = Path(__file__).resolve().parents[2]
 EXTENSION = REPO / "integrations" / "pi" / "extensions" / "memst.ts"
@@ -160,7 +160,7 @@ class Runner:
                 # Round 3: everything else the memory holds, added after the
                 # scenario's own sessions, so that it is all newer.
                 size = int(condition.split("@")[1])
-                fill(store, "tester", size, size // 10, seed=scenario.instance)
+                fill(store, "tester", size, size // 10, seed=scenario.instance + 1000 * self.args.filler_seed, subjects=self.args.subjects)
             question = scenario.final.format(at=asked_at) if scenario.asks_at else scenario.final
             final = self.pi(question, work, store, memory, PAST_TOOLS.get(condition, MEMORY_TOOLS))
             if final.get("error"):
@@ -274,6 +274,35 @@ def summarise2(rows):
         "forget2_left_in": dict(places),
         "errors": sum(1 for r in rows if r["errors"]),
     }
+
+
+def summarise8(rows):
+    """Round 8: the user's own fact against the same fact about others."""
+    kinds = ["others-own", "others-named"]
+    table = {kind: [sum(r["correct"] for r in rows if r["kind"] == kind), sum(1 for r in rows if r["kind"] == kind)] for kind in kinds}
+    wrote = [r for r in rows if r["kind"] == "others-own"]
+    finals = rows
+    return {
+        "table": table,
+        "gave_the_other_value": {kind: sum(1 for r in rows if r["kind"] == kind and r["forbidden_present"] and not r["correct"]) for kind in kinds},
+        "cost_of_final_session": {"prompt_tokens_mean": round(sum(r["prompt_tokens"] for r in finals) / max(1, len(finals))), "tool_calls_mean": round(sum(len(r["tools"]) for r in finals) / max(1, len(finals)), 2)},
+        "errors": sum(1 for r in rows if r["errors"]),
+    }
+
+
+def render8(summary, settings) -> str:
+    lines = [
+        "# Memory in use, round 8 (the user's own fact among the same facts about others): results",
+        "",
+        f"Agent: Pi {settings['pi_version']} with `{settings['model']}`, with memory. {settings['runs']} scenario runs; {summary['errors']} had a session that failed.",
+        "",
+        "| Asked for | Correct | Gave the other's value instead |",
+        "|---|---|---|",
+    ]
+    lines += [f"| {'the user\'s own' if kind == 'others-own' else 'a named other\'s'} | {a}/{b} | {summary['gave_the_other_value'][kind]} |" for kind, (a, b) in summary["table"].items()]
+    cost = summary["cost_of_final_session"]
+    lines += ["", f"Final session, on average: {cost['prompt_tokens_mean']:,} prompt tokens, {cost['tool_calls_mean']} tool calls.", ""]
+    return "\n".join(lines)
 
 
 def summarise4(rows):
@@ -414,7 +443,9 @@ def main():
     parser.add_argument("--dream-api-url", default=os.environ.get("MEMST_LLM_API_URL", "https://api.deepseek.com"))
     parser.add_argument("--dream-model", default=os.environ.get("MEMST_LLM_MODEL", "deepseek-flash"))
     parser.add_argument("--dream-extra", default='{"thinking":{"type":"disabled"}}', help="extra request fields for the offline pass, as JSON ('' for none)")
-    parser.add_argument("--round", type=int, default=1, choices=[1, 2, 3, 4], help="1: the first evaluation; 2: sprint 12's (memory only); 3: sprint 13's (memory at size); 4: sprint 15's (questions about the past)")
+    parser.add_argument("--round", type=int, default=1, choices=[1, 2, 3, 4, 8], help="1: the first evaluation; 2: sprint 12's (memory only); 3: sprint 13's (memory at size); 4: sprint 15's (questions about the past); 8: sprint 18's (the user's own fact among others')")
+    parser.add_argument("--subjects", action="store_true", help="round 3: the filler's notes say whom they are about")
+    parser.add_argument("--filler-seed", type=int, default=0, help="round 3: a different filler for the same scenarios")
     parser.add_argument("--sizes", default="500,5000", help="round 3: how many other notes the memory holds")
     parser.add_argument("--client", default="pi", choices=["pi", "mcp"], help="pi: Pi with the MemSt extension; mcp: a plain MCP client with no extension (mcp_agent.py)")
     parser.add_argument("--kinds", help="comma-separated scenario kinds (default: all)")
@@ -440,7 +471,11 @@ def main():
         args.conditions = ",".join(PAST_TOOLS)
         if args.out == "benchmarks/results/sessions":
             args.out = "benchmarks/results/sessions-round4"
-    scenarios = [s for s in (build_round4() if args.round == 4 else build_round2() if args.round >= 2 else build()) if s.instance < args.instances and (not args.kinds or s.kind in args.kinds.split(","))]
+    if args.round == 8:
+        args.conditions = "memory"
+        if args.out == "benchmarks/results/sessions":
+            args.out = "benchmarks/results/sessions-round8-others"
+    scenarios = [s for s in (build_round8() if args.round == 8 else build_round4() if args.round == 4 else build_round2() if args.round >= 2 else build()) if s.instance < args.instances and (not args.kinds or s.kind in args.kinds.split(","))]
     conditions = args.conditions.split(",")
     runner = Runner(args)
     jobs = [(scenario, condition) for scenario in scenarios for condition in conditions]
@@ -463,8 +498,8 @@ def main():
         shown = subprocess.run([args.pi, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         version = (shown.stdout + shown.stderr).strip().splitlines()[-1] if (shown.stdout + shown.stderr).strip() else "unknown"
     settings = {"pi_version": version, "client": args.client, "model": args.model, "dream_model": args.dream_model, "runs": len(rows)}
-    summary = {1: summarise, 2: summarise2, 3: summarise3, 4: summarise4}[args.round](rows)
-    report = {1: render, 2: render2, 3: render3, 4: render4}[args.round](summary, settings)
+    summary = {1: summarise, 2: summarise2, 3: summarise3, 4: summarise4, 8: summarise8}[args.round](rows)
+    report = {1: render, 2: render2, 3: render3, 4: render4, 8: render8}[args.round](summary, settings)
     (out / "summary.json").write_text(json.dumps({"settings": settings, **summary}, indent=2))
     (out / "REPORT.md").write_text(report)
     print(report)

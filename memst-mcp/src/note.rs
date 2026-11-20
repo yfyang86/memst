@@ -60,6 +60,11 @@ pub struct Note {
     pub pinned: bool,
     /// The writer's tags.
     pub tags: Vec<String>,
+    /// Whom or what the note is about: `the user` (the user, their own
+    /// team, their own work), a named other ("the billing team"), or empty
+    /// where nobody said (a note from before this field, or a file written
+    /// by hand).
+    pub about: String,
     /// The note itself.
     pub body: String,
 }
@@ -78,6 +83,7 @@ impl Note {
             status: Status::Active,
             pinned: false,
             tags,
+            about: String::new(),
             body: body.trim().to_string(),
         }
     }
@@ -102,7 +108,7 @@ impl Note {
     pub fn to_markdown(&self) -> String {
         let time = |t: DateTime<Utc>| t.to_rfc3339_opts(SecondsFormat::Millis, true);
         format!(
-            "---\nid: {}\ntype: {}\ncreated: {}\nupdated: {}\nsource: {}\ntrust: {}\nstatus: {}\npinned: {}\ntags: {}\n---\n{}\n",
+            "---\nid: {}\ntype: {}\ncreated: {}\nupdated: {}\nsource: {}\ntrust: {}\nstatus: {}\npinned: {}\ntags: {}\n{}---\n{}\n",
             self.id,
             self.kind,
             time(self.created),
@@ -112,6 +118,8 @@ impl Note {
             if self.status == Status::Quarantined { "quarantined" } else { "active" },
             self.pinned,
             self.tags.join(", "),
+            // Left out where nobody said, so that older files read back as written.
+            if self.about.is_empty() { String::new() } else { format!("about: {}\n", self.about) },
             self.body
         )
     }
@@ -139,6 +147,7 @@ impl Note {
                 "status" => note.status = if value == "quarantined" { Status::Quarantined } else { Status::Active },
                 "pinned" => note.pinned = value == "true",
                 "tags" => note.tags = value.split(',').map(clean_word).filter(|t| !t.is_empty()).collect(),
+                "about" => note.about = clean_subject(value),
                 _ => {} // a field from a newer version: ignored
             }
         }
@@ -149,6 +158,17 @@ impl Note {
 /// The path of the note with this id.
 pub fn path_of(id: Uuid) -> String {
     format!("notes/{id}.md")
+}
+
+/// A subject as it is stored: one line of letters, digits and a few
+/// marks, at most 80 characters. Ways of saying "the user" become that.
+pub fn clean_subject(text: &str) -> String {
+    let subject: String = text.trim().chars().filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '\'' | ' ' | '&' | '/')).take(80).collect();
+    let subject = subject.split_whitespace().collect::<Vec<_>>().join(" ");
+    match subject.to_lowercase().as_str() {
+        "user" | "the user" | "me" | "myself" | "us" | "self" | "owner" | "the owner" => "the user".to_string(),
+        _ => subject,
+    }
 }
 
 fn clean_word(text: &str) -> String {

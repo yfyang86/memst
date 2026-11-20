@@ -111,6 +111,7 @@ impl McpManifest {
                         "enum": ["notes", "pages", "transcripts", "all"],
                         "description": "notes (default): what was written down; pages: what memory holds on a topic, with its evidence; transcripts: what was said in earlier sessions; all: everything",
                     },
+                    "about": { "type": "string", "description": "Only notes about this subject: \"the user\" for the user's own facts, or a name such as \"the billing team\". Each note says whom it is about" },
                 }),
                 &["query"],
             ),
@@ -162,6 +163,7 @@ impl McpManifest {
                         "description": "episodic: something that happened; semantic: a fact or preference; procedural: how to do something",
                     },
                     "tags": { "type": "array", "items": { "type": "string" }, "description": "Up to 16 short tags" },
+                    "about": { "type": "string", "description": "Whom or what the note is about, when it is not the user: for example \"the billing team\" or a person's name. Leave out for facts about the user, their own team and their own work" },
                 }),
                 &["content"],
             ));
@@ -171,6 +173,7 @@ impl McpManifest {
                 json!({
                     "id": { "type": "string", "description": "The note's id" },
                     "content": { "type": "string", "description": "The note's new text" },
+                    "about": { "type": "string", "description": "Whom or what the note is about, to change it; \"the user\" for the user themself" },
                 }),
                 &["id", "content"],
             ));
@@ -261,7 +264,11 @@ impl McpAdapter {
                     Some("all") => Layer::All,
                     Some(other) => return Err(format!("scope must be notes, pages, transcripts or all, not {other:?}")),
                 };
-                let hits = service.search(args.text("query")?, args.integer("limit", 10)?, layer).map_err(refused)?;
+                let hits = match args.optional_text("about")? {
+                    Some(about) => service.search_about(args.text("query")?, args.integer("limit", 10)?, layer, about),
+                    None => service.search(args.text("query")?, args.integer("limit", 10)?, layer),
+                }
+                .map_err(refused)?;
                 if hits.is_empty() {
                     return Ok("Nothing in memory matches.".to_string());
                 }
@@ -350,11 +357,11 @@ impl McpAdapter {
                     Some(kind @ ("semantic" | "episodic" | "procedural")) => kind,
                     Some(other) => return Err(format!("memory_type must be episodic, semantic or procedural, not {other:?}")),
                 };
-                let written = service.write(args.text("content")?, kind, &args.strings("tags")?).map_err(refused)?;
+                let written = service.write_about(args.text("content")?, kind, &args.strings("tags")?, args.optional_text("about")?).map_err(refused)?;
                 Ok(Self::written("Stored as", &written))
             }
             "memory_update" => {
-                let written = service.update(args.id()?, args.text("content")?).map_err(refused)?;
+                let written = service.update_about(args.id()?, args.text("content")?, args.optional_text("about")?).map_err(refused)?;
                 Ok(Self::written("Updated", &written))
             }
             "memory_forget" => {
