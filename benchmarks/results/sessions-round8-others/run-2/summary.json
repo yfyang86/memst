@@ -1,0 +1,28 @@
+{
+  "settings": {
+    "pi_version": "0.73.1",
+    "client": "pi",
+    "model": "deepseek-proxy/deepseek-flash",
+    "dream_model": "deepseek-flash",
+    "runs": 20
+  },
+  "table": {
+    "others-own": [
+      10,
+      10
+    ],
+    "others-named": [
+      10,
+      10
+    ]
+  },
+  "gave_the_other_value": {
+    "others-own": 0,
+    "others-named": 0
+  },
+  "cost_of_final_session": {
+    "prompt_tokens_mean": 7195,
+    "tool_calls_mean": 2.15
+  },
+  "errors": 0
+}

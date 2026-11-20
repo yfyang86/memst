@@ -1,0 +1,66 @@
+{
+  "settings": {
+    "pi_version": "0.73.1",
+    "client": "pi",
+    "model": "deepseek-proxy/deepseek-flash",
+    "dream_model": "deepseek-flash",
+    "runs": 40
+  },
+  "table": {
+    "recall": {
+      "memory@5000": [
+        9,
+        10
+      ]
+    },
+    "update": {
+      "memory@5000": [
+        10,
+        10
+      ]
+    },
+    "stale": {
+      "memory@5000": [
+        10,
+        10
+      ]
+    },
+    "abstain": {
+      "memory@5000": [
+        10,
+        10
+      ]
+    }
+  },
+  "criteria": {
+    "S1": {
+      "passed": true,
+      "detail": "recall: 9/10 at 5000 notes"
+    },
+    "S2": {
+      "passed": true,
+      "detail": "update: 10/10 at 5000 notes"
+    },
+    "S3": {
+      "passed": true,
+      "detail": "stale: 10/10 at 5000 notes"
+    },
+    "S4": {
+      "passed": true,
+      "detail": "abstain: 10/10 at 5000 notes"
+    },
+    "S5": {
+      "passed": true,
+      "detail": "prompt tokens of the final session: 15,365 at 5000 notes"
+    }
+  },
+  "cost_of_final_session": {
+    "memory@5000": {
+      "prompt_tokens_mean": 15365,
+      "model_calls_mean": 2.65,
+      "tool_calls_mean": 2.0,
+      "seconds_mean": 6.9
+    }
+  },
+  "errors": 0
+}

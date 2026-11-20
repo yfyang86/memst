@@ -476,10 +476,19 @@ measures nothing. Two rounds with criteria and expectations fixed first.
   found in sprint 5b: that way of reading a history has not been carried
   into the memory tools.
 
-Next: **18** whom a note is about; **19** what deletion and forgetting do
-not reach; **20** pages and the offline pass at size. Round 7 adds a
-candidate ahead of them: give `memory_read` the read path the harness
-found.
+**18. Whom a note is about** *(done)*. A note carries a subject (the
+user, or a named other); the tools show and set it; search ranks the notes
+a question is about first and can be limited to one subject. Round 8 (420
+runs, criteria first): at 5,000 notes, wrong answers fell from 9 of 120 on
+the build before to 3 of 120, all nine of the baseline's on one fact with
+many look-alike notes about other teams. The difference could arise by
+chance one time in seven. Told the user's fact beside the same facts about
+named others, the agent answered both ways correctly in 30 of 30 and
+labelled 125 notes about others correctly.
+
+Next: **19** what deletion and forgetting do not reach; **20** pages and
+the offline pass at size. Round 7 adds a candidate ahead of them: give
+`memory_read` the read path the harness found.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost

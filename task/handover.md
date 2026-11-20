@@ -6,9 +6,9 @@ working branch `claude/loving-allen-qbfcg1` until its pull request is
 merged.
 
 Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
-`CodeReview/CR-20261114.md` (findings 1 to 99, each marked fixed or open),
+`CodeReview/CR-20261114.md` (findings 1 to 100, each marked fixed or open),
 `benchmarks/sessions/README.md` (the memory-in-use evaluation, rounds 1 to
-7), `docs/mcp.md` (the agent memory and its tools),
+8), `docs/mcp.md` (the agent memory and its tools),
 `docs/deletion-design.md`.
 
 ## Sprints
@@ -34,8 +34,8 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 15 | What versioning is worth | Done: as-of reads, merging two copies, round 4 |
 | 16 | A second agent, a second model, and the release | Done, except the release itself (below) |
 | 17 | A harder, independent test | Done: Pi passes a long history of facts said in passing (96/96), a plain client fails it (20/96); an agent on LongMemEval questions is 20 to 30 points below the harness's read paths |
-| 18 | Whom a note is about | Next |
-| 19 | What deletion and forgetting do not reach | Planned |
+| 18 | Whom a note is about | Done: wrong answers at 5,000 notes fell from 9 to 3 of 120 (could be chance one time in seven) |
+| 19 | What deletion and forgetting do not reach | Next |
 | 20 | Pages and the offline pass at size | Planned |
 | 21 | Release and a client we did not write | Planned |
 

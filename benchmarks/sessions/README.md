@@ -682,6 +682,55 @@ few failures for a difference to show (round 3's two runs had four wrong
 answers in 160), in which case the honest reading is that the problem was
 rarer than it looked and the change is not shown to matter.
 
+### Round 8 results
+
+One run of each, nothing changed afterwards
+(`sessions-round8-size`, `sessions-round8-others`). 420 scenario runs; no
+session failed.
+
+At 5,000 notes, correct of 30 (three fillers of ten):
+
+| | baseline | subjects on the user's notes | subjects on every note |
+|---|---|---|---|
+| recall | 28 | 28 | 30 |
+| update | 27 | 29 | 30 |
+| stale | 27 | 29 | 28 |
+| abstain | 29 | 30 | 29 |
+| wrong answers, of 120 | 9 | 4 | 3 |
+
+The user's own fact told beside the same facts about named others:
+
+| Asked for | Correct | Gave the other's value |
+|---|---|---|
+| the user's own | 30/30 | 0 |
+| a named other's | 30/30 | 0 |
+
+**W1, W2 and W3 pass.**
+
+- **W3, with the caution it needs.** Nine wrong answers became three. With
+  120 runs a side, a difference of that size comes up by chance about one
+  time in seven (Fisher's exact test, two-sided, p = 0.14), so this is a
+  result in the right direction and not an established one. Every one of
+  the baseline's nine is about the release-branch prefix; eight give
+  another team's `release/`. With subjects, `recall` and `update` on that
+  fact were right in all six runs where the baseline was right in one of
+  six.
+- **What still fails.** Two of the three remaining are the `stale` scenario
+  on that same fact: the agent still answered with another team's prefix.
+  The third is an `abstain` run in which it reported that its notes
+  conflict, about a thing it was never told.
+- **The agent says whom a note is about.** In the second part it wrote 181
+  notes: 56 about the user and 125 about a named team or person. We did
+  not find one about another team filed as the user's.
+- **The middle condition** (only the agent's own notes labelled) did nearly
+  as well as labelling everything, four wrong against three. On this
+  evidence most of the gain comes from the user's notes being marked as
+  the user's.
+
+The second part is easy, as expected: thirty of thirty both ways, with the
+owners stated plainly in the telling. It shows that the mechanism is used
+correctly, not that it is needed there; the baseline was not run on it.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
