@@ -457,6 +457,30 @@ manuscript done; the release is the owner's to make)*.
 - **Not done**: the release workflow has not run (it needs a tag or the
   default branch); a client we did not write was not tried.
 
+**17. A harder, independent test** *(done)*. Round 5 was 140 of 140, which
+measures nothing. Two rounds with criteria and expectations fixed first.
+
+- **Round 6: facts said in passing, over histories of 24 sessions**, some
+  changing twice (192 questions). Pi with the extension: 96 of 96. A plain
+  MCP client: 20 of 96. Pi answered stable facts from the transcripts the
+  extension had recorded (only 4 of 32 were ever noted); the plain client
+  records nothing and noted 4 of 80. Recording sessions is what makes
+  memory hold what nobody decided to keep.
+- **Round 7: sixty LongMemEval-S questions put to an agent searching
+  MemSt's transcripts**, graded by the harness's judge beside the
+  harness's pipelines on the same questions. The agent: 61.7% as scored
+  (71.7% with six abstentions read as the correct answers they are),
+  against 68.3% for one-shot dense retrieval and 91.7% for the two
+  reasoning read paths. The criterion (not below dense retrieval) fails as
+  scored. The agent is 20 to 30 points below the read paths the harness
+  found in sprint 5b: that way of reading a history has not been carried
+  into the memory tools.
+
+Next: **18** whom a note is about; **19** what deletion and forgetting do
+not reach; **20** pages and the offline pass at size. Round 7 adds a
+candidate ahead of them: give `memory_read` the read path the harness
+found.
+
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost
 of reading every note per operation; a note contradicted by something said

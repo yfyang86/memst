@@ -547,6 +547,89 @@ thing may sink it outright: `memory_search` looks in notes unless told
 otherwise, there are no notes here, and nothing in the server's
 instructions says where the history is.
 
+### Round 6 results
+
+One run for each client, nothing changed afterwards
+(`sessions-round6-pi`, `sessions-round6-plain-mcp`). 192 questions; no
+session failed.
+
+| Kind of fact | Pi with the extension | Plain MCP client |
+|---|---|---|
+| stable | 32/32 | 0/32 |
+| changed once | 24/24 | 1/24 |
+| changed twice | 24/24 | 3/24 |
+| never told | 16/16 | 16/16 |
+
+**H1 passes; H2 fails**, both as expected, and both further than expected.
+
+- **Pi did not slip on facts changed twice** (24 of 24), where we thought
+  it would find an earlier mention.
+- **For Pi, the transcripts carried the stable facts.** Only 4 of 32
+  stable facts had been written to a note by the end of a history, and all
+  32 were answered: the extension had recorded the sessions and the agent
+  searched them. A fact that changed was noted far more often (45 of 48):
+  the model treats a change as worth writing down and a passing mention as
+  not.
+- **The plain client lost nearly everything.** It records nothing, and
+  noted 4 of 80 facts. The other 76 were not in memory at all when asked
+  for. Round 5's 70 of 70 for this client was a result about facts handed
+  over to be kept, and does not carry to facts said in passing.
+
+What follows for the design: recording sessions is not a convenience of
+the Pi extension. It is what makes memory hold what nobody decided to
+keep, and a client without it has a memory of explicit notes only. The
+server cannot record a session it is not shown; a plain client would have
+to call `transcript_append` itself, and nothing asks it to.
+
+### Round 7 results
+
+The first attempt stopped after 16 questions on one with no reference
+answer, and saved nothing. The sample of sixty holds six abstention
+variants (27 `knowledge-update`, 27 `multi-session`, 6 `abstention`),
+which the harness scores by whether the answer says it does not know; the
+runner was changed to score them as the harness does and the whole run
+made again (`sessions-round7-longmemeval`). Nothing was changed after it.
+
+| | All 60 | abstention (6) | knowledge-update (27) | multi-session (27) | Prompt tokens |
+|---|---|---|---|---|---|
+| Agent searching MemSt's transcripts | 61.7% | 0.0% | 81.5% | 55.6% | 6,395 |
+| `raw-bm25` | 63.3% | 83.3% | 85.2% | 37.0% | 4,985 |
+| `raw-dense` | 68.3% | 100.0% | 85.2% | 44.4% | 4,413 |
+| `dense-wide-reason` | 91.7% | 100.0% | 96.3% | 85.2% | 8,640 |
+| `rerank-reason` | 91.7% | 100.0% | 88.9% | 92.6% | 4,952 |
+
+**L1 fails as scored**: the agent is 6.7 points below `raw-dense` (95%
+interval -18.3 to +6.7).
+
+The zero on abstention is the scorer's and not the agent's. All six
+answers say that it does not know ("I don't know: I can't find anything
+you've told me about Italian restaurants in your city"), and the harness
+recognises an abstention by a list of phrases its own reader is prompted
+to use, which does not include "I don't know". Counting those six as the
+correct answers they are, the agent is at 71.7%, 3.3 points above
+`raw-dense` (-6.7 to +13.3): level with it. We report the criterion as
+failed, because the scorer was named beforehand, and the second figure
+beside it, as with the update check in round 1.
+
+Either way the larger result stands, and it is the one that matters:
+
+- **The agent is 20 to 30 points below the two reasoning read paths.** It
+  made 1.9 searches a question by keyword and read what came back. Those
+  pipelines retrieve forty to sixty turns by embedding and reason over
+  them in one reading.
+- **Searching more than once helps where we said it would.** On
+  `multi-session` questions the agent beat one-shot retrieval (55.6%
+  against 44.4% and 37.0%) and was still 30 to 37 points below the
+  reasoning paths.
+- The fear that the agent would search notes only and find nothing was
+  unfounded: it asked for the transcripts.
+
+So the best way we have of reading a long history is in the evaluation
+harness and not in the product. The memory tools give an agent keyword
+search over transcripts; the harness showed months ago that wide dense
+retrieval with a reasoning read does far better on these questions, and
+nothing has carried that into `memory_search` or `memory_read`.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
