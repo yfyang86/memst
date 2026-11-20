@@ -216,6 +216,45 @@ impl VersionedDir {
         Ok(revisions)
     }
 
+    /// The ids of every revision, latest first. Two copies of a directory
+    /// share the revisions made before they were copied apart, which is how
+    /// a merge finds where they diverged.
+    pub fn revision_ids(&self) -> Result<Vec<ObjectId>> {
+        let objects = self.objects()?;
+        let mut ids = Vec::new();
+        let mut next = self.head()?;
+        while let Some(id) = next {
+            ids.push(id);
+            next = objects.read_commit(&id)?.first_parent();
+        }
+        Ok(ids)
+    }
+
+    /// The paths of files that were purged: present in some revision, with
+    /// content that is no longer stored. The record that something was
+    /// forgotten outlives the thing, which is what lets a merge refuse to
+    /// bring it back from another copy.
+    pub fn forgotten_paths(&self) -> Result<std::collections::BTreeSet<String>> {
+        let objects = self.objects()?;
+        let mut seen_trees = std::collections::HashSet::new();
+        let mut checked: std::collections::HashMap<ObjectId, bool> = std::collections::HashMap::new();
+        let mut forgotten = std::collections::BTreeSet::new();
+        let mut next = self.head()?;
+        while let Some(id) = next {
+            let commit = objects.read_commit(&id)?;
+            if seen_trees.insert(commit.tree_oid) {
+                for entry in objects.read_tree(&commit.tree_oid)?.entries {
+                    let stored = *checked.entry(entry.oid).or_insert_with(|| objects.exists(&entry.oid));
+                    if !stored {
+                        forgotten.insert(entry.name);
+                    }
+                }
+            }
+            next = commit.first_parent();
+        }
+        Ok(forgotten)
+    }
+
     /// Find a revision by its id or an unambiguous prefix of it.
     pub fn resolve(&self, prefix: &str) -> Result<ObjectId> {
         let prefix = prefix.trim().to_lowercase();
@@ -229,6 +268,22 @@ impl VersionedDir {
             [] => Err(Error::InvalidOperation(format!("no revision starts with {prefix}"))),
             _ => Err(Error::InvalidOperation(format!("more than one revision starts with {prefix}"))),
         }
+    }
+
+    /// Every tracked file as it was at `revision`.
+    pub fn files_at(&self, revision: ObjectId) -> Result<BTreeMap<String, Past>> {
+        let objects = self.objects()?;
+        let mut files = BTreeMap::new();
+        for (path, blob) in self.tree_of(Some(revision))? {
+            let past = if objects.exists(&blob) { Past::Content(String::from_utf8_lossy(&objects.read_blob(&blob)?.content).to_string()) } else { Past::Forgotten };
+            files.insert(path, past);
+        }
+        Ok(files)
+    }
+
+    /// The latest revision made at or before `when`, if there was one.
+    pub fn revision_at(&self, when: DateTime<Utc>) -> Result<Option<Revision>> {
+        Ok(self.log(0)?.into_iter().find(|revision| revision.at <= when))
     }
 
     /// A file as it was at `revision`.
@@ -434,6 +489,31 @@ mod tests {
         // Not a byte of it is left anywhere under the directory.
         assert!(!contains(dir.path(), b"X1234567"));
         assert!(contains(dir.path(), b"tea"));
+    }
+
+    #[test]
+    fn an_earlier_state_can_be_read_whole_by_time() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = open(temp.path());
+        let before = Utc::now() - chrono::Duration::seconds(5);
+        dir.write_file("notes/a.md", "first").unwrap();
+        dir.write_file("notes/b.md", "kept secret").unwrap();
+        dir.commit("t", "one").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let between = Utc::now();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        dir.write_file("notes/a.md", "second").unwrap();
+        dir.commit("t", "two").unwrap();
+        dir.purge("notes/b.md", "t", "forget b").unwrap();
+
+        assert!(dir.revision_at(before).unwrap().is_none());
+        let then = dir.revision_at(between).unwrap().unwrap();
+        assert_eq!(then.message, "one");
+        let files = dir.files_at(then.id).unwrap();
+        assert_eq!(files.get("notes/a.md"), Some(&Past::Content("first".to_string())));
+        // What was forgotten since is not readable in the earlier state either.
+        assert_eq!(files.get("notes/b.md"), Some(&Past::Forgotten));
+        assert_eq!(dir.revision_at(Utc::now()).unwrap().unwrap().message, "forget b");
     }
 
     #[test]

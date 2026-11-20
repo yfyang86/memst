@@ -186,6 +186,18 @@ enum McpCommand {
         /// A revision id (or its first characters) from `history`
         revision: String,
     },
+    /// Merge another copy of this owner's memory (from another machine or
+    /// another agent) into this one. Changes made in one copy are kept;
+    /// notes changed differently in both are both kept, for you to decide;
+    /// what was forgotten in either stays forgotten. The other copy is
+    /// only read. `restore` undoes the merge, except the forgetting.
+    Merge {
+        /// The other copy's store directory
+        other_store: PathBuf,
+        /// The owner's name in the other store, if it differs
+        #[arg(long)]
+        other_owner: Option<String>,
+    },
     /// Review memory offline: check the notes against what was said, add
     /// what was missed, and build pages. Without `--apply` the proposal is
     /// shown and kept for you to look at; nothing changes.
@@ -1229,6 +1241,29 @@ fn main() -> Result<()> {
                     if skipped > 0 {
                         println!("{skipped} note(s) that were forgotten since then were not brought back.");
                     }
+                }
+                McpCommand::Merge { other_store, other_owner } => {
+                    let other = other_store.join("memory").join(other_owner.as_deref().unwrap_or(owner));
+                    let done = mine()?.merge_from(&other).map_err(refused)?;
+                    match &done.common_revision {
+                        Some(revision) => println!("The two copies were the same at revision {}.", &revision[..12.min(revision.len())]),
+                        None => println!("The two copies share no history: every note that differs is treated as changed in both."),
+                    }
+                    println!("Notes: {} updated from the other copy, {} added, {} removed.", done.taken, done.added, done.removed);
+                    if done.forgotten + done.kept_forgotten > 0 {
+                        println!("Forgotten: {} note(s) the other copy had forgotten are now forgotten here; {} forgotten here were not brought back.", done.forgotten, done.kept_forgotten);
+                    }
+                    for (ours, theirs) in &done.conflicts {
+                        println!("Changed in both: {ours} is kept as it is here; the other copy's version is the new note {theirs}. Compare them and forget one.");
+                    }
+                    if done.set_aside > 0 {
+                        println!("{} incoming note(s) read like instructions and wait for `review`.", done.set_aside);
+                    }
+                    println!("Transcripts: {} session(s) added, {} extended.", done.sessions_added, done.sessions_extended);
+                    for name in &done.sessions_diverged {
+                        println!("A session differs between the copies; the other copy's part is kept as session {name}.");
+                    }
+                    println!("Everything that came in is unverified. `history` shows the merge; `restore` undoes it.");
                 }
                 McpCommand::Dream { apply, discard, llm_extra, max_chars } => {
                     use memst_mcp::dream::{self, DreamConfig, Proposal};

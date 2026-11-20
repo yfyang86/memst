@@ -156,3 +156,17 @@ async fn forgetting_with_phrases_takes_the_words_out_of_the_transcripts_too() {
     let done = call(&adapter, "memory_forget", json!({"phrases": ["lunch is at"]})).await.unwrap();
     assert_eq!(done, "Forgotten: 1 transcript entries.");
 }
+
+#[tokio::test]
+async fn the_as_of_tool_takes_a_date_or_a_time_and_says_it_is_the_past() {
+    let dir = tempfile::tempdir().unwrap();
+    let adapter = McpAdapter::connected(service(dir.path(), "alice", false));
+    call(&adapter, "memory_write", json!({"content": "The staging URL is staging.example.com."})).await.unwrap();
+    let now = chrono::Utc::now() + chrono::Duration::seconds(1);
+    let shown = call(&adapter, "memory_as_of", json!({"at": now.format("%Y-%m-%dT%H:%M:%SZ").to_string(), "query": "staging"})).await.unwrap();
+    assert!(shown.starts_with("Memory as it stood at ") && shown.contains("This is a past state") && shown.contains("staging.example.com"));
+    let today = call(&adapter, "memory_as_of", json!({"at": now.format("%Y-%m-%d").to_string()})).await.unwrap();
+    assert!(today.contains("staging.example.com"));
+    assert_eq!(call(&adapter, "memory_as_of", json!({"at": "2001-01-01"})).await.unwrap(), "Memory held no notes at that time.");
+    assert!(call(&adapter, "memory_as_of", json!({"at": "last week"})).await.unwrap_err().contains("is a date"));
+}

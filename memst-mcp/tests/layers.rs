@@ -400,3 +400,45 @@ fn among_many_statements_the_one_about_the_note_is_shown() {
     // A note that shares nothing but the frequent word is left unmarked.
     assert!(!said.render_note(&memory.get(quiet).unwrap()).contains("said later"));
 }
+
+#[test]
+fn memory_can_be_read_as_it_stood_at_an_earlier_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(15));
+    let before_anything = chrono::Utc::now();
+    pause();
+    let deploys = memory.write("The team deploys on Thursdays.", "semantic", &[]).unwrap().id;
+    let door = memory.write("The door code is 48151.", "semantic", &[]).unwrap().id;
+    pause();
+    let first_state = chrono::Utc::now();
+    pause();
+    memory.update(deploys, "The team deploys on Mondays.").unwrap();
+    memory.write("The user's cat is called Marzipan.", "semantic", &[]).unwrap();
+    pause();
+    let second_state = chrono::Utc::now();
+    pause();
+    memory.forget(door).unwrap();
+
+    assert!(memory.as_of(before_anything).unwrap().is_none());
+    let bodies = |then: &memst_mcp::service::Then| then.notes.iter().map(|n| n.body.clone()).collect::<Vec<_>>();
+
+    // What it held then, though the note has changed since.
+    let then = memory.search_as_of("deploys", first_state, 10).unwrap().unwrap();
+    assert_eq!(bodies(&then), ["The team deploys on Thursdays."]);
+    assert!(then.at <= first_state);
+    let then = memory.search_as_of("deploys", second_state, 10).unwrap().unwrap();
+    assert_eq!(bodies(&then), ["The team deploys on Mondays."]);
+    // A note written later is not in the earlier state.
+    assert!(memory.search_as_of("cat", first_state, 10).unwrap().unwrap().notes.is_empty());
+
+    // What was forgotten since cannot be read in any earlier state; it is counted.
+    let then = memory.search_as_of("", first_state, 10).unwrap().unwrap();
+    assert_eq!((bodies(&then), then.forgotten), (vec!["The team deploys on Thursdays.".to_string()], 1));
+    assert!(!contains_bytes(dir.path(), b"48151"));
+
+    // The present is unchanged by looking back, and a read-only server can look.
+    assert_eq!(memory.get(deploys).unwrap().body, "The team deploys on Mondays.");
+    let reader = MemoryService::open(dir.path(), Scope::new("alice", true).unwrap(), WritePolicy::default()).unwrap();
+    assert_eq!(reader.search_as_of("deploys", first_state, 10).unwrap().unwrap().notes.len(), 1);
+}

@@ -21,7 +21,7 @@ use crate::policy::{instruction_like, RateWindow, Scope, Screening, WritePolicy}
 use chrono::{DateTime, SecondsFormat, Utc};
 use memst_repo::versioned_dir::{Change, Past, Revision, VersionedDir};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -82,6 +82,48 @@ pub struct Hit {
     pub found: Found,
     /// BM25 score against the query.
     pub score: f32,
+}
+
+/// What [`MemoryService::merge_from`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Merged {
+    /// The revision the two copies share, if they were ever one.
+    pub common_revision: Option<String>,
+    /// Notes changed only in the other copy: its version was taken.
+    pub taken: usize,
+    /// Notes that exist only in the other copy: added.
+    pub added: usize,
+    /// Notes the other copy removed without forgetting, unchanged here: removed.
+    pub removed: usize,
+    /// Notes forgotten in the other copy: forgotten here too, with their history.
+    pub forgotten: usize,
+    /// Notes forgotten here that the other copy still holds: not brought back.
+    pub kept_forgotten: usize,
+    /// Notes changed differently in both copies: this copy's version was
+    /// kept, and the other's was added as a new note. (ours, theirs' new id)
+    pub conflicts: Vec<(Uuid, Uuid)>,
+    /// Incoming notes set aside for review because they read like instructions.
+    pub set_aside: usize,
+    /// Sessions whose transcript exists only in the other copy: added.
+    pub sessions_added: usize,
+    /// Sessions the other copy had more of: extended.
+    pub sessions_extended: usize,
+    /// Sessions that differ in the middle: the other copy's part was kept
+    /// beside ours under these names.
+    pub sessions_diverged: Vec<String>,
+}
+
+/// Memory as it stood at an earlier time. See [`MemoryService::as_of`].
+#[derive(Debug, Clone)]
+pub struct Then {
+    /// When the state was recorded: the last change at or before the time asked for.
+    pub at: DateTime<Utc>,
+    /// That change's revision id.
+    pub revision: String,
+    /// The served notes of that state.
+    pub notes: Vec<Note>,
+    /// Notes of that state that have been forgotten since.
+    pub forgotten: usize,
 }
 
 /// One entry of a transcript.
@@ -827,6 +869,314 @@ impl MemoryService {
     }
 
     /// A note as it was at an earlier revision.
+    /// Merge another copy of this owner's memory into this one.
+    ///
+    /// `other` is the other copy's directory for the owner
+    /// (`<store>/memory/<owner>`). The two are compared with the last
+    /// revision they share, note by note:
+    ///
+    /// - changed in one copy only: that change is kept;
+    /// - new in the other copy: added;
+    /// - changed differently in both: this copy's version stays, and the
+    ///   other's is added as a separate note tagged `merge-conflict`, so
+    ///   that neither is lost and the owner decides;
+    /// - forgotten in either copy: forgotten in the result, whatever the
+    ///   other copy did with it since. A merge never brings back what the
+    ///   owner asked to have forgotten, and it removes this copy's history
+    ///   of a note the other copy forgot.
+    ///
+    /// Everything that comes in is unverified, whatever it was in the other
+    /// copy, and is screened as a write is. Transcripts are joined entry by
+    /// entry; an entry removed in either copy stays removed. The other copy
+    /// is only read. Pages are left to the offline pass to rebuild.
+    ///
+    /// The note changes land as one revision by `merge`, which `restore`
+    /// undoes; forgetting is not undone.
+    pub fn merge_from(&self, other: &Path) -> Result<Merged, Refusal> {
+        let outcome = (|| {
+            if self.scope.read_only {
+                return Err(Refusal::ReadOnly);
+            }
+            if !other.join("notes").is_dir() {
+                return Err(Refusal::Invalid(format!("{} is not a memory directory (it has no notes folder)", other.display())));
+            }
+            let same = fs::canonicalize(other).ok().zip(fs::canonicalize(&self.root).ok()).is_some_and(|(a, b)| a == b);
+            if same {
+                return Err(Refusal::Invalid("that is this memory itself".to_string()));
+            }
+            let dir = self.dir()?;
+            self.notes_in(&dir)?; // take in anything edited by hand first
+            let theirs = VersionedDir::open(other, TRACKED).map_err(store_error)?;
+
+            let ours_revisions: HashSet<_> = dir.revision_ids().map_err(store_error)?.into_iter().collect();
+            let base = theirs.revision_ids().map_err(store_error)?.into_iter().find(|id| ours_revisions.contains(id));
+            let (base_ours, base_theirs) = match base {
+                Some(id) => (dir.files_at(id).map_err(store_error)?, theirs.files_at(id).map_err(store_error)?),
+                None => Default::default(),
+            };
+            let notes_only = |files: std::collections::BTreeMap<String, String>| -> std::collections::BTreeMap<String, String> {
+                files.into_iter().filter(|(path, _)| path.starts_with("notes/")).collect()
+            };
+            let ours = notes_only(dir.working().map_err(store_error)?);
+            let incoming = notes_only(theirs.working().map_err(store_error)?);
+            let mut paths: Vec<&String> = ours.keys().chain(incoming.keys()).chain(base_ours.keys().filter(|p| p.starts_with("notes/"))).collect();
+            paths.sort_unstable();
+            paths.dedup();
+
+            // What each copy has forgotten, from its own history; and what
+            // each copy's notes were when the two were last merged, so that
+            // a second merge compares with that and not with the distant
+            // revision they started from.
+            let (we_forgot_paths, they_forgot_paths) = (dir.forgotten_paths().map_err(store_error)?, theirs.forgotten_paths().map_err(store_error)?);
+            let other_key = fs::canonicalize(other).map(|p| p.display().to_string()).unwrap_or_else(|_| other.display().to_string());
+            let state_path = self.root.join(".merge-state.json");
+            let mut all_state: HashMap<String, HashMap<String, (String, String)>> =
+                fs::read_to_string(&state_path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+            let last = all_state.get(&other_key).cloned().unwrap_or_default();
+            let fingerprint = |text: &String| memst_core::objects::ObjectId::from_content(text.as_bytes()).to_hex();
+            let already_here: HashSet<String> = ours.values().filter_map(|text| Note::parse(text)).filter(|n| n.tags.iter().any(|t| t == "merge-conflict")).map(|n| n.body).collect();
+            let mut merged = Merged { common_revision: base.map(|id| id.to_hex()), ..Default::default() };
+            let mut to_forget: Vec<String> = Vec::new();
+            let mut held = ours.len();
+            for path in paths {
+                let (mine, their) = (ours.get(path), incoming.get(path));
+                let in_base = base_ours.contains_key(path) || base_theirs.contains_key(path);
+                let before: Option<&String> = [base_ours.get(path), base_theirs.get(path)].into_iter().flatten().find_map(|past| match past {
+                    Past::Content(text) => Some(text),
+                    _ => None,
+                });
+                let we_forgot = mine.is_none() && we_forgot_paths.contains(path);
+                let they_forgot = their.is_none() && they_forgot_paths.contains(path);
+                // Changed since the two were last the same for this note:
+                // since the last merge if there was one, else since the
+                // revision they share.
+                let (we_changed, they_changed, known_to_both) = match last.get(path) {
+                    Some((ours_then, theirs_then)) => (mine.map(&fingerprint).as_ref() != Some(ours_then), their.map(&fingerprint).as_ref() != Some(theirs_then), true),
+                    None => (mine != before, their != before, in_base),
+                };
+                match (mine, their) {
+                    (Some(mine), Some(their)) if mine == their => {}
+                    // Neither changed since the last merge. (The two files
+                    // need not be the same text: a note taken in is
+                    // rewritten as unverified.)
+                    (Some(_), Some(_)) if last.contains_key(path) && !we_changed && !they_changed => {}
+                    (Some(mine), Some(their)) => {
+                        if !we_changed {
+                            merged.set_aside += usize::from(self.take_in(&dir, their, None)?);
+                            merged.taken += 1;
+                        } else if they_changed {
+                            // Merging the same copy again must not add the
+                            // same conflict again.
+                            let ours_id = Note::parse(mine).map(|n| n.id).unwrap_or_else(Uuid::nil);
+                            let expected = Note::parse(their).map(|n| conflict_body(&n.body, ours_id));
+                            if expected.is_some_and(|body| already_here.contains(&body)) {
+                                continue;
+                            }
+                            if held >= self.policy.max_memories {
+                                return Err(Refusal::Limit(format!("the merge would pass the limit of {} memories", self.policy.max_memories)));
+                            }
+                            let ours_id = Note::parse(mine).map(|n| n.id).unwrap_or_else(Uuid::nil);
+                            let new_id = Uuid::new_v4();
+                            merged.set_aside += usize::from(self.take_in(&dir, their, Some((new_id, ours_id)))?);
+                            merged.conflicts.push((ours_id, new_id));
+                            held += 1;
+                        }
+                    }
+                    (Some(mine), None) => {
+                        if they_forgot {
+                            to_forget.push(path.clone());
+                            merged.forgotten += 1;
+                        } else if known_to_both && !we_changed {
+                            dir.remove_file(path).map_err(store_error)?;
+                            merged.removed += 1;
+                        }
+                    }
+                    (None, Some(their)) => {
+                        if we_forgot {
+                            merged.kept_forgotten += 1;
+                        } else if !(known_to_both && !they_changed) {
+                            if held >= self.policy.max_memories {
+                                return Err(Refusal::Limit(format!("the merge would pass the limit of {} memories", self.policy.max_memories)));
+                            }
+                            merged.set_aside += usize::from(self.take_in(&dir, their, None)?);
+                            merged.added += 1;
+                            held += 1;
+                        }
+                    }
+                    (None, None) => {}
+                }
+            }
+            dir.commit("merge", "merge another copy of this memory").map_err(store_error)?;
+            for path in &to_forget {
+                dir.purge(path, "merge", "forget a note that the other copy had forgotten").map_err(store_error)?;
+                if let Some(id) = path.strip_prefix("notes/").and_then(|name| name.strip_suffix(".md")).and_then(|id| Uuid::parse_str(id).ok()) {
+                    self.purge_pages_citing(&dir, &Source::Note { id }.key())?;
+                }
+            }
+
+            // Remember what both copies held, by fingerprint only. A note's
+            // file starts with its random id and its times, so a
+            // fingerprint cannot be turned back into the text by guessing.
+            let after = notes_only(dir.working().map_err(store_error)?);
+            let mut now_state = HashMap::new();
+            for (path, their) in &incoming {
+                if let Some(mine) = after.get(path) {
+                    now_state.insert(path.clone(), (fingerprint(mine), fingerprint(their)));
+                }
+            }
+            all_state.insert(other_key, now_state);
+            fs::write(&state_path, serde_json::to_string(&all_state).map_err(store_error)?).map_err(store_error)?;
+
+            self.merge_transcripts(&dir, other, &mut merged)?;
+            let _ = fs::remove_file(self.pending_path());
+            self.write_index(&dir)?;
+            Ok(merged)
+        })();
+        self.audit(
+            "merge",
+            outcome.clone().map(|_| None),
+            outcome.as_ref().ok().map(|m| {
+                format!(
+                    "{} taken, {} added, {} removed, {} forgotten, {} conflict(s), {} set aside, {} session(s) added, {} extended, {} diverged",
+                    m.taken, m.added, m.removed, m.forgotten, m.conflicts.len(), m.set_aside, m.sessions_added, m.sessions_extended, m.sessions_diverged.len()
+                )
+            }),
+        );
+        outcome
+    }
+
+    /// Write an incoming note's text as a working file: unverified,
+    /// unpinned, screened. With `conflict`, under a new id, saying which
+    /// note of ours it differs from. Returns whether it was set aside.
+    fn take_in(&self, dir: &VersionedDir, text: &str, conflict: Option<(Uuid, Uuid)>) -> Result<bool, Refusal> {
+        let mut note = Note::parse(text).unwrap_or_else(|| Note::new(text, "semantic", "merge", Vec::new()));
+        note.trust = Trust::Unverified;
+        note.pinned = false;
+        note.tags = clean_tags(&note.tags);
+        if let Some((new_id, ours_id)) = conflict {
+            note.id = new_id;
+            note.source = "merge".to_string();
+            if !note.tags.iter().any(|t| t == "merge-conflict") {
+                note.tags.push("merge-conflict".to_string());
+            }
+            note.body = conflict_body(&note.body, ours_id);
+        }
+        let suspicious = self.policy.screening != Screening::Off && !instruction_like(&note.body).is_empty();
+        if suspicious || note.body.chars().count() > self.policy.max_chars {
+            note.status = Status::Quarantined;
+        }
+        dir.write_file(&note.path(), &note.to_markdown()).map_err(store_error)?;
+        Ok(note.status == Status::Quarantined)
+    }
+
+    /// Join the other copy's transcripts to ours, entry by entry.
+    fn merge_transcripts(&self, dir: &VersionedDir, other: &Path, merged: &mut Merged) -> Result<(), Refusal> {
+        let removed = |line: &str| serde_json::from_str::<serde_json::Value>(line).is_ok_and(|v| v["removed"] == json!(true));
+        let Ok(entries) = fs::read_dir(other.join("transcripts")) else { return Ok(()) };
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .filter_map(|e| e.file_name().to_string_lossy().strip_suffix(".jsonl").map(str::to_string))
+            .filter(|session| valid_session(session))
+            .collect();
+        names.sort();
+        fs::create_dir_all(self.root.join("transcripts")).map_err(store_error)?;
+        for session in names {
+            let their_text = fs::read_to_string(other.join("transcripts").join(format!("{session}.jsonl"))).map_err(store_error)?;
+            let their: Vec<&str> = their_text.lines().collect();
+            let path = self.transcript_path(&session)?;
+            let Ok(our_text) = fs::read_to_string(&path) else {
+                fs::write(&path, their.join("\n") + "\n").map_err(store_error)?;
+                merged.sessions_added += 1;
+                continue;
+            };
+            let our: Vec<&str> = our_text.lines().collect();
+            let mut joined: Vec<&str> = Vec::new();
+            let (mut changed, mut extended, mut diverged_at) = (false, false, None);
+            for i in 0..our.len().max(their.len()) {
+                match (our.get(i), their.get(i)) {
+                    (Some(a), Some(b)) if a == b || removed(a) => joined.push(a),
+                    (Some(_), Some(b)) if removed(b) => {
+                        joined.push(b);
+                        changed = true;
+                    }
+                    (Some(_), Some(_)) => {
+                        diverged_at = Some(i);
+                        break;
+                    }
+                    (Some(a), None) => joined.push(a),
+                    (None, Some(b)) => {
+                        joined.push(b);
+                        extended = true;
+                    }
+                    (None, None) => {}
+                }
+            }
+            if let Some(at) = diverged_at {
+                // The two copies recorded different things under one name.
+                // Ours stays as it is; theirs from that point is kept beside it.
+                joined.extend(&our[at..]);
+                let mut beside = format!("{session}.other");
+                let mut n = 2;
+                while !valid_session(&beside) || self.transcript_path(&beside)?.exists() {
+                    beside = format!("{}.other{n}", &session[..session.len().min(50)]);
+                    n += 1;
+                }
+                fs::write(self.transcript_path(&beside)?, their[at..].join("\n") + "\n").map_err(store_error)?;
+                merged.sessions_diverged.push(beside);
+            }
+            if changed || extended {
+                let temporary = path.with_extension("jsonl.tmp");
+                fs::write(&temporary, joined.join("\n") + "\n").map_err(store_error)?;
+                fs::rename(&temporary, &path).map_err(store_error)?;
+                if changed {
+                    self.purge_pages_citing(dir, &format!("session:{session}#"))?;
+                }
+                merged.sessions_extended += usize::from(extended);
+            }
+        }
+        Ok(())
+    }
+
+    /// The notes as they stood at `when`: the state after the last change
+    /// made at or before it. Returns when that change was made, its id, and
+    /// the served notes of that state, with how many of that state's notes
+    /// have been forgotten since and cannot be shown. `None` if memory had
+    /// no notes yet.
+    pub fn as_of(&self, when: DateTime<Utc>) -> Result<Option<Then>, Refusal> {
+        if !self.root.exists() {
+            return Ok(None);
+        }
+        let dir = self.dir()?;
+        let Some(revision) = dir.revision_at(when).map_err(store_error)? else { return Ok(None) };
+        let mut notes = Vec::new();
+        let mut forgotten = 0;
+        for (path, past) in dir.files_at(revision.id).map_err(store_error)? {
+            if !path.starts_with("notes/") {
+                continue;
+            }
+            match past {
+                Past::Content(text) => notes.extend(Note::parse(&text).filter(|note| note.status == Status::Active)),
+                Past::Forgotten => forgotten += 1,
+                Past::Absent => {}
+            }
+        }
+        notes.sort_by(|a, b| b.updated.cmp(&a.updated).then(a.id.cmp(&b.id)));
+        Ok(Some(Then { at: revision.at, revision: revision.id.to_hex(), notes, forgotten }))
+    }
+
+    /// Search the notes as they stood at `when`. An empty query lists them,
+    /// most recently changed first.
+    pub fn search_as_of(&self, query: &str, when: DateTime<Utc>, limit: usize) -> Result<Option<Then>, Refusal> {
+        let Some(mut then) = self.as_of(when)? else { return Ok(None) };
+        if !query.trim().is_empty() {
+            let candidates = then.notes.into_iter().map(|note| { let text = format!("{} {}", note.body, note.tags.join(" ")); (Found::Note(note), text) }).collect();
+            then.notes = rank(query, candidates).into_iter().filter_map(|hit| match hit.found { Found::Note(note) => Some(note), _ => None }).collect();
+        }
+        then.notes.truncate(limit.clamp(1, 100));
+        Ok(Some(then))
+    }
+
     pub fn note_at(&self, id: Uuid, revision: &str) -> Result<Past, Refusal> {
         let dir = self.dir()?;
         let revision = dir.resolve(revision).map_err(|e| Refusal::Invalid(e.to_string()))?;
@@ -847,6 +1197,8 @@ impl MemoryService {
         // just been undone, so it starts its reading again; and a proposal
         // drafted against the notes as they were no longer applies.
         let _ = fs::remove_file(self.dream_dir().join("state.json"));
+        // A merge that has been undone is to be made again from the start.
+        let _ = fs::remove_file(self.root.join(".merge-state.json"));
         let _ = fs::remove_file(self.pending_path());
         self.write_index(&dir)?;
         self.audit("restore", Ok(None), Some(format!("revision {}", &id.to_hex()[..12])));
@@ -1193,6 +1545,11 @@ fn pages_in(dir: &VersionedDir) -> Result<Vec<StoredPage>, Refusal> {
         .collect();
     pages.sort_by(|a, b| b.updated.cmp(&a.updated).then(a.path.cmp(&b.path)));
     Ok(pages)
+}
+
+/// The text of a note brought in by a merge because it conflicts with ours.
+fn conflict_body(their_body: &str, ours_id: Uuid) -> String {
+    format!("{}\n\n(From a merge: the other copy's version of note {ours_id}, which was changed differently here.)", their_body.trim_end())
 }
 
 /// Words that say nothing about what a sentence is about.

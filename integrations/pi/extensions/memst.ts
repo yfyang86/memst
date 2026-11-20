@@ -309,6 +309,11 @@ export default function memst(pi: ExtensionAPI, settings: Settings = settingsFro
 	tool("memory_get", "Get a note", "Get one stored note in full, by the id shown in the index or in search results.", Type.Object({ id: Type.String({ description: "The note's id" }) }), {
 		promptSnippet: "Read one note from memory in full",
 	});
+	tool("memory_as_of", "Memory at an earlier time", "The notes as they stood at an earlier time: what memory held then, not what it holds now. Use it when the question is about the past (what was recorded last month, what a note said before it was changed).", Type.Object({
+		at: Type.String({ description: "The time, as a date (2026-11-03, meaning the end of that day) or a date and time in UTC (2026-11-03T14:30:00Z)" }),
+		query: Type.Optional(Type.String({ description: "What to look for among the notes of that time; leave out to list them" })),
+		limit: Type.Optional(Type.Number({ description: "Most notes to return (default 10)" })),
+	}));
 	tool("memory_history", "Memory history", "Recent changes to the notes: when, by whom, and which notes were added, changed or removed.", Type.Object({
 		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Most changes to list (default 10)" })),
 	}));
