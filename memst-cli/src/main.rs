@@ -1309,6 +1309,15 @@ fn main() -> Result<()> {
                         }
                     };
                     show(&proposal);
+                    if proposal.read.entries > 0 {
+                        println!(
+                            "Read {} transcript entries beside {} of {} notes; a prompt of about {} tokens.",
+                            proposal.read.entries,
+                            proposal.read.notes_shown,
+                            proposal.read.notes_held,
+                            proposal.read.prompt_chars / 4
+                        );
+                    }
                     if proposal.is_empty() {
                         println!("Nothing to change.");
                     }

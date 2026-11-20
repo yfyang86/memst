@@ -41,6 +41,13 @@ pub struct DreamConfig {
     /// Most transcript text read in one pass, in characters. Entries beyond
     /// it wait for the next pass.
     pub max_transcript_chars: usize,
+    /// Most notes shown to the model in one pass. A memory may hold
+    /// thousands; a pass is shown the ones nearest in wording to the part
+    /// of the transcript it is reading, which are the ones that part could
+    /// correct. Notes it is not shown it cannot cite or change.
+    pub max_notes: usize,
+    /// Most pages shown, chosen the same way.
+    pub max_pages: usize,
     /// Output budget for the model.
     pub max_tokens: u32,
     /// Provider-specific request fields (for example, to turn reasoning off).
@@ -49,7 +56,7 @@ pub struct DreamConfig {
 
 impl Default for DreamConfig {
     fn default() -> Self {
-        Self { max_transcript_chars: 60_000, max_tokens: 8_000, request_extra: serde_json::Map::new() }
+        Self { max_transcript_chars: 60_000, max_notes: 80, max_pages: 8, max_tokens: 8_000, request_extra: serde_json::Map::new() }
     }
 }
 
@@ -106,6 +113,23 @@ pub struct Proposal {
     pub dropped: Vec<String>,
     /// How far into each session's transcript this pass read.
     pub covered: BTreeMap<String, usize>,
+    /// What the pass read: transcript entries, notes shown (of how many
+    /// held), and the size of the prompt in characters.
+    #[serde(default)]
+    pub read: Read,
+}
+
+/// What one pass was shown.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Read {
+    /// Transcript entries read.
+    pub entries: usize,
+    /// Notes shown to the model.
+    pub notes_shown: usize,
+    /// Notes held.
+    pub notes_held: usize,
+    /// Characters in the prompt.
+    pub prompt_chars: usize,
 }
 
 impl Proposal {
@@ -196,10 +220,22 @@ pub async fn propose(memory: &MemoryService, llm: Arc<dyn LlmProvider>, config: 
         pins: Vec::new(),
         dropped: Vec::new(),
         covered,
+        read: Read { entries: entries.len(), notes_shown: notes.len(), notes_held: notes.len(), prompt_chars: 0 },
     };
     if entries.is_empty() {
         return Ok(proposal); // nothing new was said: nothing to review
     }
+
+    // With more notes than fit, show the ones this part of the transcript
+    // is about. What the user said is what can correct a note, so the
+    // user's entries choose them.
+    let said: String = entries.iter().filter(|t| t.role == "user").map(|t| t.text.as_str()).collect::<Vec<_>>().join("\n");
+    let (notes, pages) = if notes.len() > config.max_notes || pages.len() > config.max_pages {
+        memory.nearest(&said, config.max_notes, config.max_pages)?
+    } else {
+        (notes, pages)
+    };
+    proposal.read.notes_shown = notes.len();
 
     let mut prompt = String::from(PROMPT);
     prompt.push_str("\nNOTES\n");
@@ -222,6 +258,7 @@ pub async fn propose(memory: &MemoryService, llm: Arc<dyn LlmProvider>, config: 
         prompt.push_str(&format!("[{}#{} {} {}] {}\n", turn.session, turn.number, turn.role, turn.at.format("%Y-%m-%d"), fence(&text)));
     }
 
+    proposal.read.prompt_chars = prompt.chars().count();
     let mut request = LlmRequest::new(llm.model()).with_message(Message::user(prompt)).with_max_tokens(config.max_tokens).with_temperature(0.0);
     for (key, value) in &config.request_extra {
         request = request.with_extra(key.clone(), value.clone());

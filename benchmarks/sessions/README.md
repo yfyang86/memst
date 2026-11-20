@@ -731,6 +731,58 @@ The second part is easy, as expected: thirty of thirty both ways, with the
 owners stated plainly in the telling. It shows that the mechanism is used
 correctly, not that it is needed there; the baseline was not run on it.
 
+## Round 9 (sprint 20): the offline pass at size, and what it adds
+
+Two things left undone since sprint 10. Written before the first run.
+
+**The offline pass over a large memory.** Until sprint 20 a pass was shown
+every note. With 5,000 notes that is some 150,000 tokens before it has
+read a word of transcript. A pass is now shown the notes nearest in
+wording to the part of the transcript it is reading (80 at most).
+
+```bash
+python -m benchmarks.sessions.pass_at_size --memst target/release/memst
+```
+
+Round 2's ten `stale` scenarios (a wrong note, and a transcript in which
+the user says otherwise), then 5,000 other notes and 500 other sessions.
+One pass. No agent.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| P1 | The pass still finds and corrects the wrong note | corrected in at least 8 of 10 |
+| P2 | Its prompt stays bounded | about 30,000 tokens at most in every run |
+
+Reported: how many notes it was shown, the time, and what else it changed
+(the filler's sessions contain remarks it may take for facts).
+
+**Notes and pages beside transcripts.** Round 7 put LongMemEval-S questions
+to an agent that could search transcripts only. Here the offline pass
+first reads each question's whole history and writes notes and pages from
+it; the agent then has all three to search.
+
+```bash
+python -m benchmarks.sessions.lme --per-type 15 --out <a> ...               # transcripts only
+python -m benchmarks.sessions.lme --per-type 15 --with-pass --compare <a>/answers.jsonl --out <b> ...
+```
+
+Thirty questions (the first fifteen of each type in round 7's sample), both
+conditions run afresh.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| P3 | Notes and pages from the pass do not hurt, at least | judged accuracy with the pass is not below transcripts only, on the same thirty questions |
+
+Reported: the paired difference with its interval, by question type, and
+what the pass cost (passes, time, notes and pages written).
+
+Expected beforehand. P1 and P2 should pass. For P3 we do not know: pages
+gather what was said on a topic across sessions, which is what
+`multi-session` questions need; but the pass reads 30,000 tokens at a time
+and writes what it judges worth keeping, and a detail the question turns
+on may not be among it, while its notes may crowd the search results.
+Thirty questions will show only a large effect either way.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

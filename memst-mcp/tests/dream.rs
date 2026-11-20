@@ -331,3 +331,46 @@ fn a_reply_that_is_not_json_changes_nothing_and_a_read_only_memory_is_not_touche
     assert_eq!(apply(&reader, &proposal), Err(Refusal::ReadOnly));
     assert_eq!(reader.save_pending(&proposal), Err(Refusal::ReadOnly));
 }
+
+/// With more notes than a prompt should hold, a pass is shown the ones the
+/// transcript it is reading is about, and can change only those.
+#[test]
+fn with_many_notes_a_pass_is_shown_the_ones_the_transcript_is_about() {
+    let dir = tempfile::tempdir().unwrap();
+    // The write limit is per minute; the notes are placed as files, as an import would.
+    let memory = MemoryService::open(dir.path(), Scope::new("alice", false).unwrap(), WritePolicy { max_writes_per_minute: 10_000, ..WritePolicy::default() }).unwrap();
+    let wrong = memory.write("The team deploys on Thursdays.", "semantic", &[]).unwrap().id;
+    let far = memory.write("The office plants are watered on the first Friday.", "semantic", &[]).unwrap().id;
+    for i in 0..150 {
+        memory.write(&format!("Ticket ENG-{i} tracks a flaky test in the search service."), "semantic", &[]).unwrap();
+    }
+    memory.record("s1", "user", "Our team deploys have moved: we deploy on Mondays now.").unwrap();
+
+    let reply = json!({
+        "corrections": [
+            {"note": wrong, "text": "The team deploys on Mondays.", "source": "s1#1", "quote": "we deploy on Mondays now"},
+            // A note it was not shown: it cannot be changed, whatever the model says.
+            {"note": far, "text": "The office plants are watered on Mondays.", "source": "s1#1", "quote": "we deploy on Mondays now"}
+        ],
+        "notes": [], "pages": [], "pins": []
+    });
+    let model = Scripted::new(reply);
+    let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+    let config = DreamConfig { max_notes: 10, ..DreamConfig::default() };
+    let proposal = runtime.block_on(propose(&memory, model.clone(), &config)).unwrap();
+
+    let prompt = model.prompt();
+    assert!(prompt.contains(&format!("[note:{wrong} ")), "the note the transcript contradicts was not shown");
+    assert!(!prompt.contains(&format!("[note:{far} ")));
+    // Only notes that share words with what the user said are shown, up to the limit.
+    assert!(prompt.matches("[note:").count() <= 10);
+    assert_eq!((proposal.read.notes_shown, proposal.read.notes_held, proposal.read.entries), (1, 152, 1));
+    assert!(proposal.read.prompt_chars < 12_000);
+
+    assert_eq!(proposal.corrections.len(), 1);
+    assert_eq!(proposal.corrections[0].note, wrong);
+    assert_eq!(proposal.dropped.len(), 1);
+    apply(&memory, &proposal).unwrap();
+    assert_eq!(memory.get(wrong).unwrap().body, "The team deploys on Mondays.");
+    assert_eq!(memory.get(far).unwrap().body, "The office plants are watered on the first Friday.");
+}

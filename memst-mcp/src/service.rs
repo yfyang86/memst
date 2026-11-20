@@ -530,6 +530,27 @@ impl MemoryService {
         Ok(build_index(&self.scope.owner, &self.all()?, &self.pages()?, &self.said()?, self.policy.index_max_lines, self.policy.index_max_bytes))
     }
 
+    /// The served notes and the pages nearest in wording to `text`, best
+    /// first: what a long text is about, among everything memory holds.
+    pub fn nearest(&self, text: &str, notes: usize, pages: usize) -> Result<(Vec<Note>, Vec<StoredPage>), Refusal> {
+        // A long text makes a long query; its commonest 300 content words
+        // say what it is about.
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for term in terms(text) {
+            if term.chars().count() >= 3 && !COMMON.contains(&term.as_str()) {
+                *counts.entry(term).or_default() += 1;
+            }
+        }
+        let mut words: Vec<(String, usize)> = counts.into_iter().collect();
+        words.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let query: String = words.into_iter().take(300).map(|(word, _)| word).collect::<Vec<_>>().join(" ");
+        let note_candidates = self.readable()?.into_iter().map(|note| { let text = format!("{} {}", note.body, note.tags.join(" ")); (Found::Note(note), text) }).collect();
+        let page_candidates = self.pages()?.into_iter().map(|page| { let text = format!("{} {}", page.title, page.body); (Found::Page(page), text) }).collect();
+        let nearest_notes = rank(&query, note_candidates).into_iter().filter_map(|hit| match hit.found { Found::Note(note) => Some(note), _ => None }).take(notes).collect();
+        let nearest_pages = rank(&query, page_candidates).into_iter().filter_map(|hit| match hit.found { Found::Page(page) => Some(page), _ => None }).take(pages).collect();
+        Ok((nearest_notes, nearest_pages))
+    }
+
     /// What the user has said, for marking notes they have since spoken
     /// about. See [`Said`].
     pub fn said(&self) -> Result<Said, Refusal> {

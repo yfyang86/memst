@@ -19,7 +19,9 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -57,6 +59,21 @@ def ask(args, conversation, judge_client) -> dict:
     store = work / "store"
     try:
         sessions = write_history(store, "tester", conversation.turns)
+        passes, pass_seconds, built = 0, 0.0, {}
+        if args.with_pass:
+            # The offline pass reads the whole history, a part at a time,
+            # and writes notes and pages from it.
+            env = dict(os.environ, MEMST_LLM_API_URL=args.api_url, MEMST_LLM_MODEL=args.model, MEMST_LLM_API_KEY=os.environ.get("MEMST_LLM_API_KEY", "proxy-injected"))
+            started = time.time()
+            command = [args.memst, "--store", str(store), "mcp", "--owner", "tester", "dream", "--apply", "--max-chars", str(args.pass_chars)] + (["--llm-extra", args.extra] if args.extra else [])
+            while passes < args.passes_max:
+                done = subprocess.run(command, env=env, capture_output=True, text=True, timeout=900)
+                if "Read " not in done.stdout:
+                    break  # nothing left to read (or the pass failed; either way, stop)
+                passes += 1
+            pass_seconds = round(time.time() - started, 1)
+            root = store / "memory" / "tester"
+            built = {"notes": len(list((root / "notes").glob("*.md"))), "pages": len(list((root / "pages").glob("*.md")))}
         today = f"Today's date: {question.date}\n" if question.date else ""
         prompt = f"{today}{question.text}\n\nAnswer briefly, from what I have told you in our earlier conversations. If you cannot find it, say that you do not know."
         try:
@@ -78,7 +95,7 @@ def ask(args, conversation, judge_client) -> dict:
         row = {
             "question_id": question.id, "category": question.category, "question": question.text, "gold": gold, "prediction": prediction,
             "f1": f1, "judged_correct": correct, "abstained": abstained,
-            "sessions": sessions, "turns": len(conversation.turns), **{k: v for k, v in reply.items() if k != "answer"},
+            "sessions": sessions, "turns": len(conversation.turns), "passes": passes, "pass_seconds": pass_seconds, **({"built": built} if built else {}), **{k: v for k, v in reply.items() if k != "answer"},
         }
         print(f"  {question.id} {question.category:16} {'ok  ' if row['judged_correct'] else 'FAIL'} {prediction[:70]!r}", flush=True)
         return row
@@ -161,6 +178,10 @@ def main():
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--with-pass", action="store_true", help="run the offline pass over the whole history before asking, so that memory holds notes and pages as well as transcripts")
+    parser.add_argument("--pass-chars", type=int, default=120_000, help="transcript text read by one pass")
+    parser.add_argument("--passes-max", type=int, default=12)
+    parser.add_argument("--compare", help="answers.jsonl of another run of this script, to set beside this one on the same questions")
     parser.add_argument("--reference", default="benchmarks/results/full-longmemeval-raw/answers.jsonl")
     parser.add_argument("--work")
     parser.add_argument("--keep", action="store_true")
@@ -178,9 +199,28 @@ def main():
     (out / "answers.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     settings = {"questions": len(rows), "per_type": args.per_type, "types": types, "model": args.model, "judge": args.judge_model}
     summary = summarise(rows, Path(args.reference))
+    if args.compare and Path(args.compare).exists():
+        other = {r["question_id"]: r for r in map(json.loads, Path(args.compare).read_text().splitlines())}
+        shared = [r for r in rows if r["question_id"] in other]
+        mean, low, high = interval([100 * (r["judged_correct"] - other[r["question_id"]]["judged_correct"]) for r in shared])
+        summary["against_compared_run"] = {
+            "n": len(shared), "this": round(100 * sum(r["judged_correct"] for r in shared) / len(shared), 1),
+            "other": round(100 * sum(other[r["question_id"]]["judged_correct"] for r in shared) / len(shared), 1),
+            "difference": round(mean, 1), "low": round(low, 1), "high": round(high, 1),
+            "other_prompt_tokens": round(sum(other[r["question_id"]].get("prompt_tokens", 0) for r in shared) / len(shared)),
+        }
+    if args.with_pass:
+        summary["pass"] = {"passes_mean": round(sum(r["passes"] for r in rows) / len(rows), 1), "seconds_mean": round(sum(r["pass_seconds"] for r in rows) / len(rows), 1), "notes_mean": round(sum(r.get("built", {}).get("notes", 0) for r in rows) / len(rows), 1), "pages_mean": round(sum(r.get("built", {}).get("pages", 0) for r in rows) / len(rows), 1)}
     (out / "summary.json").write_text(json.dumps({"settings": settings, **summary}, indent=2))
-    (out / "REPORT.md").write_text(render(summary, settings))
-    print(render(summary, settings))
+    report = render(summary, settings)
+    if "pass" in summary:
+        p = summary["pass"]
+        report += f"\nBefore the question, the offline pass read the history in {p['passes_mean']} passes on average ({p['seconds_mean']} s) and left {p['notes_mean']} notes and {p['pages_mean']} pages.\n"
+    if "against_compared_run" in summary:
+        c = summary["against_compared_run"]
+        report += f"\nAgainst the compared run on the same {c['n']} questions: {c['this']}% here, {c['other']}% there; {c['difference']:+} points ({c['low']:+} to {c['high']:+}).\n"
+    (out / "REPORT.md").write_text(report)
+    print(report)
 
 
 if __name__ == "__main__":
