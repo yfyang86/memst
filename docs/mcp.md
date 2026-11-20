@@ -281,7 +281,9 @@ The match is by shared words (at least a third of the shorter text's
 content words, and two unless that text has three or fewer). It does not
 judge whether the two disagree, misses a statement in wholly different
 words, and skips questions. At most the latest 5,000 statements are
-considered.
+considered, and the two that share the most with the note are shown, a rare
+word counting for more than a frequent one; a statement that shares only
+frequent words (in more than one statement in twenty) is not shown.
 
 ## Deleting
 
@@ -308,10 +310,11 @@ in [deletion-design.md](deletion-design.md).
 
 ## Limits
 
-- The server reads every note for each operation, so a write takes longer as
-  notes accumulate (tens of milliseconds at a few hundred notes). The limit
-  of 10,000 notes per owner reflects that; an index over the notes is future
-  work.
+- The server reads every note once for each operation, so operations take
+  longer as notes accumulate: at 5,000 notes a search takes about 50 ms and
+  a write about 130 ms, at 9,000 about 90 ms and 230 ms (release build).
+  The limit of 10,000 notes per owner reflects that; an index over the
+  notes is future work.
 - Search is keyword matching. A word finds its own common English endings
   ("seat" finds "seats", "deploy" finds "deployed"); it does not find
   synonyms, and other languages get exact matching only.

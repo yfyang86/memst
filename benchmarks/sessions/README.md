@@ -212,6 +212,81 @@ search stays the only one.
 know. An answer that gives a filler value (someone else's city) while
 saying so would pass; the answers are in `answers.jsonl` to be read.
 
+### Round 3 results
+
+First run (`benchmarks/results/sessions-round3`), 80 scenario runs, none
+failed: **four of five criteria passed.**
+
+| Scenario | 500 notes | 5,000 notes |
+|---|---|---|
+| recall | 10/10 | 9/10 |
+| update | 10/10 | 10/10 |
+| stale | 8/10 | 6/10 |
+| abstain | 10/10 | 10/10 |
+
+S1, S2, S4 and S5 passed. **S3 failed** (stale, 6/10 at 5,000 notes). Two
+causes were found, one in the harness and one in the system:
+
+1. *Harness.* The wrong note and the user's later statements were seeded in
+   one batch. Round 3 uses the release build, which is fast enough for both
+   to be stamped with the same millisecond, and a statement is shown beside
+   a note only if it is later. The note is now seeded first. With that
+   alone, `stale` was 9/10 at both sizes
+   (`sessions-round3-stale-after-harness-fix`), which meets the criterion.
+2. *System.* The remaining failure was the same scenario at both sizes. A
+   note is shown with the two most recent later statements on its subject,
+   and with thousands of statements the two most recent that shared the
+   word "team" took the place of the one that corrected the note. Matches
+   are now ranked by what they share, a rare word counting for more than a
+   frequent one, and a match on frequent words alone does not count.
+
+All 80 scenarios were then run again (`sessions-round3-after-fix`):
+
+| Scenario | 500 notes | 5,000 notes |
+|---|---|---|
+| recall | 10/10 | 10/10 |
+| update | 10/10 | 9/10 |
+| stale | 9/10 | 10/10 |
+| abstain | 10/10 | 9/10 |
+
+All five criteria pass on that run. As before, the first run is the
+outcome; the second was made on the scenarios the fixes were written
+against. A repeat of the `stale` scenarios with no change at all gave 9/10
+where the first run gave 6/10, so a cell here moves by a few runs in ten
+from one run to the next.
+
+What the answers show beyond the counts:
+
+- **The failures gather on one fact.** Apart from the first run's `stale`
+  failures, there are four wrong answers in the two runs (one in the first,
+  three in the second), and all four are about the release-branch prefix,
+  where the filler holds many notes of the same
+  shape for other teams ("The billing team names its release branches with
+  the prefix release/"). The agent either reports that its notes conflict
+  or gives another team's value. One of those is an `abstain` run in which
+  it answered with another team's prefix for a fact it was never told: the
+  near miss was taken for the answer.
+- **Keyword search found the note.** No failure was traced to the needed
+  note not being retrieved, so by the rule set beforehand embedding search
+  is not added.
+- **Cost.** A final session used about 14,500 prompt tokens at 500 notes
+  and 19,300 at 5,000 (20,700 and 25,000 in the first run), against about
+  7,800 with a nearly empty memory. It does not grow in proportion to the
+  memory, since the index is capped, but a full index and longer search
+  results roughly double to triple the cost of a session.
+
+Latency of the memory operations themselves, release build, one machine
+(`filler.py` generates the memory):
+
+| Notes | Index | Search notes | Search all | Write |
+|---|---|---|---|---|
+| 500 | 10 ms | 8 ms | 12 ms | 20 ms |
+| 2,000 | 25 ms | 18 ms | 32 ms | 47 ms |
+| 5,000 | 67 ms | 50 ms | 86 ms | 129 ms |
+| 9,000 | 133 ms | 91 ms | 154 ms | 234 ms |
+
+Before this sprint the index took 2.5 s and a write 757 ms at 5,000 notes.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
@@ -219,6 +294,9 @@ written against, so they cannot show that the fixes hold in general. The
 matching that marks a note and that finds related entries is by shared
 words: a later statement in wholly different words is not shown, and one
 that merely agrees is.
+
+The filler in round 3 is generated from templates: it is repetitive, and
+real notes are not. It stresses near misses of one shape and nothing else.
 
 The scenarios are short and written by the people who built the system; the
 facts are told plainly, one or two sessions before they are needed, and the
