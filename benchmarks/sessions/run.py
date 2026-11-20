@@ -19,6 +19,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from .filler import fill
 from .scenarios import build, build_round2
 
 REPO = Path(__file__).resolve().parents[2]
@@ -108,6 +109,11 @@ class Runner:
                 extra = {"MEMST_LLM_API_URL": self.args.dream_api_url, "MEMST_LLM_MODEL": self.args.dream_model, "MEMST_LLM_API_KEY": os.environ.get("MEMST_LLM_API_KEY", "proxy-injected")}
                 words = ["dream", "--apply"] + (["--llm-extra", self.args.dream_extra] if self.args.dream_extra else [])
                 row["dream"] = self.memst_cli(store, *words, env_extra=extra).strip().splitlines()[-3:]
+            if "@" in condition:
+                # Round 3: everything else the memory holds, added after the
+                # scenario's own sessions, so that it is all newer.
+                size = int(condition.split("@")[1])
+                fill(store, "tester", size, size // 10, seed=scenario.instance)
             final = self.pi(scenario.final, work, store, memory)
             if final.get("error"):
                 row["errors"].append(final["error"])
@@ -222,6 +228,50 @@ def summarise2(rows):
     }
 
 
+def summarise3(rows):
+    """Round 3: memory at size. Criteria S1 to S5 of the README."""
+    cells = defaultdict(list)
+    for row in rows:
+        cells[(row["kind"], row["condition"])].append(row)
+    sizes = sorted({row["condition"] for row in rows}, key=lambda c: int(c.split("@")[1]))
+    right = lambda kind, size: sum(r["correct"] for r in cells[(kind, size)])
+    tokens = lambda size: round(sum(r["prompt_tokens"] for kind in ("recall", "update", "stale", "abstain") for r in cells[(kind, size)]) / max(1, sum(len(cells[(kind, size)]) for kind in ("recall", "update", "stale", "abstain"))))
+    c = {}
+    for name, kind in (("S1", "recall"), ("S2", "update"), ("S3", "stale"), ("S4", "abstain")):
+        c[name] = (all(right(kind, size) >= 8 for size in sizes), f"{kind}: " + "; ".join(f"{right(kind, size)}/10 at {size.split('@')[1]} notes" for size in sizes))
+    c["S5"] = (tokens(sizes[-1]) <= 2 * tokens(sizes[0]), "prompt tokens of the final session: " + "; ".join(f"{tokens(size):,} at {size.split('@')[1]} notes" for size in sizes))
+    cost = {}
+    for size in sizes:
+        finals = [r for (kind, cond), group in cells.items() if cond == size for r in group]
+        cost[size] = {"prompt_tokens_mean": tokens(size), "model_calls_mean": round(sum(r["model_calls"] for r in finals) / len(finals), 2), "tool_calls_mean": round(sum(len(r["tools"]) for r in finals) / len(finals), 2), "seconds_mean": round(sum(r["seconds"] for r in finals) / len(finals), 1)}
+    return {
+        "table": {kind: {size: [right(kind, size), len(cells[(kind, size)])] for size in sizes} for kind in ("recall", "update", "stale", "abstain")},
+        "criteria": {name: {"passed": passed, "detail": detail} for name, (passed, detail) in c.items()},
+        "cost_of_final_session": cost,
+        "errors": sum(1 for r in rows if r["errors"]),
+    }
+
+
+def render3(summary, settings) -> str:
+    sizes = list(next(iter(summary["table"].values())))
+    lines = [
+        "# Memory in use, round 3 (memory at size): results",
+        "",
+        f"Agent: Pi {settings['pi_version']} with `{settings['model']}`, with memory, no offline pass. {settings['runs']} scenario runs; {summary['errors']} had a session that failed.",
+        "",
+        "Correct final answers, by how many other notes the memory holds:",
+        "",
+        "| Scenario | " + " | ".join(size.split("@")[1] + " notes" for size in sizes) + " |",
+        "|---|" + "---|" * len(sizes),
+    ]
+    lines += [f"| {kind} | " + " | ".join(f"{row[size][0]}/{row[size][1]}" for size in sizes) + " |" for kind, row in summary["table"].items()]
+    lines += ["", "| # | Result | Detail |", "|---|---|---|"]
+    lines += [f"| {name} | {'**pass**' if v['passed'] else '**fail**'} | {v['detail']} |" for name, v in summary["criteria"].items()]
+    lines += ["", "Final session, on average:", "", "| Notes | Prompt tokens | Model calls | Tool calls | Seconds |", "|---|---|---|---|---|"]
+    lines += [f"| {size.split('@')[1]} | {cost['prompt_tokens_mean']:,} | {cost['model_calls_mean']} | {cost['tool_calls_mean']} | {cost['seconds_mean']} |" for size, cost in summary["cost_of_final_session"].items()]
+    return "\n".join(lines) + "\n"
+
+
 def render2(summary, settings) -> str:
     lines = [
         "# Memory in use, round 2: results",
@@ -275,7 +325,8 @@ def main():
     parser.add_argument("--dream-api-url", default=os.environ.get("MEMST_LLM_API_URL", "https://api.deepseek.com"))
     parser.add_argument("--dream-model", default=os.environ.get("MEMST_LLM_MODEL", "deepseek-flash"))
     parser.add_argument("--dream-extra", default='{"thinking":{"type":"disabled"}}', help="extra request fields for the offline pass, as JSON ('' for none)")
-    parser.add_argument("--round", type=int, default=1, choices=[1, 2], help="1: the first evaluation; 2: sprint 12's (memory only)")
+    parser.add_argument("--round", type=int, default=1, choices=[1, 2, 3], help="1: the first evaluation; 2: sprint 12's (memory only); 3: sprint 13's (memory at size)")
+    parser.add_argument("--sizes", default="500,5000", help="round 3: how many other notes the memory holds")
     parser.add_argument("--kinds", help="comma-separated scenario kinds (default: all)")
     parser.add_argument("--conditions", default=",".join(CONDITIONS))
     parser.add_argument("--instances", type=int, default=10, help="instances of each kind (at most 10)")
@@ -290,7 +341,12 @@ def main():
         args.conditions = "memory"
         if args.out == "benchmarks/results/sessions":
             args.out = "benchmarks/results/sessions-round2"
-    scenarios = [s for s in (build_round2() if args.round == 2 else build()) if s.instance < args.instances and (not args.kinds or s.kind in args.kinds.split(","))]
+    if args.round == 3:
+        args.conditions = ",".join(f"memory@{size}" for size in args.sizes.split(","))
+        args.kinds = args.kinds or "recall,update,stale,abstain"
+        if args.out == "benchmarks/results/sessions":
+            args.out = "benchmarks/results/sessions-round3"
+    scenarios = [s for s in (build_round2() if args.round >= 2 else build()) if s.instance < args.instances and (not args.kinds or s.kind in args.kinds.split(","))]
     conditions = args.conditions.split(",")
     runner = Runner(args)
     jobs = [(scenario, condition) for scenario in scenarios for condition in conditions]
@@ -310,8 +366,8 @@ def main():
     shown = subprocess.run([args.pi, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True)
     version = (shown.stdout + shown.stderr).strip().splitlines()[-1] if (shown.stdout + shown.stderr).strip() else "unknown"
     settings = {"pi_version": version, "model": args.model, "dream_model": args.dream_model, "runs": len(rows)}
-    summary = summarise2(rows) if args.round == 2 else summarise(rows)
-    report = render2(summary, settings) if args.round == 2 else render(summary, settings)
+    summary = {1: summarise, 2: summarise2, 3: summarise3}[args.round](rows)
+    report = {1: render, 2: render2, 3: render3}[args.round](summary, settings)
     (out / "summary.json").write_text(json.dumps({"settings": settings, **summary}, indent=2))
     (out / "REPORT.md").write_text(report)
     print(report)

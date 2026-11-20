@@ -148,10 +148,16 @@ impl VersionedDir {
 
     /// How the working files differ from the latest revision.
     pub fn status(&self) -> Result<Vec<Change>> {
+        self.status_of(&self.working()?)
+    }
+
+    /// How files already read with [`working`](Self::working) differ from
+    /// the latest revision. Saves reading every file a second time.
+    pub fn status_of(&self, files: &BTreeMap<String, String>) -> Result<Vec<Change>> {
         let committed = self.tree_of(self.head()?)?;
         let mut working = BTreeMap::new();
-        for (path, content) in self.working()? {
-            working.insert(path, Self::blob_id(&content)?);
+        for (path, content) in files {
+            working.insert(path.clone(), Self::blob_id(content)?);
         }
         Ok(diff(&committed, &working))
     }
@@ -166,7 +172,10 @@ impl VersionedDir {
         let mut tree = Tree::new();
         let mut working = BTreeMap::new();
         for (path, content) in self.working()? {
-            let id = objects.write_blob(&Blob::new(content.as_bytes()))?;
+            // A file that has not changed is already stored: do not ask the
+            // file system about each one.
+            let known = Self::blob_id(&content)?;
+            let id = if committed.get(&path) == Some(&known) { known } else { objects.write_blob(&Blob::new(content.as_bytes()))? };
             tree.add_entry(TreeEntry::new(TreeEntry::MODE_FILE, id, &path));
             working.insert(path, id);
         }

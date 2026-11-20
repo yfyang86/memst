@@ -176,6 +176,42 @@ The final session cost about 7,800 prompt tokens and 5.0 s after the
 changes (7,000 and 4.6 s before them): the `stale` runs now read the note,
 search, and correct it.
 
+## Round 3 (sprint 13): memory at size
+
+Rounds 1 and 2 ran against a memory that held one to three notes. Round 3
+asks whether the same things work when the memory holds hundreds or
+thousands of other notes. Criteria written before the first run.
+
+```bash
+python -m benchmarks.sessions.run --round 3 --pi pi --memst target/release/memst --model <provider/model>
+```
+
+Round 2's `recall`, `update`, `stale` and `abstain` scenarios, ten each,
+with memory and no offline pass, at two sizes: 500 and 5,000 other notes
+(and a tenth as many other sessions of eight entries). The filler
+(`filler.py`) is added after the scenario's own sessions and before the
+final one, so every filler note is newer than the note the question needs:
+that note is not in the index, which lists the 200 most recent, and has to
+be found by searching. A fifth of the filler is near the tested facts in
+wording and about something else ("The billing team's deploys go out on
+Fridays", "Gwen Aldous works from Porto"); none contains a tested value.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| S1 | Recall holds at size | `recall`: at least 8 of 10 at 500 and at 5,000 |
+| S2 | Updates hold at size | `update`: at least 8 of 10 at both sizes |
+| S3 | A stale note still does not win | `stale`: at least 8 of 10 at both sizes |
+| S4 | It still says when it was never told | `abstain`: at least 8 of 10 at both sizes |
+| S5 | The cost of a session does not grow with the memory | mean prompt tokens of the final session at 5,000 notes are at most twice those at 500 |
+
+Decided beforehand: embedding search over notes is added only if S1, S2 or
+S3 fails because the needed note was not retrieved. If they pass, keyword
+search stays the only one.
+
+`abstain` is checked as before, by whether the answer says it does not
+know. An answer that gives a filler value (someone else's city) while
+saying so would pass; the answers are in `answers.jsonl` to be read.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

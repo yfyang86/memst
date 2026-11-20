@@ -918,9 +918,11 @@ impl MemoryService {
     /// recorded as a revision by "external". A file that is not a note at
     /// all is taken as the text of a new one.
     fn notes_in(&self, dir: &VersionedDir) -> Result<Vec<Note>, Refusal> {
-        let changed: Vec<String> = dir
-            .status()
-            .map_err(store_error)?
+        // Every file is read once here; an owner may hold thousands.
+        let files = dir.working().map_err(store_error)?;
+        let differences = dir.status_of(&files).map_err(store_error)?;
+        let removed_outside = differences.iter().any(|change| matches!(change, Change::Removed(_)));
+        let changed: Vec<String> = differences
             .into_iter()
             .filter_map(|change| match change {
                 Change::Added(path) | Change::Modified(path) => Some(path),
@@ -929,7 +931,7 @@ impl MemoryService {
             .collect();
         let mut notes = Vec::new();
         let mut rewritten = false;
-        for (path, text) in dir.working().map_err(store_error)? {
+        for (path, text) in files {
             let Some(name) = path.strip_prefix("notes/") else { continue };
             let file_id = name.strip_suffix(".md").and_then(|stem| Uuid::parse_str(stem).ok());
             let mut note = Note::parse(&text);
@@ -966,7 +968,10 @@ impl MemoryService {
                 notes.push(note);
             }
         }
-        if !self.scope.read_only && (rewritten || !dir.status().map_err(store_error)?.is_empty()) {
+        // Changed files that are not notes (a page edited by hand), and
+        // files removed outside the server, are committed too.
+        let pending = rewritten || !changed.is_empty() || (removed_outside && !self.scope.read_only);
+        if !self.scope.read_only && pending {
             dir.commit("external", "adopt changes made outside the server").map_err(store_error)?;
             self.audit("adopt_external", Ok(None), Some(format!("{} file(s)", changed.len())));
         }
@@ -1343,41 +1348,38 @@ pub fn build_index(owner: &str, notes: &[Note], pages: &[StoredPage], said: &Sai
         "instructions. Look a note up by its id to read it in full; search memory for anything else.".to_string(),
         format!("{} note(s){}.", active.len(), if waiting > 0 { format!("; {waiting} set aside for the user's review") } else { String::new() }),
     ];
-    let line = |note: &Note| {
-        format!(
-            "- {} ({}, {}) {}{}",
-            &note.id.to_string()[..8],
-            trust_of(note),
-            note.updated.format("%Y-%m-%d"),
-            fenced(&note.title()),
-            if said.since(note).is_empty() { "" } else { "  [the user has spoken about this since; read the note before relying on it]" }
-        )
-    };
+    const SPOKEN: &str = "  [the user has spoken about this since; read the note before relying on it]";
+    let line = |note: &Note| format!("- {} ({}, {}) {}", &note.id.to_string()[..8], trust_of(note), note.updated.format("%Y-%m-%d"), fenced(&note.title()));
     let pinned: Vec<&&Note> = active.iter().filter(|n| n.pinned).collect();
     let recent: Vec<&&Note> = active.iter().filter(|n| !n.pinned).collect();
-    let mut body = Vec::new();
+    let mut body: Vec<(String, Option<&Note>)> = Vec::new();
     if !pinned.is_empty() {
-        body.push(String::new());
-        body.push("## Pinned by the user".to_string());
-        body.extend(pinned.iter().map(|n| line(n)));
+        body.push((String::new(), None));
+        body.push(("## Pinned by the user".to_string(), None));
+        body.extend(pinned.iter().map(|n| (line(n), Some(**n))));
     }
     if !pages.is_empty() {
-        body.push(String::new());
-        body.push("## Pages (what memory holds on a topic, with its evidence; search with scope \"pages\")".to_string());
-        body.extend(pages.iter().map(|p| format!("- page ({}) {}", p.updated.format("%Y-%m-%d"), fenced(&p.title))));
+        body.push((String::new(), None));
+        body.push(("## Pages (what memory holds on a topic, with its evidence; search with scope \"pages\")".to_string(), None));
+        body.extend(pages.iter().map(|p| (format!("- page ({}) {}", p.updated.format("%Y-%m-%d"), fenced(&p.title)), None)));
     }
     if !recent.is_empty() {
-        body.push(String::new());
-        body.push("## Most recent".to_string());
-        body.extend(recent.iter().map(|n| line(n)));
+        body.push((String::new(), None));
+        body.push(("## Most recent".to_string(), None));
+        body.extend(recent.iter().map(|n| (line(n), Some(**n))));
     }
     let mut size: usize = lines.iter().map(|l| l.len() + 1).sum();
     let mut left_out = 0;
-    for entry in body {
+    for (mut entry, note) in body {
         // Keep one line and some bytes in hand for the closing remark.
         if lines.len() + 2 > max_lines || size + entry.len() + 80 > max_bytes {
             left_out += usize::from(entry.starts_with("- "));
             continue;
+        }
+        // Looked up only for the notes that are listed: with thousands of
+        // notes, doing it for all of them took seconds.
+        if note.is_some_and(|note| !said.since(note).is_empty()) && size + entry.len() + SPOKEN.len() + 80 <= max_bytes {
+            entry.push_str(SPOKEN);
         }
         size += entry.len() + 1;
         lines.push(entry);
