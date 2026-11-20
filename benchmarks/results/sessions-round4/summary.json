@@ -1,0 +1,62 @@
+{
+  "settings": {
+    "pi_version": "0.73.1",
+    "model": "deepseek-proxy/deepseek-flash",
+    "dream_model": "deepseek-flash",
+    "runs": 60
+  },
+  "table": {
+    "asof-said": {
+      "notes": [
+        8,
+        10
+      ],
+      "notes+transcripts": [
+        10,
+        10
+      ],
+      "notes+asof": [
+        10,
+        10
+      ]
+    },
+    "asof-edit": {
+      "notes": [
+        0,
+        10
+      ],
+      "notes+transcripts": [
+        9,
+        10
+      ],
+      "notes+asof": [
+        10,
+        10
+      ]
+    }
+  },
+  "criteria": {
+    "V1": {
+      "passed": true,
+      "detail": "asof-said: 10/10 with the as-of read; asof-edit: 10/10 with the as-of read"
+    }
+  },
+  "cost_of_final_session": {
+    "notes": {
+      "prompt_tokens_mean": 9486,
+      "tool_calls_mean": 5.2,
+      "seconds_mean": 11.7
+    },
+    "notes+transcripts": {
+      "prompt_tokens_mean": 13363,
+      "tool_calls_mean": 6.7,
+      "seconds_mean": 18.6
+    },
+    "notes+asof": {
+      "prompt_tokens_mean": 3342,
+      "tool_calls_mean": 1.05,
+      "seconds_mean": 3.3
+    }
+  },
+  "errors": 0
+}

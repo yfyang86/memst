@@ -14,6 +14,8 @@
   not only from results.
 - The store is locked per operation: a long-running process no longer
   blocks others.
+- `memory_as_of` reads the notes as they stood at an earlier time.
+- `memst mcp merge` joins two copies of an owner's memory.
 
 ---
 

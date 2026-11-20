@@ -331,6 +331,52 @@ and its worth has to be argued from what it does that a transcript cannot:
 undoing a change, showing who changed what, and merging two copies (tested
 in `memst-mcp/tests/merge.rs`, without a model).
 
+### Round 4 results
+
+One run (`benchmarks/results/sessions-round4`), 60 scenario runs, no step
+failed. Nothing was changed afterwards.
+
+| Scenario | `notes` | `notes+transcripts` | `notes+asof` |
+|---|---|---|---|
+| `asof-said` | 8/10 | 10/10 | 10/10 |
+| `asof-edit` | 0/10 | 9/10 | 10/10 |
+
+| The final session could read | Prompt tokens | Tool calls | Seconds |
+|---|---|---|---|
+| `notes` | 9,486 | 5.2 | 11.7 |
+| `notes+transcripts` | 13,363 | 6.7 | 18.6 |
+| `notes+asof` | 3,342 | 1.05 | 3.3 |
+
+**V1 passes**: 10/10 in both kinds with the as-of read.
+
+The expectation was right about accuracy and missed the cost. Transcripts
+answered as well as the as-of read (19 of 20 against 20 of 20; one run in
+ten moves between runs here, so that is no difference). They did so by
+searching: six or seven tool calls and four times the prompt tokens, in
+five to six times the time. The as-of read answered in one call.
+
+So, for recalling what memory held earlier, while transcripts are kept:
+versioning does not make the answer more often right. It makes it cheap,
+and it answers the question that was asked (what the notes said) where the
+transcripts answer a neighbouring one (what the user had said by then).
+The two agree here because every note was a summary of something said. They
+would part for a note the offline pass wrote or a person edited twice.
+
+Two more things in the answers:
+
+- With the notes alone, after a hand edit, the agent was wrong ten times in
+  ten, and most of those answers are stated flatly ("At that time, my notes
+  recorded that your cat was called Marzipan"). A note carries a date and
+  no time, and nothing in it says it was changed. Without history or
+  transcripts, the present was reported as the past.
+- With the notes alone in `asof-said`, 8 of 10 were right, as expected: the
+  agent's own updates say what they replaced ("Mondays, moved from
+  Thursdays").
+
+Not tested: a memory in which transcripts are not kept (a setting the Pi
+extension has), where the as-of read would be the only source; and notes
+whose earlier text was never said by the user.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

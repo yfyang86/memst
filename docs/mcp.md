@@ -100,6 +100,7 @@ notes, whose first lines may then appear in it.
 | `memory_search` | Notes matching some words, best first, with their ids. With `scope` set to `pages`, `transcripts` or `all`, pages and entries of earlier sessions too |
 | `memory_read` | The notes most relevant to a question, as text that fits a token budget |
 | `memory_get` | One note by id |
+| `memory_as_of` | The notes as they stood at an earlier time (`at`: a date or a UTC time; `query` optional). Notes forgotten since are not shown |
 | `memory_history` | Recent changes to the notes: when, by whom, which notes |
 | `memory_status` | Whose memory this is, whether it can be changed, how much it holds |
 | `memory_write` | Store a note |
@@ -284,6 +285,39 @@ words, and skips questions. At most the latest 5,000 statements are
 considered, and the two that share the most with the note are shown, a rare
 word counting for more than a frequent one; a statement that shares only
 frequent words (in more than one statement in twenty) is not shown.
+
+## Merging two copies
+
+```bash
+memst --store ~/.memst mcp --owner alice merge /path/to/the/other/store
+```
+
+For one owner's memory kept in two places (two machines, or two agents
+each with a copy). The other copy is only read. The two are compared note
+by note with the revision they share, or, from the second merge on, with
+what each held at the last merge:
+
+| A note is | Result |
+|---|---|
+| changed in one copy only | that change |
+| new in the other copy | added |
+| changed differently in both | this copy's version stays; the other's is added as a new note tagged `merge-conflict` that names the first. Compare them and forget one |
+| forgotten in either copy | forgotten, with its history, whatever the other copy did with it. It does not come back with a later merge |
+| removed in the other copy without being forgotten, unchanged here | removed |
+
+Everything that comes in is unverified, whatever it was in the other copy
+(an approval is given on one machine, for what was read there), and is
+screened as a write is: a note that reads like an instruction is set aside.
+Transcripts are joined entry by entry; an entry removed in either copy
+stays removed; a session that differs in the middle is kept twice. Pages
+are left for the offline pass to rebuild. The note changes are one
+revision by `merge`, which `restore` undoes; forgetting is not undone.
+
+Limits: the comparison is of whole notes, not of lines within a note; two
+copies with no shared history are joined, and notes with the same id and
+different text are treated as changed in both; what the other copy's
+session said after one of its entries was removed here is not screened
+against that removal.
 
 ## Deleting
 
