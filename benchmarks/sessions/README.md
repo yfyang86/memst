@@ -465,6 +465,88 @@ written; no scenario was run again.
 Still one provider's models, and still our scenarios. A client we did not
 write (Claude Code over MCP was the candidate) was not tried.
 
+## Rounds 6 and 7 (sprint 17): a harder test, and one we did not write
+
+Round 5 was 140 of 140. A test that nothing fails has stopped measuring.
+Rounds 1 to 5 share three easy things: each fact is handed over in a
+sentence that says it is for later; it is needed one or two sessions on;
+and we wrote every scenario. Round 6 removes the first two and round 7 the
+third. Criteria and expectations written before the first run of either.
+
+### Round 6: facts said in passing, over a long history
+
+```bash
+python -m benchmarks.sessions.hard --pi pi --memst target/release/memst --model <provider/model>
+python -m benchmarks.sessions.hard --client mcp --memst target/release/memst --model <model>
+```
+
+A history is 24 sessions of ordinary requests. Ten facts appear inside
+requests as things the user happens to mention ("What time is 4pm Pacific
+for me? I work from Lisbon."); nothing says to remember them. Three of the
+facts change twice and three change once, again in passing; four do not
+change. Five sessions are about nothing in particular. The order is
+shuffled for each history, keeping each fact's mentions in order. After
+the history each fact is asked for in a session of its own, and two
+questions ask for things never mentioned. Eight histories, so 32 questions
+about stable facts, 24 each about facts changed once and twice, and 16
+about things never told, for each client.
+
+An answer is correct if it gives the latest value before any earlier one;
+for a thing never told, if it says it does not know.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| H1 | Pi with the extension keeps up with a long history of things said in passing | at least 80% correct in each of the four kinds |
+| H2 | So does a plain MCP client | the same |
+
+Also reported: for each kind, how often the latest value had been written
+to a note, and how often it was in a transcript, by the end of the history.
+
+Expected beforehand. Pi should pass H1 or come close: even where the model
+does not note a passing remark, the extension has recorded the session and
+a search of the transcripts can find it; facts changed twice are where we
+expect it to slip, by finding an earlier mention. The plain client should
+fail H2: it records nothing, so a remark the model does not choose to note
+is gone, and we doubt it notes most of them.
+
+### Round 7: questions we did not write
+
+```bash
+python -m benchmarks.sessions.lme --data third/longmemeval/longmemeval_s_cleaned.json \
+    --memst target/release/memst --model <model>
+```
+
+Sixty LongMemEval-S questions, thirty `knowledge-update` and thirty
+`multi-session` (the two kinds nearest to what memory in use is for),
+chosen by the harness's sampling with its seed, so they are among the 500
+the harness has answers for. Each question's history, about fifty sessions
+and 500 turns, is written into memory as transcripts with the benchmark's
+dates. No notes are made and nothing is extracted. A plain MCP client is
+asked the question and may call `memory_search`, `memory_read` and
+`memory_get` as often as it likes, up to twelve steps. Search over
+transcripts is by keyword; there are no embeddings in this path.
+
+Answers are graded by the question-answering harness's judge, and set
+beside that harness's answers to the same sixty questions
+(`benchmarks/results/full-longmemeval-raw`): retrieval of the top turns by
+embedding and one reading (`raw-dense`), and the two read paths that did
+best there (`dense-wide-reason`, `rerank-reason`).
+
+| # | Criterion | Passes if |
+|---|---|---|
+| L1 | An agent searching MemSt's transcripts does at least as well as one-shot embedding retrieval | its judged accuracy on the sixty questions is not below `raw-dense`'s |
+
+Reported without a threshold: the difference from each pipeline with a 95%
+interval, by question type, and prompt tokens.
+
+Expected beforehand. The agent should beat `raw-dense` on `multi-session`
+questions, where it can search several times, and fall short of the
+reasoning read paths, which see forty to sixty turns chosen by embedding;
+keyword search will miss turns worded differently from the question. One
+thing may sink it outright: `memory_search` looks in notes unless told
+otherwise, there are no notes here, and nothing in the server's
+instructions says where the history is.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
