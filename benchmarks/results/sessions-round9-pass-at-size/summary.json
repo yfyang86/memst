@@ -1,0 +1,26 @@
+{
+  "notes": 5000,
+  "model": "deepseek-flash",
+  "runs": 10,
+  "corrected": 3,
+  "prompt_tokens_max": 17692,
+  "prompt_tokens_mean": 17566.9,
+  "all_notes_would_be_tokens_mean": 352676.4,
+  "notes_shown_mean": 80.0,
+  "entries_read_mean": 514.3,
+  "also_corrected_mean": 15.9,
+  "added_mean": 0.5,
+  "pages_mean": 0.1,
+  "seconds_mean": 7.2,
+  "errors": 0,
+  "criteria": {
+    "P1": {
+      "passed": false,
+      "detail": "the wrong note was corrected in 3/10"
+    },
+    "P2": {
+      "passed": true,
+      "detail": "the largest prompt was about 17,692 tokens"
+    }
+  }
+}

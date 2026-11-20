@@ -1,14 +1,14 @@
 # Handover
 
-Written 2026-11-20 and updated the same day after sprint 16. Sprints 1 to
-15 are merged into `dev` (pull requests 1 to 7). Sprint 16 is on the
-working branch `claude/loving-allen-qbfcg1` until its pull request is
+Written 2026-11-20 and updated after sprint 20. Sprints 1 to 16 are merged
+into `dev` (pull requests 1 to 8). Sprints 17 to 20 are on the working
+branch `claude/loving-allen-qbfcg1` until a pull request is opened and
 merged.
 
 Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
-`CodeReview/CR-20261114.md` (findings 1 to 96, each marked fixed or open),
+`CodeReview/CR-20261114.md` (findings 1 to 106, each marked fixed or open),
 `benchmarks/sessions/README.md` (the memory-in-use evaluation, rounds 1 to
-5), `docs/mcp.md` (the agent memory and its tools),
+9), `docs/mcp.md` (the agent memory and its tools),
 `docs/deletion-design.md`.
 
 ## Sprints
@@ -33,6 +33,15 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 14 | Deletion and locking in the session store | Done; the cascade from a deleted message is partial |
 | 15 | What versioning is worth | Done: as-of reads, merging two copies, round 4 |
 | 16 | A second agent, a second model, and the release | Done, except the release itself (below) |
+| 17 | A harder, independent test | Done: Pi passes a long history of facts said in passing (96/96), a plain client fails it (20/96); an agent on LongMemEval questions is 20 to 30 points below the harness's read paths |
+| 18 | Whom a note is about | Done: wrong answers at 5,000 notes fell from 9 to 3 of 120 (could be chance one time in seven) |
+| 19 | What deletion and forgetting do not reach | Done in two of three parts; matching by meaning not done |
+| 20 | Pages and the offline pass at size | Done: the pass is bounded at 5,000 notes and corrects 8 of 10 after a fix; pages and notes not shown to help or hurt |
+| 21 | Release and a client we did not write | Planned |
+
+Candidates ahead of 21, by size of the known gap: give `memory_read` the
+harness's read path (finding 98); record a plain client's sessions
+(finding 97); matching by meaning (finding 103).
 
 ## Sprint 16: done, except the release
 
@@ -94,16 +103,26 @@ the HelixDB test binaries small; `HELIX_TELEMETRY_LEVEL=off` in CI.
 
 From the code review log, the ones most likely to matter next:
 
-- **86.** Among many notes of the same shape about other people or teams,
-  the agent sometimes gives another's value, once for a fact it was never
-  told. Notes do not record whom they are about in a form search can use.
+- **98.** The memory tools read a long history far worse than the
+  harness's read paths: 61.7% (71.7% read fairly) against 91.7% on sixty
+  LongMemEval-S questions. The read path from sprint 5b is in the
+  evaluation harness only. The largest known gap.
+- **97.** A client without the Pi extension records no sessions, so its
+  memory holds only what the model chose to note: 4 of 80 facts said in
+  passing.
+- **100.** Look-alike notes about other teams: 9 wrong of 120 before notes
+  had subjects, 3 after. Two of the three are the stale-note scenario.
 - **80, 81.** Matching a note to what the user said later, and finding
   what still says a forgotten thing, are by shared words. Statements in
   wholly different words are missed.
-- **87.** Deleting a message does not reach memory items and summaries
-  made from it, or the operations log.
-- **91.** With the native search backend alone, each message rewrites the
-  whole index.
+- **101.** Deleting a message removes memory items that say they were
+  made from it; ones that do not say, and the operations log, are not
+  reached.
+- **103.** Forgetting and the stale-note match are by shared words;
+  matching by meaning needs an embedding model at read time, not chosen.
+- **102.** The native search index is loaded afresh for every operation,
+  so indexing is still linear in its size (12.6 ms a message at 2,000).
+  Finding 91, as first written, was wrong; see the log.
 - **68, 83.** Memory operations are linear in the number of notes (about
   130 ms a write at 5,000). The limit is 10,000 notes per owner.
 - **70.** An agent with a shell can reach the memory files directly.

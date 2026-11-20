@@ -465,6 +465,376 @@ written; no scenario was run again.
 Still one provider's models, and still our scenarios. A client we did not
 write (Claude Code over MCP was the candidate) was not tried.
 
+## Rounds 6 and 7 (sprint 17): a harder test, and one we did not write
+
+Round 5 was 140 of 140. A test that nothing fails has stopped measuring.
+Rounds 1 to 5 share three easy things: each fact is handed over in a
+sentence that says it is for later; it is needed one or two sessions on;
+and we wrote every scenario. Round 6 removes the first two and round 7 the
+third. Criteria and expectations written before the first run of either.
+
+### Round 6: facts said in passing, over a long history
+
+```bash
+python -m benchmarks.sessions.hard --pi pi --memst target/release/memst --model <provider/model>
+python -m benchmarks.sessions.hard --client mcp --memst target/release/memst --model <model>
+```
+
+A history is 24 sessions of ordinary requests. Ten facts appear inside
+requests as things the user happens to mention ("What time is 4pm Pacific
+for me? I work from Lisbon."); nothing says to remember them. Three of the
+facts change twice and three change once, again in passing; four do not
+change. Five sessions are about nothing in particular. The order is
+shuffled for each history, keeping each fact's mentions in order. After
+the history each fact is asked for in a session of its own, and two
+questions ask for things never mentioned. Eight histories, so 32 questions
+about stable facts, 24 each about facts changed once and twice, and 16
+about things never told, for each client.
+
+An answer is correct if it gives the latest value before any earlier one;
+for a thing never told, if it says it does not know.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| H1 | Pi with the extension keeps up with a long history of things said in passing | at least 80% correct in each of the four kinds |
+| H2 | So does a plain MCP client | the same |
+
+Also reported: for each kind, how often the latest value had been written
+to a note, and how often it was in a transcript, by the end of the history.
+
+Expected beforehand. Pi should pass H1 or come close: even where the model
+does not note a passing remark, the extension has recorded the session and
+a search of the transcripts can find it; facts changed twice are where we
+expect it to slip, by finding an earlier mention. The plain client should
+fail H2: it records nothing, so a remark the model does not choose to note
+is gone, and we doubt it notes most of them.
+
+### Round 7: questions we did not write
+
+```bash
+python -m benchmarks.sessions.lme --data third/longmemeval/longmemeval_s_cleaned.json \
+    --memst target/release/memst --model <model>
+```
+
+Sixty LongMemEval-S questions, thirty `knowledge-update` and thirty
+`multi-session` (the two kinds nearest to what memory in use is for),
+chosen by the harness's sampling with its seed, so they are among the 500
+the harness has answers for. Each question's history, about fifty sessions
+and 500 turns, is written into memory as transcripts with the benchmark's
+dates. No notes are made and nothing is extracted. A plain MCP client is
+asked the question and may call `memory_search`, `memory_read` and
+`memory_get` as often as it likes, up to twelve steps. Search over
+transcripts is by keyword; there are no embeddings in this path.
+
+Answers are graded by the question-answering harness's judge, and set
+beside that harness's answers to the same sixty questions
+(`benchmarks/results/full-longmemeval-raw`): retrieval of the top turns by
+embedding and one reading (`raw-dense`), and the two read paths that did
+best there (`dense-wide-reason`, `rerank-reason`).
+
+| # | Criterion | Passes if |
+|---|---|---|
+| L1 | An agent searching MemSt's transcripts does at least as well as one-shot embedding retrieval | its judged accuracy on the sixty questions is not below `raw-dense`'s |
+
+Reported without a threshold: the difference from each pipeline with a 95%
+interval, by question type, and prompt tokens.
+
+Expected beforehand. The agent should beat `raw-dense` on `multi-session`
+questions, where it can search several times, and fall short of the
+reasoning read paths, which see forty to sixty turns chosen by embedding;
+keyword search will miss turns worded differently from the question. One
+thing may sink it outright: `memory_search` looks in notes unless told
+otherwise, there are no notes here, and nothing in the server's
+instructions says where the history is.
+
+### Round 6 results
+
+One run for each client, nothing changed afterwards
+(`sessions-round6-pi`, `sessions-round6-plain-mcp`). 192 questions; no
+session failed.
+
+| Kind of fact | Pi with the extension | Plain MCP client |
+|---|---|---|
+| stable | 32/32 | 0/32 |
+| changed once | 24/24 | 1/24 |
+| changed twice | 24/24 | 3/24 |
+| never told | 16/16 | 16/16 |
+
+**H1 passes; H2 fails**, both as expected, and both further than expected.
+
+- **Pi did not slip on facts changed twice** (24 of 24), where we thought
+  it would find an earlier mention.
+- **For Pi, the transcripts carried the stable facts.** Only 4 of 32
+  stable facts had been written to a note by the end of a history, and all
+  32 were answered: the extension had recorded the sessions and the agent
+  searched them. A fact that changed was noted far more often (45 of 48):
+  the model treats a change as worth writing down and a passing mention as
+  not.
+- **The plain client lost nearly everything.** It records nothing, and
+  noted 4 of 80 facts. The other 76 were not in memory at all when asked
+  for. Round 5's 70 of 70 for this client was a result about facts handed
+  over to be kept, and does not carry to facts said in passing.
+
+What follows for the design: recording sessions is not a convenience of
+the Pi extension. It is what makes memory hold what nobody decided to
+keep, and a client without it has a memory of explicit notes only. The
+server cannot record a session it is not shown; a plain client would have
+to call `transcript_append` itself, and nothing asks it to.
+
+### Round 7 results
+
+The first attempt stopped after 16 questions on one with no reference
+answer, and saved nothing. The sample of sixty holds six abstention
+variants (27 `knowledge-update`, 27 `multi-session`, 6 `abstention`),
+which the harness scores by whether the answer says it does not know; the
+runner was changed to score them as the harness does and the whole run
+made again (`sessions-round7-longmemeval`). Nothing was changed after it.
+
+| | All 60 | abstention (6) | knowledge-update (27) | multi-session (27) | Prompt tokens |
+|---|---|---|---|---|---|
+| Agent searching MemSt's transcripts | 61.7% | 0.0% | 81.5% | 55.6% | 6,395 |
+| `raw-bm25` | 63.3% | 83.3% | 85.2% | 37.0% | 4,985 |
+| `raw-dense` | 68.3% | 100.0% | 85.2% | 44.4% | 4,413 |
+| `dense-wide-reason` | 91.7% | 100.0% | 96.3% | 85.2% | 8,640 |
+| `rerank-reason` | 91.7% | 100.0% | 88.9% | 92.6% | 4,952 |
+
+**L1 fails as scored**: the agent is 6.7 points below `raw-dense` (95%
+interval -18.3 to +6.7).
+
+The zero on abstention is the scorer's and not the agent's. All six
+answers say that it does not know ("I don't know: I can't find anything
+you've told me about Italian restaurants in your city"), and the harness
+recognises an abstention by a list of phrases its own reader is prompted
+to use, which does not include "I don't know". Counting those six as the
+correct answers they are, the agent is at 71.7%, 3.3 points above
+`raw-dense` (-6.7 to +13.3): level with it. We report the criterion as
+failed, because the scorer was named beforehand, and the second figure
+beside it, as with the update check in round 1.
+
+Either way the larger result stands, and it is the one that matters:
+
+- **The agent is 20 to 30 points below the two reasoning read paths.** It
+  made 1.9 searches a question by keyword and read what came back. Those
+  pipelines retrieve forty to sixty turns by embedding and reason over
+  them in one reading.
+- **Searching more than once helps where we said it would.** On
+  `multi-session` questions the agent beat one-shot retrieval (55.6%
+  against 44.4% and 37.0%) and was still 30 to 37 points below the
+  reasoning paths.
+- The fear that the agent would search notes only and find nothing was
+  unfounded: it asked for the transcripts.
+
+So the best way we have of reading a long history is in the evaluation
+harness and not in the product. The memory tools give an agent keyword
+search over transcripts; the harness showed months ago that wide dense
+retrieval with a reasoning read does far better on these questions, and
+nothing has carried that into `memory_search` or `memory_read`.
+
+## Round 8 (sprint 18): whom a note is about
+
+Round 3 left one recurring failure: among thousands of notes there are a
+dozen of the same shape about other teams, and the agent gives another
+team's value, or says its notes conflict, when asked for the user's own.
+From sprint 18 a note says whom it is about (`about`), the tools show it,
+and search puts the notes a question is about first. Round 8 tests that.
+Written before the first run of the new build, and before the baseline's
+results were looked at.
+
+Two parts.
+
+**At size.** Round 3's `recall`, `update`, `stale` and `abstain` scenarios
+with 5,000 other notes, three times over with three different fillers, so
+thirty runs to a cell. Three conditions:
+
+| Condition | Build | The filler's notes |
+|---|---|---|
+| baseline | before sprint 18 | do not say whom they are about |
+| subjects on the user's notes | sprint 18 | do not say (the notes the agent writes say "the user") |
+| subjects on every note | sprint 18 | say whom they are about, as notes written through the tools now do |
+
+```bash
+for seed in 1 2 3; do python -m benchmarks.sessions.run --round 3 --sizes 5000 --filler-seed $seed [--subjects] ...; done
+```
+
+**The user's own fact among others'.** No filler. The user tells a fact of
+their own, and in a second session two facts of the same kind about named
+others ("These are about other teams and people, not about us: the billing
+team's deploys go out on Fridays..."). One question then asks for the
+user's own (`others-own`) or for a named other's (`others-named`). Ten
+facts, three times over, sprint 18's build only.
+
+```bash
+python -m benchmarks.sessions.run --round 8 ...
+```
+
+| # | Criterion | Passes if |
+|---|---|---|
+| W1 | With subjects on every note, the size test holds | `recall`, `update`, `stale` and `abstain` each at least 27 of 30 |
+| W2 | The agent keeps the user's own and others' apart | `others-own` and `others-named` each at least 27 of 30 |
+| W3 | Subjects reduce wrong answers at size | with subjects on every note, fewer wrong answers over the four kinds (of 120) than the baseline |
+
+Reported beside them: the middle condition; and, in the second part, how
+many of the notes the agent wrote about others say so.
+
+Expected beforehand. W2 should pass: the facts are stated with their
+owners. W1 should pass. W3 is the uncertain one: the baseline may have too
+few failures for a difference to show (round 3's two runs had four wrong
+answers in 160), in which case the honest reading is that the problem was
+rarer than it looked and the change is not shown to matter.
+
+### Round 8 results
+
+One run of each, nothing changed afterwards
+(`sessions-round8-size`, `sessions-round8-others`). 420 scenario runs; no
+session failed.
+
+At 5,000 notes, correct of 30 (three fillers of ten):
+
+| | baseline | subjects on the user's notes | subjects on every note |
+|---|---|---|---|
+| recall | 28 | 28 | 30 |
+| update | 27 | 29 | 30 |
+| stale | 27 | 29 | 28 |
+| abstain | 29 | 30 | 29 |
+| wrong answers, of 120 | 9 | 4 | 3 |
+
+The user's own fact told beside the same facts about named others:
+
+| Asked for | Correct | Gave the other's value |
+|---|---|---|
+| the user's own | 30/30 | 0 |
+| a named other's | 30/30 | 0 |
+
+**W1, W2 and W3 pass.**
+
+- **W3, with the caution it needs.** Nine wrong answers became three. With
+  120 runs a side, a difference of that size comes up by chance about one
+  time in seven (Fisher's exact test, two-sided, p = 0.14), so this is a
+  result in the right direction and not an established one. Every one of
+  the baseline's nine is about the release-branch prefix; eight give
+  another team's `release/`. With subjects, `recall` and `update` on that
+  fact were right in all six runs where the baseline was right in one of
+  six.
+- **What still fails.** Two of the three remaining are the `stale` scenario
+  on that same fact: the agent still answered with another team's prefix.
+  The third is an `abstain` run in which it reported that its notes
+  conflict, about a thing it was never told.
+- **The agent says whom a note is about.** In the second part it wrote 181
+  notes: 56 about the user and 125 about a named team or person. We did
+  not find one about another team filed as the user's.
+- **The middle condition** (only the agent's own notes labelled) did nearly
+  as well as labelling everything, four wrong against three. On this
+  evidence most of the gain comes from the user's notes being marked as
+  the user's.
+
+The second part is easy, as expected: thirty of thirty both ways, with the
+owners stated plainly in the telling. It shows that the mechanism is used
+correctly, not that it is needed there; the baseline was not run on it.
+
+## Round 9 (sprint 20): the offline pass at size, and what it adds
+
+Two things left undone since sprint 10. Written before the first run.
+
+**The offline pass over a large memory.** Until sprint 20 a pass was shown
+every note. With 5,000 notes that is some 150,000 tokens before it has
+read a word of transcript. A pass is now shown the notes nearest in
+wording to the part of the transcript it is reading (80 at most).
+
+```bash
+python -m benchmarks.sessions.pass_at_size --memst target/release/memst
+```
+
+Round 2's ten `stale` scenarios (a wrong note, and a transcript in which
+the user says otherwise), then 5,000 other notes and 500 other sessions.
+One pass. No agent.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| P1 | The pass still finds and corrects the wrong note | corrected in at least 8 of 10 |
+| P2 | Its prompt stays bounded | about 30,000 tokens at most in every run |
+
+Reported: how many notes it was shown, the time, and what else it changed
+(the filler's sessions contain remarks it may take for facts).
+
+**Notes and pages beside transcripts.** Round 7 put LongMemEval-S questions
+to an agent that could search transcripts only. Here the offline pass
+first reads each question's whole history and writes notes and pages from
+it; the agent then has all three to search.
+
+```bash
+python -m benchmarks.sessions.lme --per-type 15 --out <a> ...               # transcripts only
+python -m benchmarks.sessions.lme --per-type 15 --with-pass --compare <a>/answers.jsonl --out <b> ...
+```
+
+Thirty questions (the first fifteen of each type in round 7's sample), both
+conditions run afresh.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| P3 | Notes and pages from the pass do not hurt, at least | judged accuracy with the pass is not below transcripts only, on the same thirty questions |
+
+Reported: the paired difference with its interval, by question type, and
+what the pass cost (passes, time, notes and pages written).
+
+Expected beforehand. P1 and P2 should pass. For P3 we do not know: pages
+gather what was said on a topic across sessions, which is what
+`multi-session` questions need; but the pass reads 30,000 tokens at a time
+and writes what it judges worth keeping, and a detail the question turns
+on may not be among it, while its notes may crowd the search results.
+Thirty questions will show only a large effect either way.
+
+### Round 9 results
+
+**The offline pass over 5,000 notes.** First run
+(`sessions-round9-pass-at-size`): **P2 passed, P1 failed.**
+
+| | First run | After the fix |
+|---|---|---|
+| The wrong note corrected, of 10 | 3 | 8 |
+| Largest prompt, tokens (about) | 17,700 | 17,600 |
+| Notes shown, of 5,001 | 80 | 80 |
+| Time for a pass | 7.2 s | 4.1 s |
+
+Showing the pass every note, as before this sprint, would have taken about
+350,000 tokens for the notes alone; that was not run.
+
+The failure was in how the 80 notes were chosen. A pass reads some 500
+transcript entries at a time, nearly all about other things, and the notes
+were those nearest to that stretch as a whole. The one note that one
+statement contradicts was not among them. Notes are now chosen statement
+by statement (the two nearest to each thing the user said, then the best
+of those), and a statement in the first person prefers notes about the
+user. On a second run (`...-after-fix`) the note was corrected in 8 of 10,
+which is the threshold exactly. The two it missed were not examined.
+
+In the first run a pass also corrected about sixteen of the filler's notes
+each time, from the filler's own sessions ("for the record, the billing
+team moved its standup to Fridays"), which is the pass doing its job on
+notes we were not counting; after the fix, with notes chosen per
+statement, it corrected none of them. We did not look into why, and it may
+be that the per-statement choice now leaves those notes out.
+
+**Notes and pages beside transcripts** (`sessions-round9-longmemeval`),
+thirty questions, one run of each, nothing changed afterwards:
+
+| | All 30 | knowledge-update (13) | multi-session (15) | abstention (2) |
+|---|---|---|---|---|
+| Transcripts only | 70.0% | 92.3% | 60.0% | 0.0% |
+| With notes and pages from the pass | 76.7% | 84.6% | 80.0% | 0.0% |
+| `dense-wide-reason` (the harness) | 96.7% | 100.0% | 93.3% | 100.0% |
+
+**P3 passes**: 6.7 points above transcripts only, with an interval of -6.7
+to +20.0 that includes no difference. `multi-session` questions went from
+9 of 15 to 12 of 15 and `knowledge-update` from 12 of 13 to 11 of 13;
+neither is more than the run-to-run variation seen elsewhere. The pass
+read each history in 4.6 passes taking 49 s in all, and left 56 notes and
+20 pages. (The two abstention answers are again scored wrong by the
+harness's phrase list though both say they do not know.)
+
+So pages and notes from the pass did not hurt and may help on questions
+that span sessions; thirty questions cannot say more. Both conditions
+remain about twenty points below the harness's reasoning read path.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

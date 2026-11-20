@@ -475,6 +475,20 @@ pub struct MemoryItem {
     pub supersedes: Option<Uuid>,
 }
 
+/// The `source` of a memory made from the given messages and memories:
+/// `label`, then the ids. See [`MemoryItem::derived`].
+pub fn derivation(label: &str, messages: &[Uuid], memories: &[Uuid]) -> String {
+    let list = |ids: &[Uuid]| ids.iter().map(Uuid::to_string).collect::<Vec<_>>().join(",");
+    let mut source = label.to_string();
+    if !messages.is_empty() {
+        source.push_str(&format!(" messages={}", list(messages)));
+    }
+    if !memories.is_empty() {
+        source.push_str(&format!(" memories={}", list(memories)));
+    }
+    source
+}
+
 impl MemoryItem {
     /// Create a new memory item.
     pub fn new(content: impl Into<String>, source: impl Into<String>) -> Self {
@@ -494,6 +508,31 @@ impl MemoryItem {
             token_estimate: None,
             supersedes: None,
         }
+    }
+
+    /// A memory made from messages, from other memories, or from both, that
+    /// says so. Deleting a message can then find what was made from it.
+    ///
+    /// The record is kept in `source`, as words a person can read
+    /// (`derived messages=<id>,<id> memories=<id>`), since the stored form
+    /// of a memory item cannot gain a field without breaking existing
+    /// stores.
+    pub fn derived(content: impl Into<String>, messages: &[Uuid], memories: &[Uuid]) -> Self {
+        Self::new(content, derivation("derived", messages, memories))
+    }
+
+    /// The messages and the memories this one says it was made from. Both
+    /// are empty for a memory that does not say.
+    pub fn derived_from(&self) -> (Vec<Uuid>, Vec<Uuid>) {
+        let ids = |key: &str| -> Vec<Uuid> {
+            self.source
+                .split_whitespace()
+                .filter_map(|word| word.strip_prefix(key))
+                .flat_map(|list| list.split(','))
+                .filter_map(|id| Uuid::parse_str(id).ok())
+                .collect()
+        };
+        (ids("messages="), ids("memories="))
     }
 
     /// Add a tag to this memory.

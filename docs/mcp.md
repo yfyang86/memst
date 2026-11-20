@@ -268,6 +268,44 @@ its text as the body.
 - **Other ways into the store bypass all of this.** The checks are in the
   MCP server. The command line and the Python module write without them.
 
+## What the offline pass is shown
+
+A pass reads the transcript since its last run, up to a budget, beside the
+notes it might need to correct. With a few notes it is shown all of them.
+With more than 80 it is shown 80: for each thing the user said in that
+stretch, the two notes nearest to it in wording (notes about the user
+first, for a statement in the first person), and of all those the best
+matches. It can cite and change only what it was shown. Its prompt stays
+near 18,000 tokens whatever the memory holds; `dream` prints what it read.
+
+Choosing by wording has the limit it has everywhere here: a statement
+that contradicts a note in other words will not bring that note up.
+
+## Whom a note is about
+
+A note says whom or what it is about: `the user` (the user, their own team
+and work), or a named other such as `the billing team`. `memory_write`
+takes `about` and assumes the user when it is left out; `memory_update`
+can change it. A note from before this field, or a file written by hand
+without it, shows `about="not stated"`.
+
+It is there because notes about different people can be worded alike.
+With thousands of notes, "what prefix do our release branches use?"
+matched a dozen notes about other teams as well as the user's own, and the
+agent sometimes answered with one of theirs. Now:
+
+- every note is shown with its subject, and the index marks notes about
+  others;
+- a question in the first person ("our", "my") ranks the user's notes
+  first and notes about a named other last; a question that names a
+  subject ranks that subject's notes first; notes that do not say are left
+  where the words put them;
+- `memory_search` takes `about` to return one subject's notes only.
+
+The subject is one line of plain words, set by whoever writes the note; a
+wrong one misfiles the note. In `benchmarks/sessions`, round 8, the agent
+labelled 125 notes about others and none of them as the user's.
+
 ## A note and what was said since
 
 A note is the agent's summary; what the user said is the source. When a

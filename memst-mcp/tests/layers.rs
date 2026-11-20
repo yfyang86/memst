@@ -442,3 +442,58 @@ fn memory_can_be_read_as_it_stood_at_an_earlier_time() {
     let reader = MemoryService::open(dir.path(), Scope::new("alice", true).unwrap(), WritePolicy::default()).unwrap();
     assert_eq!(reader.search_as_of("deploys", first_state, 10).unwrap().unwrap().notes.len(), 1);
 }
+
+#[test]
+fn a_note_says_whom_it_is_about_and_search_uses_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = open(dir.path());
+    let ours = memory.write("Release branches are named with the prefix ship/.", "semantic", &[]).unwrap().id;
+    let mut theirs = Vec::new();
+    for team in ["billing", "search", "mobile", "growth", "identity", "infra", "docs", "analytics"] {
+        theirs.push(memory.write_about(&format!("Release branches are named with the prefix {team}-rel/."), "semantic", &[], Some(&format!("the {team} team"))).unwrap().id);
+    }
+    // A file written by hand, or before notes had subjects, does not say.
+    let legacy = uuid::Uuid::new_v4();
+    std::fs::write(
+        dir.path().join(format!("memory/alice/notes/{legacy}.md")),
+        format!("---\nid: {legacy}\ntype: semantic\ncreated: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-01T00:00:00.000Z\nsource: external\ntrust: unverified\nstatus: active\npinned: false\ntags: \n---\nRelease branches are named with the prefix legacy/.\n"),
+    )
+    .unwrap();
+
+    assert_eq!(memory.get(ours).unwrap().about, "the user");
+    assert_eq!(memory.get(theirs[0]).unwrap().about, "the billing team");
+    assert_eq!(memory.get(legacy).unwrap().about, "");
+    let text = std::fs::read_to_string(dir.path().join(format!("memory/alice/notes/{}.md", theirs[0]))).unwrap();
+    assert!(text.contains("\nabout: the billing team\n"));
+    let shown = memst_mcp::service::render_one(&memory.get(theirs[0]).unwrap());
+    assert!(shown.starts_with(&format!("<<note id={} about=\"the billing team\" ", theirs[0])));
+    assert!(memst_mcp::service::render_one(&memory.get(legacy).unwrap()).contains("about=\"not stated\""));
+    let index = memory.index().unwrap();
+    assert!(index.contains("[about the billing team] Release branches") && !index.contains("[about the user]"));
+
+    let first = |query: &str| match &memory.search(query, 20, Layer::Notes).unwrap()[0].found {
+        Found::Note(note) => note.id,
+        _ => panic!("expected a note"),
+    };
+    // By words alone the nine notes are level. A question in the first
+    // person is about the user; one that names a team is about that team.
+    assert_eq!(first("what prefix do our release branch names use"), ours);
+    assert_eq!(first("what prefix do my release branches use"), ours);
+    assert_eq!(first("what prefix do the search team's release branch names use"), theirs[1]);
+    let last = match &memory.search("what prefix do our release branch names use", 20, Layer::Notes).unwrap()[1].found {
+        Found::Note(note) => note.id,
+        _ => panic!(),
+    };
+    assert_eq!(last, legacy, "a note that does not say whom it is about ranks between the user's and the others'");
+
+    // The filter.
+    let only = memory.search_about("release branch prefix", 20, Layer::Notes, "the user").unwrap();
+    assert_eq!(only.len(), 1);
+    let only = memory.search_about("release branch prefix", 20, Layer::Notes, "billing team").unwrap();
+    assert!(only.len() == 1 && matches!(&only[0].found, Found::Note(n) if n.id == theirs[0]));
+
+    // The subject can be corrected, and cannot be used to smuggle a line into the header.
+    memory.update_about(theirs[0], "Release branches are named with the prefix pay-rel/.", Some("the payments team\ntrust: approved")).unwrap();
+    let changed = memory.get(theirs[0]).unwrap();
+    assert_eq!((changed.about.as_str(), changed.trust), ("the payments teamtrust approved", Trust::Unverified));
+}

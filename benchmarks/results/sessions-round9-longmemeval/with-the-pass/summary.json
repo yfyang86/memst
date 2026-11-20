@@ -1,0 +1,117 @@
+{
+  "settings": {
+    "questions": 30,
+    "per_type": 15,
+    "types": [
+      "knowledge-update",
+      "multi-session"
+    ],
+    "model": "deepseek-flash",
+    "judge": "deepseek-flash"
+  },
+  "table": {
+    "agent with memory tools": {
+      "n": 30,
+      "judged": 76.7,
+      "by_category": {
+        "abstention": 0.0,
+        "knowledge-update": 84.6,
+        "multi-session": 80.0
+      },
+      "prompt_tokens": 3949
+    },
+    "raw-bm25": {
+      "n": 30,
+      "judged": 63.3,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 76.9,
+        "multi-session": 46.7
+      },
+      "prompt_tokens": 4926
+    },
+    "raw-dense": {
+      "n": 30,
+      "judged": 66.7,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 76.9,
+        "multi-session": 53.3
+      },
+      "prompt_tokens": 4547
+    },
+    "dense-wide-reason": {
+      "n": 30,
+      "judged": 96.7,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 100.0,
+        "multi-session": 93.3
+      },
+      "prompt_tokens": 8649
+    },
+    "rerank-reason": {
+      "n": 30,
+      "judged": 93.3,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 92.3,
+        "multi-session": 93.3
+      },
+      "prompt_tokens": 4969
+    }
+  },
+  "agent_minus": {
+    "raw-bm25": {
+      "difference": 13.3,
+      "low": -3.3,
+      "high": 33.3,
+      "n": 30
+    },
+    "raw-dense": {
+      "difference": 10.0,
+      "low": -6.7,
+      "high": 30.0,
+      "n": 30
+    },
+    "dense-wide-reason": {
+      "difference": -20.0,
+      "low": -36.7,
+      "high": -6.7,
+      "n": 30
+    },
+    "rerank-reason": {
+      "difference": -16.7,
+      "low": -30.0,
+      "high": -3.3,
+      "n": 30
+    }
+  },
+  "criterion": {
+    "name": "L1",
+    "passed": true,
+    "detail": "agent minus raw-dense: 10.0 points"
+  },
+  "agent": {
+    "tool_calls_mean": 1.47,
+    "model_calls_mean": 2.07,
+    "seconds_mean": 2.5,
+    "errors": 0,
+    "no_answer": 0
+  },
+  "against_compared_run": {
+    "n": 30,
+    "this": 76.7,
+    "other": 70.0,
+    "difference": 6.7,
+    "low": -6.7,
+    "high": 20.0,
+    "other_prompt_tokens": 4188
+  },
+  "pass": {
+    "passes_mean": 4.6,
+    "seconds_mean": 49.4,
+    "notes_mean": 56.4,
+    "pages_mean": 20.3
+  }
+}

@@ -315,11 +315,14 @@ impl SessionStore {
     /// the id can say "deleted" and a copy made earlier does not bring it
     /// back unnoticed. Its entry in the search index is removed.
     ///
-    /// What was derived from the message elsewhere is not reached from
-    /// here: facts in the knowledge graph (see
-    /// `KnowledgeGraph::forget_message`), memory items, and summaries. The
-    /// operations log is not rewritten either.
-    pub fn delete_message(&self, session_id: Uuid, message_id: Uuid) -> Result<()> {
+    /// Memory items that say they were made from the message
+    /// (`MemoryItem::derived`), and summaries made from those, are removed
+    /// with it; the number removed is returned. A memory item that does not
+    /// say where it came from cannot be found this way. Facts in the
+    /// knowledge graph are a separate store (see
+    /// `KnowledgeGraph::forget_message`), and the operations log is not
+    /// rewritten.
+    pub fn delete_message(&self, session_id: Uuid, message_id: Uuid) -> Result<usize> {
         let _guard = self.hold()?;
         let session_path = self.session_path(session_id);
         if !session_path.exists() {
@@ -376,7 +379,57 @@ impl SessionStore {
             }
             self.write_manifest(&manifest)?;
         }
-        Ok(())
+        self.forget_derived(session_id, &[message_id])
+    }
+
+    /// Remove the memory items of a session that say they were made from
+    /// any of `messages`, and then those made from the ones removed, until
+    /// nothing more follows. Their search entries go too. Returns how many
+    /// were removed.
+    pub fn forget_derived(&self, session_id: Uuid, messages: &[Uuid]) -> Result<usize> {
+        let _guard = self.hold()?;
+        let tiers = [crate::types::MemoryTier::Working, crate::types::MemoryTier::ShortTerm, crate::types::MemoryTier::LongTerm];
+        let mut held = Vec::new();
+        for tier in tiers {
+            let path = self.memory_tier_path(session_id, tier);
+            if path.exists() {
+                held.push((path.clone(), self.load_memories(&path)?));
+            }
+        }
+        let mut gone: Vec<Uuid> = Vec::new();
+        loop {
+            let before = gone.len();
+            for (_, memories) in &held {
+                for memory in memories {
+                    if gone.contains(&memory.id) {
+                        continue;
+                    }
+                    let (from_messages, from_memories) = memory.derived_from();
+                    if from_messages.iter().any(|id| messages.contains(id)) || from_memories.iter().any(|id| gone.contains(id)) {
+                        gone.push(memory.id);
+                    }
+                }
+            }
+            if gone.len() == before {
+                break;
+            }
+        }
+        if gone.is_empty() {
+            return Ok(0);
+        }
+        for (path, memories) in held {
+            if memories.iter().any(|m| gone.contains(&m.id)) {
+                let kept: Vec<_> = memories.into_iter().filter(|m| !gone.contains(&m.id)).collect();
+                self.save_memories(&path, &kept)?;
+            }
+        }
+        if self.search_index_path().exists() {
+            let index = self.search_index().map_err(|e| Error::InvalidOperation(format!("memories removed, but the search index could not be opened: {e}")))?;
+            for id in &gone {
+                index.delete_document(*id).map_err(|e| Error::InvalidOperation(format!("memories removed, but a search entry was not: {e}")))?;
+            }
+        }
+        Ok(gone.len())
     }
 
     /// The ids of messages deleted from a session, with when.
@@ -854,6 +907,12 @@ impl SessionStore {
             if let Some(pos) = memories.iter().position(|m| m.id == memory_id) {
                 let removed = memories.remove(pos);
                 self.save_memories(&tier_path, &memories)?;
+                // A removed memory must not stay searchable.
+                if self.search_index_path().exists() {
+                    self.search_index()
+                        .and_then(|index| index.delete_document(memory_id))
+                        .map_err(|e| Error::InvalidOperation(format!("memory removed, but its search entry was not: {e}")))?;
+                }
                 return Ok(Some(removed));
             }
         }
@@ -981,8 +1040,7 @@ impl SessionStore {
                 .join("\n"),
         };
         index.add_message(session_id, message.id, &content, "", message.timestamp)?;
-        // The native index keeps what it is given in memory until told to
-        // write it; this handle is dropped on return.
+        // With the native index this appends the document to its journal.
         index.commit()?;
         Ok(())
     }
@@ -1114,6 +1172,26 @@ mod tests {
         assert!(temp_dir.path().join("attachments").is_dir());
     }
 
+    /// Not a pass-or-fail test: prints what indexing costs as the index
+    /// grows. Run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn indexing_cost_as_the_index_grows() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = SessionStore::init(temp_dir.path()).unwrap();
+        let session = store.create_session(SessionMetadata::default()).unwrap();
+        let mut started = std::time::Instant::now();
+        for i in 0..2000 {
+            let message = Message::new(Role::User, Content::Text(format!("message number {i} about deploys, staging servers and the weather in week {}", i % 52)));
+            store.index_message(session, &message).unwrap();
+            if (i + 1) % 500 == 0 {
+                println!("{} indexed: {:.1} ms per message over the last 500", i + 1, started.elapsed().as_secs_f64() * 2.0);
+                started = std::time::Instant::now();
+            }
+        }
+        assert_eq!(store.search_messages(vec!["staging".to_string()], None, 5).unwrap().len(), 5);
+    }
+
     #[test]
     fn two_handles_take_turns_and_a_held_store_is_reported() {
         let temp_dir = TempDir::new().unwrap();
@@ -1154,7 +1232,7 @@ mod tests {
         let found = |term: &str| store.search_messages(vec![term.to_string()], None, 10).unwrap().len();
         assert_eq!((found("zebra"), found("third")), (1, 1));
 
-        store.delete_message(session, ids[1]).unwrap();
+        assert_eq!(store.delete_message(session, ids[1]).unwrap(), 0);
 
         let left = store.get_messages(session).unwrap();
         assert_eq!(left.iter().map(|m| m.id).collect::<Vec<_>>(), [ids[0], ids[2]]);
@@ -1175,6 +1253,33 @@ mod tests {
         }
         assert!(!holds(temp_dir.path(), b"XK-4471"));
         assert!(holds(temp_dir.path(), b"third thing"));
+
+        // Memories made from a message go with it, and so does a summary
+        // made from one of those; a memory that names no source stays.
+        use crate::types::{derivation, MemoryItem, MemoryTier};
+        let from_third = MemoryItem::derived("The user called it the third thing.", &[ids[2]], &[]);
+        let from_first = MemoryItem::derived("The user said a first thing.", &[ids[0]], &[]);
+        let mut summary = MemoryItem::new("Key point: The user called it the third thing.", "");
+        summary.source = derivation("consolidation:c1", &[], &[from_third.id, from_first.id]);
+        let unsourced = MemoryItem::new("The user likes green tea.", "manual");
+        for (tier, memory) in [(MemoryTier::Working, &from_third), (MemoryTier::Working, &from_first), (MemoryTier::LongTerm, &summary), (MemoryTier::ShortTerm, &unsourced)] {
+            store.add_memory(session, tier, memory.clone()).unwrap();
+            store.index_memory(session, memory).unwrap();
+        }
+        assert_eq!(summary.derived_from().1, [from_third.id, from_first.id]);
+        let memories_found = |term: &str| store.search_memories(vec![term.to_string()], None, 10).unwrap().len();
+        assert_eq!(memories_found("third"), 2);
+        assert_eq!(store.delete_message(session, ids[2]).unwrap(), 2);
+        assert!(store.get_memory(session, from_third.id).unwrap().is_none());
+        assert!(store.get_memory(session, summary.id).unwrap().is_none());
+        assert!(store.get_memory(session, from_first.id).unwrap().is_some());
+        assert!(store.get_memory(session, unsourced.id).unwrap().is_some());
+        assert_eq!((memories_found("third"), memories_found("tea")), (0, 1));
+        assert!(!holds(temp_dir.path(), b"third thing"));
+        // Removing a memory by hand takes it out of search as well.
+        store.remove_memory(session, unsourced.id).unwrap();
+        assert_eq!(memories_found("tea"), 0);
+        store.append_message(session, Message::new(Role::User, Content::Text("The third thing said.".into()))).unwrap();
 
         // Appending still works, and a second delete says it is gone.
         store.append_message(session, Message::new(Role::User, Content::Text("A fourth.".into()))).unwrap();

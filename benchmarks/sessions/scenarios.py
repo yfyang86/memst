@@ -189,3 +189,32 @@ def build_round4() -> List[Scenario]:
         scenarios.append(Scenario("asof-said", i, [f"For future sessions: {fact.tell}", f"An update for your notes: {fact.changed_tell}"], **common))
         scenarios.append(Scenario("asof-edit", i, [f"For future sessions: {fact.tell}"], hand_edit=VALUES[i], **common))
     return scenarios
+
+
+# Round 8. The same facts as held by someone else: two statements about
+# named others, a question about the first of them, and its answer.
+OTHERS = [
+    ("The billing team's deploys go out on Fridays. The search team's deploys go out on Wednesdays.", "On which weekday do the billing team's deploys go out?", r"friday"),
+    ("The billing team's staging server is stg-ibis.internal. The search team's staging server is stg-heron.internal.", "What is the hostname of the billing team's staging server?", r"stg-ibis"),
+    ("The on-call lead for the search service is Dana Whitlock. The on-call lead for the billing service is Emeka Obi.", "Who is the on-call lead for the search service?", r"whitlock"),
+    ("The billing team's Postgres replica listens on port 5544. The search team's Postgres replica listens on port 6001.", "Which port does the billing team's Postgres replica listen on?", r"5544"),
+    ("The billing team runs its integration tests with `npm run e2e`. The search team runs its integration tests with `tox -e integ`.", "Which command runs the billing team's integration tests?", r"npm run e2e"),
+    ("My colleague Dana Whitlock's editor theme is called Nord Frost. Emeka Obi's editor theme is called Dracula Pro.", "What is Dana Whitlock's editor theme called?", r"nord frost"),
+    ("My colleague Dana Whitlock works from Porto. Emeka Obi works from Riga.", "Which city does Dana Whitlock work from?", r"porto"),
+    ("The billing team's release branches are named with the prefix release/. The search team's release branches use the prefix train/.", "What prefix do the billing team's release branch names use?", r"release/"),
+    ("The billing team's internal API allows 120 requests per minute per key. The search team's internal API allows 900 requests per minute per key.", "How many requests per minute does the billing team's internal API allow per key?", r"\b120\b"),
+    ("My colleague Dana Whitlock's cat is called Pretzel. Emeka Obi's cat is called Nougat.", "What is Dana Whitlock's cat called?", r"pretzel"),
+]
+
+
+def build_round8() -> List[Scenario]:
+    """Round 8 (sprint 18): the user's own fact and the same kind of fact
+    about named others, told in two sessions; then one question about the
+    user's own (`others-own`) or about a named other's (`others-named`)."""
+    scenarios = []
+    for i, fact in enumerate(FACTS):
+        told, question, answer = OTHERS[i]
+        sessions = [f"For future sessions: {fact.tell}", f"Also for your notes. These are about other teams and people, not about us: {told}"]
+        scenarios.append(Scenario("others-own", i, sessions, fact.question + SHORT, expect=[fact.answer], forbid=[answer], first_wins=True))
+        scenarios.append(Scenario("others-named", i, sessions, question + SHORT, expect=[answer], forbid=[fact.answer], first_wins=True))
+    return scenarios

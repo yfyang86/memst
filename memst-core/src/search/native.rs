@@ -102,9 +102,78 @@ pub struct NativeSearchIndex {
     avg_doc_len: Arc<RwLock<f32>>,
     /// Set of all document IDs per session
     session_docs: Arc<RwLock<HashMap<Uuid, HashSet<String>>>>,
+    /// Documents added since the index was last written or journalled.
+    pending: std::sync::Mutex<Vec<Journaled>>,
+    /// How many documents the journal file holds.
+    journaled: std::sync::atomic::AtomicUsize,
+    /// Set while the journal is being read back, so that what it holds is
+    /// not journalled a second time.
+    replaying: std::sync::atomic::AtomicBool,
 }
 
+/// A document as the journal keeps it: what was passed to `add_message` or
+/// `add_memory`.
+///
+/// Writing the whole index for every document made each one cost more than
+/// the last. A commit now appends the new documents to `journal.jsonl`,
+/// and the index proper is rewritten once the journal holds
+/// [`JOURNAL_LIMIT`] of them, and whenever something is deleted (the
+/// journal holds text, and a deletion has to remove it from there too).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Journaled {
+    memory: bool,
+    session_id: Uuid,
+    id: Uuid,
+    content: String,
+    tags: Vec<String>,
+    timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// The journal is folded into the index when it holds this many documents.
+const JOURNAL_LIMIT: usize = 200;
+
 impl NativeSearchIndex {
+    fn journal_path(&self) -> PathBuf {
+        self.path.join("journal.jsonl")
+    }
+
+    /// Note a document for the journal, unless it is being read from it.
+    fn note_added(&self, memory: bool, session_id: Uuid, id: Uuid, content: &str, tags: &[String], timestamp: chrono::DateTime<chrono::Utc>) {
+        if !self.replaying.load(std::sync::atomic::Ordering::SeqCst) {
+            self.pending.lock().unwrap().push(Journaled { memory, session_id, id, content: content.to_string(), tags: tags.to_vec(), timestamp });
+        }
+    }
+
+    /// Read the journal back into the index in memory.
+    fn replay_journal(&self) -> Result<()> {
+        use super::SearchIndexBackend;
+        let Ok(text) = std::fs::read_to_string(self.journal_path()) else { return Ok(()) };
+        self.replaying.store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut count = 0;
+        for line in text.lines() {
+            // A line cut short by a crash is the last one; skip it.
+            let Ok(entry) = serde_json::from_str::<Journaled>(line) else { continue };
+            count += 1;
+            // The index may already hold it, if a crash came between
+            // writing the index and removing the journal.
+            if self.document_store.read().unwrap().contains_key(&entry.id.to_string()) {
+                continue;
+            }
+            let added = if entry.memory {
+                self.add_memory(entry.session_id, entry.id, &entry.content, &entry.tags, 1.0, entry.timestamp)
+            } else {
+                self.add_message(entry.session_id, entry.id, &entry.content, "", entry.timestamp)
+            };
+            if let Err(error) = added {
+                self.replaying.store(false, std::sync::atomic::Ordering::SeqCst);
+                return Err(error);
+            }
+        }
+        self.replaying.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.journaled.store(count, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
     /// Create a new search index.
     pub fn new(path: &PathBuf) -> Result<Self> {
         let index_path = path.join("search_index");
@@ -127,7 +196,7 @@ impl NativeSearchIndex {
                 )
             };
 
-        Ok(Self {
+        let index = Self {
             path: index_path,
             config,
             inverted_index: Arc::new(RwLock::new(inverted_index)),
@@ -135,7 +204,12 @@ impl NativeSearchIndex {
             num_docs: Arc::new(RwLock::new(num_docs)),
             avg_doc_len: Arc::new(RwLock::new(avg_doc_len)),
             session_docs: Arc::new(RwLock::new(session_docs)),
-        })
+            pending: std::sync::Mutex::new(Vec::new()),
+            journaled: std::sync::atomic::AtomicUsize::new(0),
+            replaying: std::sync::atomic::AtomicBool::new(false),
+        };
+        index.replay_journal()?;
+        Ok(index)
     }
 
     /// Open an existing search index.
@@ -200,6 +274,11 @@ impl NativeSearchIndex {
         let meta_data = bincode::serialize(&meta)?;
         let mut file = File::create(meta_path)?;
         file.write_all(&meta_data)?;
+
+        // Everything in memory is now in the index proper.
+        self.pending.lock().unwrap().clear();
+        let _ = std::fs::remove_file(self.journal_path());
+        self.journaled.store(0, std::sync::atomic::Ordering::SeqCst);
 
         Ok(())
     }
@@ -297,6 +376,7 @@ impl super::SearchIndexBackend for NativeSearchIndex {
         _role: &str,
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> Result<()> {
+        self.note_added(false, session_id, message_id, content, &[], timestamp);
         let doc_id = message_id.to_string();
         let tokens = self.tokenize(content);
         let timestamp_secs = timestamp.timestamp();
@@ -387,6 +467,7 @@ impl super::SearchIndexBackend for NativeSearchIndex {
         _confidence: f32,
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> Result<()> {
+        self.note_added(true, session_id, memory_id, content, tags, timestamp);
         let doc_id = memory_id.to_string();
         let tags_text = tags.join(" ");
         let full_text = format!("{} {}", content, tags_text);
@@ -630,7 +711,13 @@ impl super::SearchIndexBackend for NativeSearchIndex {
             }
         }
 
-        Ok(())
+        drop(inverted);
+        drop(docs);
+        drop(sessions);
+        drop(num_docs);
+        // The journal may hold the session's text: write the index without
+        // it and drop the journal.
+        self.persist_to_disk()
     }
 
     /// Delete one document by its id, and write the index to disk without it.
@@ -661,7 +748,24 @@ impl super::SearchIndexBackend for NativeSearchIndex {
 
     /// Commit pending changes (persists to disk).
     fn commit(&self) -> Result<()> {
-        self.persist_to_disk()
+        use std::io::Write;
+        use std::sync::atomic::Ordering;
+        let waiting = self.pending.lock().unwrap().len();
+        if waiting == 0 {
+            return Ok(());
+        }
+        if self.journaled.load(Ordering::SeqCst) + waiting >= JOURNAL_LIMIT {
+            return self.persist_to_disk();
+        }
+        std::fs::create_dir_all(&self.path)?;
+        let mut journal = std::fs::OpenOptions::new().create(true).append(true).open(self.journal_path())?;
+        let mut pending = self.pending.lock().unwrap();
+        for entry in pending.iter() {
+            writeln!(journal, "{}", serde_json::to_string(entry)?)?;
+        }
+        self.journaled.fetch_add(pending.len(), Ordering::SeqCst);
+        pending.clear();
+        Ok(())
     }
 
     /// Get the number of indexed documents.
@@ -677,8 +781,10 @@ impl super::SearchIndexBackend for NativeSearchIndex {
 
 impl Drop for NativeSearchIndex {
     fn drop(&mut self) {
-        // Auto-commit on drop
-        let _ = self.persist_to_disk();
+        // What was added and not yet committed is not lost. This used to
+        // write the whole index, on every drop, including after a search
+        // that had changed nothing.
+        let _ = super::SearchIndexBackend::commit(self);
     }
 }
 
@@ -687,6 +793,51 @@ mod tests {
     use super::*;
     use crate::search::SearchIndexBackend;
     use chrono::Utc;
+
+    #[test]
+    fn documents_are_journalled_and_the_journal_is_folded_in() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().to_path_buf();
+        let session = Uuid::new_v4();
+        let mut ids = Vec::new();
+        // One document to a handle, as the session store does it.
+        for i in 0..(JOURNAL_LIMIT + 30) {
+            let index = NativeSearchIndex::new(&path).unwrap();
+            let id = Uuid::new_v4();
+            index.add_message(session, id, &format!("remark {i} about the harbour"), "user", Utc::now()).unwrap();
+            index.commit().unwrap();
+            ids.push(id);
+            if i == 2 {
+                // Early on there is a journal and no index proper yet.
+                assert!(path.join("search_index/journal.jsonl").exists());
+                assert!(!path.join("search_index/postings.bincode").exists());
+            }
+        }
+        // The journal was folded in once, and holds what came after.
+        assert!(path.join("search_index/postings.bincode").exists());
+        let lines = std::fs::read_to_string(path.join("search_index/journal.jsonl")).unwrap().lines().count();
+        assert_eq!(lines, 30);
+
+        // A new handle sees every document, from the index and the journal.
+        let index = NativeSearchIndex::new(&path).unwrap();
+        assert_eq!(index.count(), (JOURNAL_LIMIT + 30) as u64);
+        assert_eq!(index.search(crate::search::SearchQuery::new().with_term("harbour").with_limit(100)).unwrap().len(), 100);
+
+        // Deleting a document that is only in the journal removes its text
+        // from the journal file too.
+        let last = *ids.last().unwrap();
+        index.delete_document(last).unwrap();
+        assert!(!path.join("search_index/journal.jsonl").exists());
+        let again = NativeSearchIndex::new(&path).unwrap();
+        assert_eq!(again.count(), (JOURNAL_LIMIT + 29) as u64);
+
+        // A journal line cut short by a crash is skipped, not fatal.
+        again.add_message(session, Uuid::new_v4(), "one more about the harbour", "user", Utc::now()).unwrap();
+        again.commit().unwrap();
+        let journal = path.join("search_index/journal.jsonl");
+        std::fs::write(&journal, std::fs::read_to_string(&journal).unwrap() + "{\"memory\":false,\"sess").unwrap();
+        assert_eq!(NativeSearchIndex::new(&path).unwrap().count(), (JOURNAL_LIMIT + 30) as u64);
+    }
 
     fn create_test_index(dir: &tempfile::TempDir) -> NativeSearchIndex {
         let path = dir.path().join("search");

@@ -1,0 +1,102 @@
+{
+  "settings": {
+    "questions": 30,
+    "per_type": 15,
+    "types": [
+      "knowledge-update",
+      "multi-session"
+    ],
+    "model": "deepseek-flash",
+    "judge": "deepseek-flash"
+  },
+  "table": {
+    "agent with memory tools": {
+      "n": 30,
+      "judged": 70.0,
+      "by_category": {
+        "abstention": 0.0,
+        "knowledge-update": 92.3,
+        "multi-session": 60.0
+      },
+      "prompt_tokens": 4188
+    },
+    "raw-bm25": {
+      "n": 30,
+      "judged": 63.3,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 76.9,
+        "multi-session": 46.7
+      },
+      "prompt_tokens": 4926
+    },
+    "raw-dense": {
+      "n": 30,
+      "judged": 66.7,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 76.9,
+        "multi-session": 53.3
+      },
+      "prompt_tokens": 4547
+    },
+    "dense-wide-reason": {
+      "n": 30,
+      "judged": 96.7,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 100.0,
+        "multi-session": 93.3
+      },
+      "prompt_tokens": 8649
+    },
+    "rerank-reason": {
+      "n": 30,
+      "judged": 93.3,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 92.3,
+        "multi-session": 93.3
+      },
+      "prompt_tokens": 4969
+    }
+  },
+  "agent_minus": {
+    "raw-bm25": {
+      "difference": 6.7,
+      "low": -10.0,
+      "high": 23.3,
+      "n": 30
+    },
+    "raw-dense": {
+      "difference": 3.3,
+      "low": -13.3,
+      "high": 20.0,
+      "n": 30
+    },
+    "dense-wide-reason": {
+      "difference": -26.7,
+      "low": -43.3,
+      "high": -10.0,
+      "n": 30
+    },
+    "rerank-reason": {
+      "difference": -23.3,
+      "low": -36.7,
+      "high": -10.0,
+      "n": 30
+    }
+  },
+  "criterion": {
+    "name": "L1",
+    "passed": true,
+    "detail": "agent minus raw-dense: 3.3 points"
+  },
+  "agent": {
+    "tool_calls_mean": 1.6,
+    "model_calls_mean": 2.2,
+    "seconds_mean": 2.8,
+    "errors": 0,
+    "no_answer": 0
+  }
+}

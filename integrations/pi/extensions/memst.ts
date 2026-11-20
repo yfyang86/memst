@@ -289,6 +289,7 @@ export default function memst(pi: ExtensionAPI, settings: Settings = settingsFro
 			query: Type.String({ description: "Words to look for" }),
 			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Most results to return (default 10)" })),
 			scope: Type.Optional(Type.String({ description: "notes (default), transcripts, or all" })),
+			about: Type.Optional(Type.String({ description: "Only notes about this subject: \"the user\" for the user's own facts, or a name such as \"the billing team\". Each note says whom it is about" })),
 		}),
 		{
 			promptSnippet: "Search the user's notes and earlier sessions",
@@ -326,6 +327,7 @@ export default function memst(pi: ExtensionAPI, settings: Settings = settingsFro
 				content: Type.String({ description: "The note" }),
 				memory_type: Type.Optional(Type.String({ description: "episodic (something that happened), semantic (a fact or preference; default) or procedural (how to do something)" })),
 				tags: Type.Optional(Type.Array(Type.String(), { description: "Up to 16 short tags" })),
+				about: Type.Optional(Type.String({ description: "Whom or what the note is about, when it is not the user: for example \"the billing team\" or a person's name. Leave out for facts about the user, their own team and their own work" })),
 			}),
 			{
 				promptSnippet: "Write a note that later sessions will see",
@@ -337,6 +339,7 @@ export default function memst(pi: ExtensionAPI, settings: Settings = settingsFro
 		tool("memory_update", "Correct a note", "Replace the text of a stored note that is wrong or out of date. The earlier text stays in the history.", Type.Object({
 			id: Type.String({ description: "The note's id" }),
 			content: Type.String({ description: "The note's new text" }),
+			about: Type.Optional(Type.String({ description: "Whom or what the note is about, to change it; \"the user\" for the user themself" })),
 		}));
 		tool("memory_forget", "Forget a note", "Forget something, when the user asks. Give the note's id to delete the note and every earlier version of it. Give phrases as well: the distinctive words of what is to be forgotten (the value itself, such as a name, a number or a command), so that the record of earlier sessions loses every entry that contains them. Without phrases, what was said stays searchable.", Type.Object({
 			id: Type.Optional(Type.String({ description: "The id of the note to delete, if there is one" })),

@@ -246,6 +246,12 @@ impl MemoryService {
 
     /// Store a note.
     pub fn write(&self, content: &str, kind: &str, tags: &[String]) -> Result<Written, Refusal> {
+        self.write_about(content, kind, tags, None)
+    }
+
+    /// Store a note and say whom it is about. `None` means the user (the
+    /// user themself, their own team, their own work).
+    pub fn write_about(&self, content: &str, kind: &str, tags: &[String], about: Option<&str>) -> Result<Written, Refusal> {
         let outcome = (|| {
             let (content, reasons) = self.check_write(content)?;
             let dir = self.dir()?;
@@ -254,6 +260,7 @@ impl MemoryService {
                 return Err(Refusal::Limit(format!("this owner already holds {held} memories, the limit")));
             }
             let mut note = Note::new(&content, kind, &format!("mcp:{}", self.client()), clean_tags(tags));
+            note.about = about.map(crate::note::clean_subject).filter(|subject| !subject.is_empty()).unwrap_or_else(|| "the user".to_string());
             if !reasons.is_empty() {
                 note.status = Status::Quarantined;
             }
@@ -271,6 +278,11 @@ impl MemoryService {
     /// Replace a note's text. The note becomes unverified again: an approval
     /// was given to the earlier text, not to this one.
     pub fn update(&self, id: Uuid, content: &str) -> Result<Written, Refusal> {
+        self.update_about(id, content, None)
+    }
+
+    /// Replace a note's text and, with `about`, whom it is about.
+    pub fn update_about(&self, id: Uuid, content: &str, about: Option<&str>) -> Result<Written, Refusal> {
         let outcome = (|| {
             let (content, reasons) = self.check_write(content)?;
             let dir = self.dir()?;
@@ -278,6 +290,9 @@ impl MemoryService {
             // cannot rewrite its way out of review.
             let mut note = self.notes_in(&dir)?.into_iter().find(|n| n.id == id && n.status == Status::Active).ok_or(Refusal::NotFound)?;
             note.body = content;
+            if let Some(subject) = about.map(crate::note::clean_subject).filter(|subject| !subject.is_empty()) {
+                note.about = subject;
+            }
             note.updated = Utc::now();
             note.trust = Trust::Unverified;
             note.pinned = false;
@@ -343,7 +358,28 @@ impl MemoryService {
                 candidates.push((Found::Turn(turn), text));
             }
         }
-        Ok(rank(query, candidates).into_iter().take(limit.clamp(1, 100)).collect())
+        let mut hits = rank(query, candidates);
+        prefer_subject(query, &mut hits);
+        Ok(hits.into_iter().take(limit.clamp(1, 100)).collect())
+    }
+
+    /// As [`search`](Self::search), keeping only notes about `about` (the
+    /// user, or a subject whose words are all in the note's).
+    pub fn search_about(&self, query: &str, limit: usize, layer: Layer, about: &str) -> Result<Vec<Hit>, Refusal> {
+        let wanted = crate::note::clean_subject(about).to_lowercase();
+        let words: Vec<&str> = wanted.split_whitespace().filter(|w| !matches!(*w, "the" | "team" | "a" | "an")).collect();
+        let hits = self.search(query, 100, layer)?;
+        Ok(hits
+            .into_iter()
+            .filter(|hit| match &hit.found {
+                Found::Note(note) => {
+                    let subject = note.about.to_lowercase();
+                    if wanted == "the user" { subject == "the user" } else { !words.is_empty() && words.iter().all(|w| subject.contains(w)) }
+                }
+                _ => true,
+            })
+            .take(limit.clamp(1, 100))
+            .collect())
     }
 
     /// Every note that is served, most recently changed first.
@@ -492,6 +528,90 @@ impl MemoryService {
     /// policy's size limits: pinned notes first, then the most recent.
     pub fn index(&self) -> Result<String, Refusal> {
         Ok(build_index(&self.scope.owner, &self.all()?, &self.pages()?, &self.said()?, self.policy.index_max_lines, self.policy.index_max_bytes))
+    }
+
+    /// For each of `statements`, the served notes nearest to it in wording;
+    /// then the union, best matches first, `limit` at most.
+    ///
+    /// This is how the offline pass chooses which notes to look at. Taking
+    /// the notes nearest to a whole stretch of transcript at once does not
+    /// work: a stretch is mostly about other things, and the one note that
+    /// one statement contradicts is crowded out (it was shown in 3 runs of
+    /// 10 among 5,000 notes). Each statement has to be given its own
+    /// candidates. A statement in the first person prefers notes about the
+    /// user, as a search does.
+    pub fn nearest_to_each(&self, statements: &[String], per_statement: usize, limit: usize) -> Result<Vec<Note>, Refusal> {
+        let notes = self.readable()?;
+        // Index the notes once: word, then the notes that have it.
+        let documents: Vec<Vec<String>> = notes.iter().map(|note| terms(&format!("{} {}", note.body, note.tags.join(" ")))).collect();
+        let count = documents.len() as f32;
+        let average = documents.iter().map(Vec::len).sum::<usize>() as f32 / count.max(1.0);
+        let mut postings: HashMap<&str, Vec<(usize, f32)>> = HashMap::new();
+        for (index, document) in documents.iter().enumerate() {
+            let mut frequency: HashMap<&str, f32> = HashMap::new();
+            for term in document {
+                *frequency.entry(term.as_str()).or_default() += 1.0;
+            }
+            for (term, times) in frequency {
+                postings.entry(term).or_default().push((index, times));
+            }
+        }
+        let (k1, b) = (1.2, 0.75);
+        let mut best: HashMap<usize, f32> = HashMap::new();
+        for statement in statements {
+            let wanted = content_terms(statement);
+            let lowered = statement.to_lowercase();
+            let first_person = lowered.split(|c: char| !c.is_alphanumeric()).any(|w| matches!(w, "i" | "my" | "me" | "mine" | "we" | "our" | "ours" | "us"));
+            let mut scores: HashMap<usize, f32> = HashMap::new();
+            for term in &wanted {
+                let Some(list) = postings.get(term.as_str()) else { continue };
+                let idf = ((count - list.len() as f32 + 0.5) / (list.len() as f32 + 0.5) + 1.0).ln();
+                for (index, frequency) in list {
+                    let length = documents[*index].len() as f32;
+                    *scores.entry(*index).or_default() += idf * frequency * (k1 + 1.0) / (frequency + k1 * (1.0 - b + b * length / average.max(1.0)));
+                }
+            }
+            let mut ranked: Vec<(usize, f32)> = scores
+                .into_iter()
+                .map(|(index, score)| {
+                    let about = notes[index].about.as_str();
+                    let factor = if !first_person || about.is_empty() { 1.0 } else if about == "the user" { 2.0 } else { 0.5 };
+                    (index, score * factor)
+                })
+                .collect();
+            ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            for (index, score) in ranked.into_iter().take(per_statement) {
+                let held = best.entry(index).or_insert(0.0);
+                if score > *held {
+                    *held = score;
+                }
+            }
+        }
+        let mut chosen: Vec<(usize, f32)> = best.into_iter().collect();
+        chosen.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        let keep: HashSet<usize> = chosen.into_iter().take(limit).map(|(index, _)| index).collect();
+        Ok(notes.into_iter().enumerate().filter(|(index, _)| keep.contains(index)).map(|(_, note)| note).collect())
+    }
+
+    /// The served notes and the pages nearest in wording to `text`, best
+    /// first: what a long text is about, among everything memory holds.
+    pub fn nearest(&self, text: &str, notes: usize, pages: usize) -> Result<(Vec<Note>, Vec<StoredPage>), Refusal> {
+        // A long text makes a long query; its commonest 300 content words
+        // say what it is about.
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for term in terms(text) {
+            if term.chars().count() >= 3 && !COMMON.contains(&term.as_str()) {
+                *counts.entry(term).or_default() += 1;
+            }
+        }
+        let mut words: Vec<(String, usize)> = counts.into_iter().collect();
+        words.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let query: String = words.into_iter().take(300).map(|(word, _)| word).collect::<Vec<_>>().join(" ");
+        let note_candidates = self.readable()?.into_iter().map(|note| { let text = format!("{} {}", note.body, note.tags.join(" ")); (Found::Note(note), text) }).collect();
+        let page_candidates = self.pages()?.into_iter().map(|page| { let text = format!("{} {}", page.title, page.body); (Found::Page(page), text) }).collect();
+        let nearest_notes = rank(&query, note_candidates).into_iter().filter_map(|hit| match hit.found { Found::Note(note) => Some(note), _ => None }).take(notes).collect();
+        let nearest_pages = rank(&query, page_candidates).into_iter().filter_map(|hit| match hit.found { Found::Page(page) => Some(page), _ => None }).take(pages).collect();
+        Ok((nearest_notes, nearest_pages))
     }
 
     /// What the user has said, for marking notes they have since spoken
@@ -1495,8 +1615,9 @@ fn fenced(text: &str) -> String {
 /// One note, fenced and labelled.
 pub fn render_one(note: &Note) -> String {
     format!(
-        "<<note id={} written={} source={} trust={}>>\n{}\n<<end note>>",
+        "<<note id={} about=\"{}\" written={} source={} trust={}>>\n{}\n<<end note>>",
         note.id,
+        if note.about.is_empty() { "not stated" } else { note.about.as_str() },
         note.updated.format("%Y-%m-%d"),
         note.source,
         trust_of(note),
@@ -1545,6 +1666,47 @@ fn pages_in(dir: &VersionedDir) -> Result<Vec<StoredPage>, Refusal> {
         .collect();
     pages.sort_by(|a, b| b.updated.cmp(&a.updated).then(a.path.cmp(&b.path)));
     Ok(pages)
+}
+
+/// Put the notes a question is about ahead of notes about someone else.
+///
+/// "What prefix do our release branches use?" is about the user. Among
+/// thousands of notes there may be a dozen worded the same way about other
+/// teams, and by words alone they rank level with the user's own. A note
+/// says whom it is about; a question in the first person raises the notes
+/// about the user and lowers those about a named other, and a question
+/// that names a subject raises the notes about that subject. Notes that do
+/// not say whom they are about are left where they were.
+fn prefer_subject(query: &str, hits: &mut [Hit]) {
+    let lowered = query.to_lowercase();
+    let words: Vec<&str> = lowered.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let first_person = words.iter().any(|w| matches!(*w, "i" | "my" | "me" | "mine" | "we" | "our" | "ours" | "us" | "user" | "users"));
+    let mut changed = false;
+    for hit in hits.iter_mut() {
+        let Found::Note(note) = &hit.found else { continue };
+        if note.about.is_empty() {
+            continue;
+        }
+        let subject = note.about.to_lowercase();
+        let named: Vec<&str> = subject.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 2 && !matches!(*w, "the" | "team" | "user")).collect();
+        let asked_for = subject != "the user" && !named.is_empty() && named.iter().all(|w| words.contains(w));
+        let factor = if asked_for {
+            2.0
+        } else if subject == "the user" && first_person {
+            2.0
+        } else if subject != "the user" && first_person {
+            0.5
+        } else {
+            1.0
+        };
+        if factor != 1.0 {
+            hit.score *= factor;
+            changed = true;
+        }
+    }
+    if changed {
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score).then(when(&b.found).cmp(&when(&a.found))));
+    }
 }
 
 /// The text of a note brought in by a merge because it conflicts with ours.
@@ -1731,7 +1893,10 @@ pub fn build_index(owner: &str, notes: &[Note], pages: &[StoredPage], said: &Sai
         format!("{} note(s){}.", active.len(), if waiting > 0 { format!("; {waiting} set aside for the user's review") } else { String::new() }),
     ];
     const SPOKEN: &str = "  [the user has spoken about this since; read the note before relying on it]";
-    let line = |note: &Note| format!("- {} ({}, {}) {}", &note.id.to_string()[..8], trust_of(note), note.updated.format("%Y-%m-%d"), fenced(&note.title()));
+    let line = |note: &Note| {
+        let whose = if note.about.is_empty() || note.about == "the user" { String::new() } else { format!("[about {}] ", note.about) };
+        format!("- {} ({}, {}) {whose}{}", &note.id.to_string()[..8], trust_of(note), note.updated.format("%Y-%m-%d"), fenced(&note.title()))
+    };
     let pinned: Vec<&&Note> = active.iter().filter(|n| n.pinned).collect();
     let recent: Vec<&&Note> = active.iter().filter(|n| !n.pinned).collect();
     let mut body: Vec<(String, Option<&Note>)> = Vec::new();

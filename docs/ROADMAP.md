@@ -457,6 +457,76 @@ manuscript done; the release is the owner's to make)*.
 - **Not done**: the release workflow has not run (it needs a tag or the
   default branch); a client we did not write was not tried.
 
+**17. A harder, independent test** *(done)*. Round 5 was 140 of 140, which
+measures nothing. Two rounds with criteria and expectations fixed first.
+
+- **Round 6: facts said in passing, over histories of 24 sessions**, some
+  changing twice (192 questions). Pi with the extension: 96 of 96. A plain
+  MCP client: 20 of 96. Pi answered stable facts from the transcripts the
+  extension had recorded (only 4 of 32 were ever noted); the plain client
+  records nothing and noted 4 of 80. Recording sessions is what makes
+  memory hold what nobody decided to keep.
+- **Round 7: sixty LongMemEval-S questions put to an agent searching
+  MemSt's transcripts**, graded by the harness's judge beside the
+  harness's pipelines on the same questions. The agent: 61.7% as scored
+  (71.7% with six abstentions read as the correct answers they are),
+  against 68.3% for one-shot dense retrieval and 91.7% for the two
+  reasoning read paths. The criterion (not below dense retrieval) fails as
+  scored. The agent is 20 to 30 points below the read paths the harness
+  found in sprint 5b: that way of reading a history has not been carried
+  into the memory tools.
+
+**18. Whom a note is about** *(done)*. A note carries a subject (the
+user, or a named other); the tools show and set it; search ranks the notes
+a question is about first and can be limited to one subject. Round 8 (420
+runs, criteria first): at 5,000 notes, wrong answers fell from 9 of 120 on
+the build before to 3 of 120, all nine of the baseline's on one fact with
+many look-alike notes about other teams. The difference could arise by
+chance one time in seven. Told the user's fact beside the same facts about
+named others, the agent answered both ways correctly in 30 of 30 and
+labelled 125 notes about others correctly.
+
+**19. What deletion and forgetting do not reach** *(two of three parts
+done)*.
+
+- **Memory items made from a message go with it.** A memory item can say
+  which messages and memories it was made from; consolidation records its
+  inputs; deleting a message removes what was made from it, and summaries
+  made from that, with their search entries. A memory item that does not
+  say where it came from is still not reached.
+- **The native search index** was rewritten in full on every drop of a
+  handle, searches included. Additions now go to a journal: 32 ms to 12.6
+  ms per message at 2,000 messages. Still linear, since the index is loaded
+  afresh for each operation.
+- **A correction.** Sprint 14 recorded that a build with the native backend
+  alone never wrote its search index. That was wrong: it wrote it on every
+  drop. The test that suggested otherwise failed on how the native
+  tokenizer splits a hyphenated word. The commit added then made things
+  slower, and is superseded by the journal.
+- **Not done: matching by meaning.** Forgetting and the stale-note match
+  are still by shared words. An embedding model at read time was not
+  chosen, and the local one did not fit on this machine's disk.
+
+**20. Pages and the offline pass at size** *(done)*.
+
+- **The pass was shown every note**, about 350,000 tokens' worth at 5,000
+  notes. It is shown 80 at most, chosen statement by statement: for each
+  thing the user said, the notes nearest to it. Prompt: about 17,600
+  tokens whatever the memory holds.
+- **Round 9, the pass over 5,000 notes** (criteria first): the prompt
+  bound held; the wrong note was corrected in 3 of 10 on the first run,
+  when notes were chosen for a whole stretch of transcript at once, and in
+  8 of 10 after choosing them per statement.
+- **Round 9, notes and pages beside transcripts**, thirty LongMemEval-S
+  questions: 76.7% with the pass against 70.0% with transcripts only (-6.7
+  to +20.0 points). Not shown to help; not shown to hurt.
+
+Next, in the order we would take them: give `memory_read` the read path
+the harness found (round 7: a gap of 20 to 30 points, the largest known);
+have a plain client's sessions recorded (round 6); matching by meaning
+(sprint 19's undone part); then **21**, the release and a client we did
+not write.
+
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost
 of reading every note per operation; a note contradicted by something said

@@ -15,6 +15,10 @@
 - The store is locked per operation: a long-running process no longer
   blocks others.
 - `memory_as_of` reads the notes as they stood at an earlier time.
+- A note says whom it is about, and search uses it.
+- Deleting a message removes the memory items and summaries made from it.
+- The native search index journals additions; it used to be rewritten on
+  every use.
 - `memst mcp merge` joins two copies of an owner's memory.
 
 ---
