@@ -92,7 +92,7 @@
 
 The results do not support the claim an earlier version of this paper made. On all \numLocomoQuestions\ questions of LoCoMo, the knowledge graph combined with raw turns is \numLocomoDefaultVsDense\ points of judged accuracy \emph{behind} embedding retrieval over raw turns (95\% interval \numLocomoDefaultVsDenseLow\ to \numLocomoDefaultVsDenseHigh), at about \numLocomoGraphCalls\ additional model calls per conversation; on \numLmeQuestions\ questions of LongMemEval-S the two are level. Routing questions to different retrieval methods by their kind, the idea the earlier version was built on, recovers none of the gap to an oracle router. A narrower test, fixed in advance, asked only whether the graph helps on questions about dates and changed facts when added to the best raw-turn method: it does not, by either judge.
 
-What does help is on the reading side. Letting the reader work through the retrieved evidence before answering, over forty turns instead of twenty, raises judged accuracy on \numRoleQuestions\ temporal questions from \numRoleDenseDirect\% to \numRoleWide\%, and matches or exceeds reading the entire history at a fraction of the tokens. We also report a data-model fault that the evaluation exposed and that we believe is common: dating a fact by when it was \emph{said} instead of when it became \emph{true}.
+What does help is on the reading side. Letting the reader work through forty retrieved turns instead of reading twenty directly raises judged accuracy from \numFullReadRawDenseJudged\% to \numFullReadDenseWideReasonJudged\% on all \numFullReadQuestions\ LoCoMo questions, and from \numFullLmeRawDenseJudged\% to \numFullLmeDenseWideReasonJudged\% on all \numFullLmeQuestions\ LongMemEval-S questions. Reranking with the same reader reaches \numFullReadRerankReasonJudged\% and \numFullLmeRerankReasonJudged\%, respectively. On LoCoMo both reasoning pipelines beat reading the entire history, at \numFullReadWideReasonTokenShare--\numFullReadRerankReasonTokenShare\% of its prompt tokens. We also report a data-model fault that the evaluation exposed and that we believe is common: dating a fact by when it was \emph{said} instead of when it became \emph{true}.
 
 We conclude that, on these benchmarks, a memory system's value does not lie in a structured index that answers questions better than the raw record does. We argue that it lies in what the record supports: versioning, provenance, correction and deletion, and control over what an agent may write into its own future context.
 
@@ -116,7 +116,7 @@ The answer is no, and we report it as such. The contributions of this paper are:
 
 \begin{itemize}
 \item \textbf{A like-for-like evaluation of graph memory against raw-history baselines} (\cref{sec:method,sec:results}). The knowledge graph does not beat retrieval over raw turns, alone or combined with them, with a direct reader or a reasoning one, on general questions or on the temporal questions where a time-aware graph should help most. Per-question routing realises none of its oracle headroom. We give paired differences with intervals and repeat the key comparisons with a stricter judge.
-\item \textbf{Evidence that the reader, not retrieval, is the bottleneck on long histories} (\cref{sec:readpath}). On LongMemEval-S, plain retrieval places a turn containing the answer in the context for every question and the reader still answers only \numLmeRawDenseJudged\% correctly. A reader that works through the evidence first is the largest single improvement we found.
+\item \textbf{Evidence that the reader, not retrieval, is the bottleneck on long histories} (\cref{sec:readpath}). On all \numFullLmeQuestions\ LongMemEval-S questions, plain retrieval places a turn containing the answer in the context for \numFullLmeEvidenceDense\% of questions and the reader still answers only \numFullLmeRawDenseJudged\% correctly. A reader that works through the evidence first is the largest single improvement we found.
 \item \textbf{A fault in how extracted facts are dated, and its fix} (\cref{sec:dates}). Storing the time a fact was stated as the time it became true made the graph's facts misleading on temporal questions. Separating the two raised the graph pipeline by 12 points there.
 \item \textbf{The system itself} (\cref{sec:system}): a versioned store, a bi-temporal knowledge graph on an embedded graph, vector and full-text database, and a Model Context Protocol server with write gating against memory poisoning (\cref{sec:security}).
 \end{itemize}
@@ -175,7 +175,7 @@ Retrieval in the harness is a pipeline: a list of stages, each adding facts from
 \section{Evaluation Method}
 \label{sec:method}
 
-\textbf{Datasets.} LoCoMo \citep{maharana2024evaluating}: 10 conversations averaging \numLocomoHistoryTokens\ tokens, \numLocomoQuestions\ questions in five categories. We keep the 446 adversarial questions, which have no answer in the conversation, and score them on whether the system says so; we also report the \numLocomoAnswerable\ answerable questions separately, since most published figures use that subset. LongMemEval-S \citep{wu2024longmemeval}: 500 questions, each with its own history of about 50 sessions (\numLmeHistoryTokens\ tokens on average). Each history must be extracted and embedded separately, so we use a stratified sample of \numLmeQuestions\ questions, ten of each of the six types.
+\textbf{Datasets.} LoCoMo \citep{maharana2024evaluating}: 10 conversations averaging \numLocomoHistoryTokens\ tokens, \numLocomoQuestions\ questions in five categories. We keep the 446 adversarial questions, which have no answer in the conversation, and score them on whether the system says so; we also report the \numLocomoAnswerable\ answerable questions separately, since most published figures use that subset. LongMemEval-S \citep{wu2024longmemeval}: 500 questions, each with its own history of about 50 sessions (\numLmeHistoryTokens\ tokens on average in the original sample). The main graph comparison uses a stratified sample of \numLmeQuestions\ questions, ten of each of the six types, because every history must be extracted separately. The raw-pipeline comparison needs no extraction and uses all \numFullLmeQuestions\ questions, although every history is still embedded separately.
 
 \textbf{Pipelines.} \Cref{tab:pipelines} lists the seven pipelines of the main runs. Two build no memory: \pipe{full-context} gives the reader the whole history, and the \pipe{raw-*} pipelines retrieve twenty turns from it. Three use the graph: by entity, by relationship, and \pipe{default}, which combines facts found by relationship search, the messages those facts were stated in, and raw turns.
 
@@ -241,7 +241,7 @@ Pipeline & Context given to the reader \\
 
 \textbf{An apparent advantage on temporal questions is an artefact of the metric.} On LoCoMo's temporal questions \pipe{default} leads \pipe{raw-dense} on F1, \numLocomoTemporalDefaultFone\ to \numLocomoTemporalDenseFone, but not on judged accuracy, \numLocomoTemporalDefaultJudged\% to \numLocomoTemporalDenseJudged\% (\cref{tab:categories}). The pipeline shows the reader dates written the way the references write them, and the reader copies the format. Token F1 rewards this; the judge does not.
 
-\textbf{Retrieval beats reading everything once histories are long, though the sample cannot yet establish it.} On LoCoMo, full context is the strongest pipeline, at about 27 times the tokens of a retrieval pipeline. On LongMemEval-S it is the weakest of the non-graph pipelines (\numLmeFullContextJudged\% against \numLmeRawDenseJudged--\numLmeRawHybridJudged\%) at \numLmeTokenRatio\ times the tokens; with \numLmeQuestions\ questions the interval of the difference still includes zero (\cref{tab:paired}).
+\textbf{Direct retrieval may beat reading everything once histories are long, though the sample cannot yet establish it.} In the seven-pipeline main LoCoMo run, full context is the strongest pipeline, at about 27 times the tokens of a retrieval pipeline; \cref{sec:readpath} shows that reasoning read paths later surpass it. On LongMemEval-S full context is the weakest of the non-graph pipelines (\numLmeFullContextJudged\% against \numLmeRawDenseJudged--\numLmeRawHybridJudged\%) at \numLmeTokenRatio\ times the tokens; with \numLmeQuestions\ questions the interval of the difference still includes zero (\cref{tab:paired}). The 500-question raw run does not change this comparison because it omits full context.
 
 \begin{table}[ht]
 \centering
@@ -265,23 +265,41 @@ Grading with the reader's own model risks a lenient judge. We graded three sets 
 \subsection{The read path}
 \label{sec:readpath}
 
-On LongMemEval-S, \pipe{raw-dense} has a turn containing the answer in its context for \numLmeEvidenceDense\% of questions and is judged correct on \numLmeRawDenseJudged\%. Retrieval is not what fails there. We therefore varied what the reader is given and how it answers, on a pilot of \numReadQuestions\ LoCoMo questions (three conversations) and \numReadLmeQuestions\ LongMemEval-S questions (\cref{tab:readpath}).
+On all \numFullLmeQuestions\ LongMemEval-S questions, \pipe{raw-dense} has a turn containing the answer in its context for \numFullLmeEvidenceDense\% of questions and is judged correct on \numFullLmeRawDenseJudged\%. Retrieval is not what fails there. We therefore varied what the reader is given and how it answers, first on a pilot of \numReadQuestions\ LoCoMo questions (three conversations) and \numReadLmeQuestions\ LongMemEval-S questions. We then ran the two promising raw read paths, their direct-retrieval baseline, and the graph baseline on all \numFullReadQuestions\ LoCoMo questions, and all five raw pipelines on all \numFullLmeQuestions\ LongMemEval-S questions (\cref{tab:readpathfull,tab:lmerawfull}).
 
 \begin{table}[ht]
 \centering
-\caption{Read-path experiments. Left: LoCoMo pilot, \numReadQuestions\ questions, judged accuracy by the original and the stricter judge, the paired difference from \pipe{raw-dense} under the stricter judge, and prompt tokens. Right: LongMemEval-S, \numReadLmeQuestions\ questions (both judges agree). \pipe{-reason} pipelines use a reader that works through the evidence before answering.}
+\caption{Full-scale LoCoMo read-path comparison, \numFullReadQuestions\ questions. F1 and judged accuracy have 95\% intervals. The last accuracy column is the paired difference from \pipe{raw-dense}, with its own 95\% interval; tokens are the mean reader and retrieval-stage prompt size.}
+\label{tab:readpathfull}
+\small
+\resizebox{\textwidth}{!}{\input{tables/read-path-full}}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{All \numFullLmeQuestions\ LongMemEval-S questions for the pipelines that build no graph. Columns are as in \cref{tab:readpathfull}. The full-context pipeline was omitted to avoid 500 prompts of about 112,000 tokens each.}
+\label{tab:lmerawfull}
+\small
+\resizebox{\textwidth}{!}{\input{tables/longmemeval-raw-full}}
+\end{table}
+
+The remaining exploratory variants, and the strict-judge cross-check on the original pilots, are in \cref{tab:readpath}.
+
+\begin{table}[ht]
+\centering
+\caption{Exploratory read-path pilots. Left: LoCoMo pilot, \numReadQuestions\ questions, judged accuracy by the original and the stricter judge, the paired difference from \pipe{raw-dense} under the stricter judge, and prompt tokens. Right: LongMemEval-S, \numReadLmeQuestions\ questions (both judges agree). \pipe{-reason} pipelines use a reader that works through the evidence before answering.}
 \label{tab:readpath}
 \small
 \resizebox{\textwidth}{!}{\input{tables/read-path}}
 \end{table}
 
-\textbf{A reader that works through the evidence is the largest gain.} In the reasoning mode the prompt asks the reader to list the relevant statements with their dates, do any counting or date arithmetic step by step, and then give its answer. With the same twenty turns this raises judged accuracy on the LongMemEval-S pilot from \numReadLmeDense\% to \numReadLmeDenseReason\%, and both of its temporal questions go from wrong to right. The larger temporal set of \cref{sec:role} confirms the effect at scale: on \numRoleQuestions\ LoCoMo temporal questions, forty turns with the reasoning reader score \numRoleWide\% against \numRoleDenseDirect\% for twenty turns read directly, a difference of \numRoleWideVsDense\ points (interval \numRoleWideVsDenseLow\ to \numRoleWideVsDenseHigh; \numRoleWideVsDenseStrict\ by the stricter judge). It costs a few points on unanswerable questions, where a reader that reasons is more willing to guess.
+\textbf{Reasoning read paths are the largest gain.} In the reasoning mode the prompt asks the reader to list the relevant statements with their dates, do any counting or date arithmetic step by step, and then give its answer. On all \numFullLmeQuestions\ LongMemEval-S questions, forty turns with this reader (\pipe{dense-wide-reason}) score \numFullLmeDenseWideReasonJudged\%, against \numFullLmeRawDenseJudged\% for direct reading of twenty turns: a \numFullLmeDenseWideReasonVsDense-point gain (95\% interval \numFullLmeDenseWideReasonVsDenseLow\ to \numFullLmeDenseWideReasonVsDenseHigh). Reranking with the reasoning reader scores \numFullLmeRerankReasonJudged\%, a \numFullLmeRerankReasonVsDense-point gain (interval \numFullLmeRerankReasonVsDenseLow\ to \numFullLmeRerankReasonVsDenseHigh). On all \numFullReadQuestions\ LoCoMo questions the corresponding scores are \numFullReadDenseWideReasonJudged\% and \numFullReadRerankReasonJudged\%, against \numFullReadRawDenseJudged\%: gains of \numFullReadDenseWideReasonVsDense\ (interval \numFullReadDenseWideReasonVsDenseLow\ to \numFullReadDenseWideReasonVsDenseHigh) and \numFullReadRerankReasonVsDense\ points (interval \numFullReadRerankReasonVsDenseLow\ to \numFullReadRerankReasonVsDenseHigh). The separate \pipe{dense-reason} pilot and the \numRoleQuestions-question temporal test (\cref{sec:role}) isolate the reader's contribution. A reasoning reader remains more willing to guess on unanswerable questions.
 
-{\sloppy\textbf{Retrieval with a reasoning reader matches reading everything.} Forty turns (\pipe{dense-wide-reason}) and sixty candidates reranked to twenty (\pipe{rerank-reason}) reach \numReadWideReason\% and \numReadRerankReason\% on the LoCoMo pilot against \numReadFull\% for full context read directly, with 9 to 18\% of its tokens; on the LongMemEval-S pilot, \numReadLmeWideReason\% and \numReadLmeRerankReason\% against \numReadLmeFull\%, with 7 to 9\%. Full context with the same reasoning reader is level with them on LongMemEval-S and ahead on LoCoMo.\par}
+{\sloppy\textbf{On LoCoMo, retrieval with a reasoning reader beats reading everything.} Forty turns and sixty candidates reranked to twenty reach \numFullReadDenseWideReasonJudged\% and \numFullReadRerankReasonJudged\%, against \numLocomoFullContextJudged\% for the previously reported full-context run on the same questions. The paired gains are \numFullReadWideReasonVsFull\ points (interval \numFullReadWideReasonVsFullLow\ to \numFullReadWideReasonVsFullHigh) and \numFullReadRerankReasonVsFull\ points (interval \numFullReadRerankReasonVsFullLow\ to \numFullReadRerankReasonVsFullHigh), using \numFullReadWideReasonTokenShare\% and \numFullReadRerankReasonTokenShare\% of full context's prompt tokens. Reranking gains a further \numFullReadRerankReasonVsWide\ points over forty-turn retrieval (interval \numFullReadRerankReasonVsWideLow\ to \numFullReadRerankReasonVsWideHigh).\par}
 
-\textbf{Reranking alone, and neighbouring turns, do not pay.} A rerank without the reasoning reader gains little for its extra call, and trusting it to shrink the context hurts.
+\textbf{Reranking is not consistently worth its extra call.} On LongMemEval-S it is only \numFullLmeRerankReasonVsWide\ points ahead of \pipe{dense-wide-reason}, with an interval from \numFullLmeRerankReasonVsWideLow\ to \numFullLmeRerankReasonVsWideHigh; the cheaper wide-dense pipeline is sufficient there. On LoCoMo its smaller gain is reliable, but requires another model call and more prompt tokens. Reranking without the reasoning reader, trusting the reranker to shrink the context, and adding neighbouring turns remain exploratory pilot results, not full-scale findings.
 
-These pilots are small. Under the stricter judge, the gain of \pipe{dense-wide-reason} over \pipe{raw-dense} on the general LoCoMo pilot is 5.1 points with an interval that includes zero; only full context with the reasoning reader is reliably better there. The direction is the same on both datasets and at scale on temporal questions; the size on general questions awaits a full run.
+The full runs use the original judge. The strict-judge cross-check remains the \numReadQuestions-question LoCoMo pilot in \cref{tab:readpath}, where the direction is consistent but some intervals include zero; it is not a substitute for regrading these full runs.
 
 \subsection{A narrower job for the graph}
 \label{sec:role}
@@ -372,9 +390,9 @@ None of this says a time-aware graph of a user's world is without value. It says
 
 \textbf{One reader.} All results use one model with reasoning off as reader and extractor. A stronger extractor would build a better graph, and a stronger reader might use it better; it would also read raw turns better.
 
-\textbf{Sample sizes.} The LongMemEval-S results rest on \numLmeQuestions, \numReadLmeQuestions\ and \numRoleLmeQuestions\ questions. The read-path gains on general questions rest on a \numReadQuestions-question pilot. The LoCoMo main run and temporal test use every question.
+\textbf{Sample sizes.} The main LongMemEval-S graph comparison still uses \numLmeQuestions\ questions, and the exploratory read-path and narrower-graph cross-checks use \numReadLmeQuestions\ and \numRoleLmeQuestions; the five raw pipelines now use all \numFullLmeQuestions. The principal LoCoMo read-path comparison, main run and temporal test use every question, while the remaining read-path variants and their strict-judge comparison use the \numReadQuestions-question pilot.
 
-\textbf{Judges.} Both judges come from one provider. The stricter one lowers LoCoMo scores by 6 to 10 points without changing the order of pipelines, and we have not applied it to the full LoCoMo run.
+\textbf{Judges.} Both judges come from one provider. The stricter one lowers LoCoMo scores by 6 to 10 points without changing the order of pipelines, and we have not applied it to the full LoCoMo main run or either new full-scale read-path run.
 
 \textbf{Scale.} At about 127,000 tokens, LongMemEval-S histories still fit in a large context window and their answer turns are easy to retrieve. Histories of millions of tokens, where retrieval can no longer return everything relevant, are the remaining setting in which a pre-built structure might win; we have not tested it.
 

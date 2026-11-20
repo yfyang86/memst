@@ -143,9 +143,18 @@ worked on next:
   22 on LongMemEval-S, and match or beat reading the whole history at under a
   fifth of the tokens. Both are built in.
 
-Not done: those two pipelines at full scale, all 500 LongMemEval-S questions,
-and a judge from another provider. The commands are in
-`benchmarks/harness/RUNNING.md`.
+Full-scale follow-up (20 November 2026): both raw read paths are now measured
+on all 1,986 LoCoMo questions and all 500 LongMemEval-S questions. On LoCoMo,
+`dense-wide-reason` and `rerank-reason` gain 7.3 and 9.1 judged points over
+`raw-dense` (intervals 5.6 to 8.9 and 7.4 to 10.8), and beat the earlier
+full-context run at 7% and 15% of its prompt tokens. On LongMemEval-S they
+reach 88.2% and 88.6%, gains of 20.6 and 21.0 points. Reranking adds 1.8 points
+over wide dense retrieval on LoCoMo (0.4 to 3.3), but only 0.4 on
+LongMemEval-S (−1.8 to 2.6). Reports are in `read-path-locomo-full/` and
+`full-longmemeval-raw/`; both are complete with no answer errors.
+
+Not done: a judge from another provider, strict regrading of these full runs,
+and full-context or graph pipelines on all 500 LongMemEval-S questions.
 
 **5c. A narrower job for the graph.** Done; the test was not passed.
 

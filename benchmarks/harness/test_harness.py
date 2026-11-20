@@ -245,6 +245,73 @@ def test_chat_client_caches_and_records_usage(tmp_path):
         server.shutdown()
 
 
+def test_chat_client_retries_transient_redirects(tmp_path, monkeypatch):
+    calls = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            calls.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            if len(calls) <= 5:
+                self.send_response(307)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = json.dumps({"choices": [{"message": {"content": "OK"}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    monkeypatch.setattr("benchmarks.harness.llm.time.sleep", lambda _: None)
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        reply = ChatClient(url, "m", tmp_path / "cache.jsonl").complete([{"role": "user", "content": "q"}])
+        assert reply.text == "OK"
+        assert len(calls) == 6
+    finally:
+        server.shutdown()
+
+
+def test_chat_client_follows_same_origin_post_redirect(tmp_path, monkeypatch):
+    calls = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            payload = self.rfile.read(int(self.headers["Content-Length"]))
+            calls.append((self.path, payload, self.headers.get("Authorization")))
+            if self.path == "/chat/completions":
+                self.send_response(307)
+                self.send_header("Location", "/v1/chat/completions")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = json.dumps({"choices": [{"message": {"content": "OK"}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    monkeypatch.setattr("benchmarks.harness.llm.time.sleep", lambda _: None)
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        reply = ChatClient(url, "m", tmp_path / "cache.jsonl").complete([{"role": "user", "content": "q"}])
+        assert reply.text == "OK"
+        assert [call[0] for call in calls] == ["/chat/completions", "/v1/chat/completions"]
+        assert calls[0][1:] == calls[1][1:]
+    finally:
+        server.shutdown()
+
+
 def long_conversation():
     turns = [Turn(f"D1:{i}", "Alice" if i % 2 else "Bob", text, "1 May 2023", "session_1") for i, text in enumerate(
         ["We adopted a dog.", "Its name is Rex.", "I moved to Lyon last month.", "The flat is near the river.", "Rust is fun."], 1)]

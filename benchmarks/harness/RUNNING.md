@@ -117,22 +117,33 @@ All settings are listed at the top of [`run_all.sh`](run_all.sh). For your
 own pipelines, call `python -m benchmarks.harness.run` directly with
 `--pipeline-file` (see the README).
 
-### Runs worth doing next
+### Full-scale runs and regrading
 
-All 500 LongMemEval-S questions for the pipelines that need no graph. There
-is no extraction, so the cost is embeddings plus reader calls (leave out
-`full-context` to avoid 500 prompts of 112,000 tokens):
-
-```bash
-DATASETS=longmemeval LME_PER_TYPE=0 PIPELINES=raw-bm25,raw-dense,raw-hybrid,dense-wide-reason,rerank-reason benchmarks/harness/run_all.sh
-```
-
-The read-path pipelines on all of LoCoMo. The baselines come from the cache
-of the earlier run if `WORK` is the same:
+The full-scale follow-up is complete. Results are in
+`benchmarks/results/read-path-locomo-full/` (all 1,986 LoCoMo questions, four
+pipelines) and `benchmarks/results/full-longmemeval-raw/` (all 500
+LongMemEval-S questions, five raw pipelines). The commands below reproduce
+those directories without overwriting the earlier baseline reports. They use
+the same model, embedding and worker environment as `run_all.sh`; the cached
+results make stopping and resuming safe.
 
 ```bash
-DATASETS=locomo PIPELINES=raw-dense,default,dense-wide-reason,rerank-reason benchmarks/harness/run_all.sh
+python -m benchmarks.harness.run --dataset locomo --conversations 0 --per-category 0 \
+  --out benchmarks/results/read-path-locomo-full --work benchmarks/.harness-work/locomo \
+  --pipeline-file benchmarks/harness/experiments/read-path.json \
+  --pipelines raw-dense,default,dense-wide-reason,rerank-reason \
+  --embedder "${EMBEDDER:-local}" --workers 8 --build-workers 6
 ```
+
+```bash
+python -m benchmarks.harness.run --dataset longmemeval --per-category 0 \
+  --out benchmarks/results/full-longmemeval-raw --work benchmarks/.harness-work/longmemeval \
+  --pipelines raw-bm25,raw-dense,raw-hybrid,dense-wide-reason,rerank-reason \
+  --embedder "${EMBEDDER:-local}" --workers 8 --build-workers 6
+```
+
+Full context is deliberately omitted from the 500-question run to avoid 500
+prompts of about 112,000 tokens each.
 
 Grade a finished run again with a second judge. Nothing is retrieved or
 answered again; only the saved answers are graded:

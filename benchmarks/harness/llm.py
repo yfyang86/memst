@@ -11,6 +11,7 @@ import os
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,7 +67,7 @@ class ChatClient:
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
         )
         last_error = None
-        for attempt in range(5):
+        for attempt in range(8):
             started = time.time()
             try:
                 with urllib.request.urlopen(request, timeout=300) as response:
@@ -96,6 +97,15 @@ class ChatClient:
                 raise
             except urllib.error.HTTPError as error:
                 last_error = f"HTTP {error.code}: {error.read()[:300]!r}"
+                location = error.headers.get("Location")
+                redirect = urllib.parse.urljoin(request.full_url, location) if location else None
+                if error.code in (307, 308) and redirect:
+                    current = urllib.parse.urlsplit(request.full_url)
+                    target = urllib.parse.urlsplit(redirect)
+                    if (current.scheme, current.netloc) == (target.scheme, target.netloc):
+                        request = urllib.request.Request(
+                            redirect, data=request.data, headers=dict(request.header_items())
+                        )
                 if error.code in (400, 401, 403, 404):
                     break
             except Exception as error:  # timeouts, connection resets

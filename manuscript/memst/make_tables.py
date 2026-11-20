@@ -16,6 +16,7 @@ RESULTS = ROOT / "benchmarks" / "results"
 OUT = Path(__file__).resolve().parent / "tables"
 sys.path.insert(0, str(ROOT))
 
+from benchmarks.harness.report import paired_difference  # noqa: E402
 from benchmarks.harness.route_analysis import analyse  # noqa: E402
 
 
@@ -165,6 +166,68 @@ def main():
             number(f"ReadLme{tag}", pct(read_lme["pipelines"][name]["judged_accuracy"]))
     number("ReadQuestions", str(read["settings"]["questions"]))
     number("ReadLmeQuestions", str(read_lme["settings"]["questions"]))
+
+    # ---- Full-scale read path and raw LongMemEval-S ----
+    read_full = load("read-path-locomo-full")
+    raw_full = load("full-longmemeval-raw")
+    for prefix, summary, names, filename in (
+        ("FullRead", read_full, ["raw-dense", "default", "dense-wide-reason", "rerank-reason"], "read-path-full.tex"),
+        ("FullLme", raw_full, ["raw-bm25", "raw-dense", "raw-hybrid", "dense-wide-reason", "rerank-reason"], "longmemeval-raw-full.tex"),
+    ):
+        body = []
+        for name in names:
+            e = summary["pipelines"][name]
+            body.append([
+                tt(name),
+                interval(e, "f1", "f1_low", "f1_high"),
+                interval(e, "judged_accuracy", "judged_low", "judged_high"),
+                diff(summary["paired"].get(name, {}).get("judged")) if name != "raw-dense" else "--",
+                f"{e['prompt_tokens_mean']:,}",
+            ])
+            tag = "".join(part.capitalize() for part in name.split("-"))
+            number(f"{prefix}{tag}Judged", pct(e["judged_accuracy"]))
+            number(f"{prefix}{tag}Fone", pct(e["f1"]))
+            number(f"{prefix}{tag}Tokens", f"{e['prompt_tokens_mean']:,}")
+            if name != "raw-dense":
+                d = summary["paired"][name]["judged"]
+                number(f"{prefix}{tag}VsDense", f"{100 * d[0]:+.1f}")
+                number(f"{prefix}{tag}VsDenseLow", f"{100 * d[1]:+.1f}")
+                number(f"{prefix}{tag}VsDenseHigh", f"{100 * d[2]:+.1f}")
+        table(filename, "lcccr", ["Pipeline", "F1", "Judged correct", "Vs. \\texttt{raw-dense}", "Tokens"], body)
+        number(f"{prefix}Questions", str(summary["settings"]["questions"]))
+    number("FullLmeEvidenceDense", pct(raw_full["pipelines"]["raw-dense"]["evidence_in_context"]))
+
+    full_context = {r["question_id"]: r for r in full_rows if r["pipeline"] == "full-context"}
+    read_full_by_question = {}
+    for row in rows("read-path-locomo-full"):
+        read_full_by_question.setdefault(row["question_id"], {})[row["pipeline"]] = row
+    for name, tag in (("dense-wide-reason", "WideReason"), ("rerank-reason", "RerankReason")):
+        pairs = [(variants[name]["judged_correct"], full_context[qid]["judged_correct"])
+                 for qid, variants in read_full_by_question.items()]
+        d = paired_difference([p[0] for p in pairs], [p[1] for p in pairs])
+        number(f"FullRead{tag}VsFull", f"{100 * d[0]:+.1f}")
+        number(f"FullRead{tag}VsFullLow", f"{100 * d[1]:+.1f}")
+        number(f"FullRead{tag}VsFullHigh", f"{100 * d[2]:+.1f}")
+        share = 100 * read_full["pipelines"][name]["prompt_tokens_mean"] / locomo["pipelines"]["full-context"]["prompt_tokens_mean"]
+        number(f"FullRead{tag}TokenShare", f"{share:.0f}")
+    d = paired_difference(
+        [v["rerank-reason"]["judged_correct"] for v in read_full_by_question.values()],
+        [v["dense-wide-reason"]["judged_correct"] for v in read_full_by_question.values()],
+    )
+    number("FullReadRerankReasonVsWide", f"{100 * d[0]:+.1f}")
+    number("FullReadRerankReasonVsWideLow", f"{100 * d[1]:+.1f}")
+    number("FullReadRerankReasonVsWideHigh", f"{100 * d[2]:+.1f}")
+
+    raw_full_by_question = {}
+    for row in rows("full-longmemeval-raw"):
+        raw_full_by_question.setdefault(row["question_id"], {})[row["pipeline"]] = row
+    d = paired_difference(
+        [v["rerank-reason"]["judged_correct"] for v in raw_full_by_question.values()],
+        [v["dense-wide-reason"]["judged_correct"] for v in raw_full_by_question.values()],
+    )
+    number("FullLmeRerankReasonVsWide", f"{100 * d[0]:+.1f}")
+    number("FullLmeRerankReasonVsWideLow", f"{100 * d[1]:+.1f}")
+    number("FullLmeRerankReasonVsWideHigh", f"{100 * d[2]:+.1f}")
 
     # ---- The narrower test for the graph ----
     role, role_strict, role_old = load("graph-role-locomo"), load("graph-role-locomo-pro-judge"), load("graph-role-locomo-old-dates")

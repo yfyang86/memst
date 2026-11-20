@@ -356,10 +356,52 @@ Reading them:
 - These are small samples. On LoCoMo the gain of `rerank-reason` over
   `raw-dense` is 10.1 points (interval 3.6 to 17.4); by the stricter judge
   6.5 (0.0 to 13.0). On LongMemEval-S it is 22 points (6 to 44) on 18
-  questions. The direction is consistent; the sizes need the full runs.
+  questions. The full runs below test whether those gains survive at scale.
 
-`dense-wide-reason` and `rerank-reason` are now built-in pipelines and part
-of the default set, so the next full run measures them at scale.
+### Full-scale read-path confirmation (20 November 2026)
+
+The two promising raw pipelines and their baselines were run on all 1,986
+LoCoMo questions. Output: `benchmarks/results/read-path-locomo-full/` (7,944
+answers, no reader or judge errors). Judged accuracy uses the original judge;
+the stricter judge has not regraded this full run.
+
+| Pipeline | Judged correct | Paired difference from `raw-dense` (95% interval) | Prompt tokens |
+|---|---:|---:|---:|
+| raw-dense | 72.6% | — | 1,068 |
+| default | 70.8% | −1.8 (−3.7 to +0.2) | 1,526 |
+| dense-wide-reason | 79.9% | +7.3 (+5.6 to +8.9) | 2,093 |
+| rerank-reason | 81.7% | +9.1 (+7.4 to +10.8) | 4,516 |
+
+Both reasoning pipelines beat the 75.5% full-context result from the original
+full LoCoMo run on the same questions: by 4.4 points (2.4 to 6.4) for
+`dense-wide-reason` and 6.2 (4.3 to 8.1) for `rerank-reason`, at 7% and 15% of
+its prompt tokens. Reranking is 1.8 points ahead of wide dense retrieval (0.4
+to 3.3). The graph pipeline gives no gain over `raw-dense`.
+
+All 500 LongMemEval-S questions were also run for every raw pipeline. Output:
+`benchmarks/results/full-longmemeval-raw/` (2,500 answers, no reader or judge
+errors). Full context was deliberately omitted to avoid 500 prompts of about
+112,000 tokens each.
+
+| Pipeline | Judged correct | Paired difference from `raw-dense` (95% interval) | Prompt tokens |
+|---|---:|---:|---:|
+| raw-bm25 | 65.8% | −1.8 (−4.4 to +1.2) | 5,054 |
+| raw-dense | 67.6% | — | 4,143 |
+| raw-hybrid | 67.2% | −0.4 (−3.0 to +2.4) | 4,818 |
+| dense-wide-reason | 88.2% | +20.6 (+16.6 to +24.6) | 8,029 |
+| rerank-reason | 88.6% | +21.0 (+17.2 to +25.0) | 10,558 |
+
+The pilot's central result therefore holds at scale: the reasoning read path,
+not the graph, is the large improvement. On LongMemEval-S, however, reranking
+adds only 0.4 point over `dense-wide-reason` (−1.8 to +2.6), so the cheaper
+wide-dense pipeline is sufficient there. Raw dense retrieval already includes
+an answer turn for 98.8% of questions while the direct reader answers 67.6%,
+which again locates most of the loss in reading rather than retrieval.
+
+Both full runs were resumed after transient provider failures. Accuracy and
+prompt-token aggregates include every answer exactly once, but the
+`rerank-reason` retrieval timings mix live and cached calls and are not
+cold-start latency measurements.
 
 ### A narrower job for the graph (roadmap 5c)
 
@@ -445,16 +487,16 @@ searched by relationship. `pipelines-longmemeval/` used an earlier sampler
 and reader prompt.
 
 Limits: one reader model with reasoning off, one embedding model, judges from
-one provider, extraction that is not deterministic, pipeline settings chosen
-on the 138-question pilot and not tuned further, a 60-question LongMemEval
-sample, and only the knowledge-graph part of MemSt.
+one provider, extraction that is not deterministic, and pipeline settings chosen
+on the 138-question pilot and not tuned further. The main LongMemEval-S graph
+comparison uses 60 questions, and the full-scale read-path runs have not been
+regraded by the stricter judge. Only the knowledge-graph part of MemSt is
+covered.
 
 ## Not covered yet
 
-- All 500 LongMemEval-S questions (for the raw pipelines this needs no
-  extraction; see RUNNING.md), and the other benchmarks in the research notes.
-- A judge from a different provider, and the official LongMemEval judge.
-- The read-path pipelines at full scale.
-- A narrower job for the graph (dates and superseded facts) with a pass/fail
-  test against raw retrieval.
+- Full-context and graph pipelines on all 500 LongMemEval-S questions, and the
+  other benchmarks in the research notes.
+- A judge from a different provider, the official LongMemEval judge, and strict
+  regrading of the full-scale read-path runs.
 - Sleep-time consolidation, decay and the memory tiers.
