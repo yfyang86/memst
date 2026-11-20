@@ -30,6 +30,9 @@ def one(args, runner, scenario) -> dict:
     store = work / "store"
     try:
         runner.seed(store, scenario)
+        # The one note in memory now is the wrong one. (A corrected note is
+        # rewritten under the pass's name, so it has to be found beforehand.)
+        seeded = list((store / "memory" / "tester" / "notes").glob("*.md"))
         fill(store, "tester", args.notes, args.notes // 10, seed=scenario.instance, subjects=True)
         notes = store / "memory" / "tester" / "notes"
         held_chars = sum(len(path.read_text()) for path in notes.glob("*.md"))
@@ -40,9 +43,7 @@ def one(args, runner, scenario) -> dict:
         out = done.stdout + done.stderr
         read = re.search(r"Read (\d+) transcript entries beside (\d+) of (\d+) notes; a prompt of about (\d+) tokens", out)
         applied = re.search(r"Applied: (\d+) corrected, (\d+) disputed, (\d+) added, (\d+) page", out)
-        # The note the scenario seeded is the one written through the server.
-        seeded = [path for path in notes.glob("*.md") if "source: mcp:" in path.read_text()]
-        text = "\n".join(path.read_text() for path in seeded).lower()
+        text = "\n".join(path.read_text() for path in seeded if path.exists()).lower()
         row = {
             "scenario": scenario.id,
             "corrected": bool(re.search(scenario.corrected, text)),
