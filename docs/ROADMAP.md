@@ -385,8 +385,52 @@ search alone in the question-answering harness.
   prompt tokens of one with a nearly empty memory.
 - **Not done:** pages plus search against search alone.
 
-Next: **14** deletion and locking in the session store; **15** what
-versioning is worth; **16** a second agent and the release.
+**14. Deletion and locking in the session store** *(done; the cascade is
+partial)*.
+
+- **One message can be deleted** (`memst message delete`,
+  `SessionStore::delete_message`): the message file and its index are
+  rewritten without it, a tombstone records the id and nothing else, and its
+  search entry is removed.
+- **The graph follows.** Deleting a message removes the facts extracted
+  from it and the entities nothing else refers to; deleting a session does
+  the same for the session. Works on the JSON and HelixDB backends.
+- **The search index really forgets.** With tantivy, a deleted document's
+  text stayed in its segment file until a merge that might never come; this
+  applied to session deletion too. Deletion now forces the merge.
+- **The store is locked per operation**, not for the life of a handle. A
+  long-running process (the Python module, a server) no longer blocks every
+  other process, and two handles in one process take turns where they used
+  to deadlock. `SessionStore::hold` keeps the lock across several
+  operations when that is wanted.
+
+Not reached by deleting a message: memory items and summaries made from it
+(no record of their sources), the operations log, and facts a later message
+restated. Deleting from the history of the versioned session repository
+(design D) is not built.
+
+**15. What versioning is worth** *(done)*.
+
+- **Reading the past.** `memory_as_of` gives the notes as they stood at a
+  given time; what was forgotten since is not shown.
+- **Merging.** `memst mcp merge` joins two copies of an owner's memory
+  three ways: one-sided changes kept, conflicting changes both kept,
+  anything either copy forgot stays forgotten (also across later merges),
+  everything incoming unverified and screened. Tested without a model.
+- **Round 4 of the evaluation** (60 runs; criterion and expectation written
+  first): what did the notes say at an earlier moment? With the as-of read
+  20/20; with transcripts 19/20; with the current notes alone 8/10 when the
+  change had been said and 0/10 when the note had been edited by hand. We
+  expected transcripts to match the as-of read, and on accuracy they did.
+  They took four times the prompt tokens and five to six times the time.
+
+What this says about versioning: for recall of past values it is not more
+accurate than keeping transcripts; it is much cheaper, and it is the only
+source for a note's own earlier text. Undo, the record of who changed what,
+and merging are things transcripts do not give at all. The three-way merge
+in `memst-repo` for the session store is still not connected to anything.
+
+Next: **16** a second agent and the release.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost

@@ -240,7 +240,7 @@ async fn a_read_only_server_changes_nothing() {
     let service = open(dir.path(), "alice", true, WritePolicy::default());
     let reader = McpAdapter::connected(service.clone());
     let tools: Vec<String> = reader.manifest().tools.into_iter().map(|t| t.name).collect();
-    assert_eq!(tools, ["memory_context", "memory_search", "memory_read", "memory_get", "memory_history", "memory_status"]);
+    assert_eq!(tools, ["memory_context", "memory_search", "memory_read", "memory_get", "memory_history", "memory_as_of", "memory_status"]);
     assert!(call(&reader, "memory_write", json!({"content": "x"})).await.unwrap_err().contains("unknown tool"));
     assert!(call(&reader, "memory_forget", json!({"id": id})).await.unwrap_err().contains("unknown tool"));
     assert!(call(&reader, "transcript_append", json!({"session": "s", "role": "user", "text": "x"})).await.unwrap_err().contains("unknown tool"));

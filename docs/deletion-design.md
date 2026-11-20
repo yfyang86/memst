@@ -77,16 +77,38 @@ of level 4.
   page's history, and discards any waiting proposal of the offline pass.
   This is the cascade of design B below, for the one kind of derived item
   MCP memory has. The pass rebuilds the pages from what remains.
-- **Sessions: level 2 for messages, memories, operations and the search
-  index.** `SessionStore::delete_session` removes the session's directory
-  and its entries in the search index. Before November 2026 it left the
-  index untouched, so a deleted session's text stayed searchable.
-- **Graph facts: level 1.** Superseding, deprecating and merging keep the
-  old record. Entities and relationships can be deleted one at a time.
+- **Sessions: level 2 for messages, memories, operations, the search index
+  and the graph.** `SessionStore::delete_session` removes the session's
+  directory and its entries in the search index, and `memst session delete`
+  first removes from the knowledge graph the relationships recorded by the
+  session (every version) and the entities first seen in it that no other
+  session saw and nothing else refers to (`KnowledgeGraph::forget_session`).
+- **Single messages: level 2** (sprint 14). `SessionStore::delete_message`
+  rewrites the message file and its index without the message, records the
+  id and time in `deleted.idx` with nothing of the content, and removes the
+  message's entry from the search index. `memst message delete` then removes
+  from the graph the relationships extracted from that message and the
+  entities first seen in it that nothing else refers to
+  (`KnowledgeGraph::forget_message`). Tests search every byte of the store.
+- **The search index really forgets.** With the tantivy backend a deleted
+  document was only marked: its stored text stayed in its segment file until
+  that segment happened to be merged. This was true of session deletion
+  since it was fixed in sprint 6. Deleting now merges the segments and
+  removes the unreferenced files, at the cost of a pass over the index; a
+  test fails without it.
+- **Graph facts otherwise: level 1.** Superseding, deprecating and merging
+  keep the old record. Entities and relationships can be deleted one at a
+  time.
+
+What a deleted message does not reach: memory items and summaries made
+from it (they carry no record of their sources), the operations log, and a
+fact that a later message restated (the graph records one source message
+per fact, so the fact goes with the first; extracting again from what
+remains brings it back).
 
 ## What is not, and the design for it
 
-### A. Deleting one message
+### A. Deleting one message *(built in sprint 14, as designed)*
 
 Messages are an append-only file with byte offsets in an index. Design:
 
@@ -100,7 +122,7 @@ Messages are an append-only file with byte offsets in an index. Design:
 3. Remove the message from the search index. This needs a delete-by-document
    operation in both index backends; today they can only delete a session.
 
-### B. Cascading to what was derived
+### B. Cascading to what was derived *(graph relationships and entities by their one source message: built; the rest is not)*
 
 A message that is deleted has usually been used. For each derived item the
 question is whether it still stands without that message.
@@ -128,7 +150,7 @@ deletion walks those links. Without that record, deletion is guesswork. This
 is the largest piece of work here, and it is the same provenance the
 security review asks for.
 
-### C. Deleting a session's facts from the graph
+### C. Deleting a session's facts from the graph *(built in sprint 14, in the command line)*
 
 `delete_session` does not touch `graph.helix`. Until B is built, the
 workable rule is by session: delete relationships whose session is the

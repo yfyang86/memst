@@ -206,3 +206,29 @@ fn a_new_store_gets_a_shared_graph() {
     assert!(HelixGraphBackend::exists(store.path()));
     assert!(!HelixGraphBackend::exists(&session_dir));
 }
+
+#[test]
+fn forgetting_a_message_removes_its_facts_from_the_shared_graph() {
+    let dir = TempDir::new().unwrap();
+    let mut graph = graph_for(dir.path(), "default");
+    let session = Uuid::new_v4();
+    let (m1, m2) = (Uuid::new_v4(), Uuid::new_v4());
+    let alice = graph.add_entity(Entity::new("Alice", "person", session).with_source(m1)).unwrap();
+    let lyon = graph.add_entity(Entity::new("Lyon", "place", session).with_source(m1)).unwrap();
+    let acme = graph.add_entity(Entity::new("Acme", "organisation", session).with_source(m2)).unwrap();
+    graph.add_relationship(Relationship::new(alice.id, "lives_in", lyon.id, session).with_source(m1)).unwrap();
+    graph.add_relationship(Relationship::new(alice.id, "works_at", acme.id, session).with_source(m2)).unwrap();
+
+    let gone = graph.forget_message(m1).unwrap();
+    assert_eq!((gone.relationships, gone.entities, gone.entities_kept), (1, 1, 1));
+    drop(graph);
+
+    // It is still gone after the database is opened again.
+    let mut graph = graph_for(dir.path(), "default");
+    assert!(graph.get_entity(lyon.id).unwrap().is_none());
+    assert!(graph.get_entity(alice.id).unwrap().is_some());
+    assert_eq!(graph.backend().relationship_count().unwrap(), 1);
+    let gone = graph.forget_session(session).unwrap();
+    assert_eq!((gone.relationships, gone.entities), (1, 2));
+    assert_eq!((graph.backend().entity_count().unwrap(), graph.backend().relationship_count().unwrap()), (0, 0));
+}

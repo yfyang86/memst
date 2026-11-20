@@ -20,12 +20,20 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .filler import fill
-from .scenarios import build, build_round2
+from datetime import datetime, timezone
+
+from .scenarios import build, build_round2, build_round4
 
 REPO = Path(__file__).resolve().parents[2]
 EXTENSION = REPO / "integrations" / "pi" / "extensions" / "memst.ts"
 CONDITIONS = ["none", "memory", "memory+dream"]
 MEMORY_TOOLS = "memory_search,memory_read,memory_get,memory_history,memory_write,memory_update,memory_forget"
+# Round 4: what the final session may use to answer a question about the past.
+PAST_TOOLS = {
+    "notes": "memory_read,memory_get",
+    "notes+transcripts": "memory_read,memory_get,memory_search",
+    "notes+asof": "memory_read,memory_get,memory_as_of",
+}
 
 
 class Runner:
@@ -38,12 +46,12 @@ class Runner:
         env.update({"MEMST_BIN": self.memst, "MEMST_STORE": str(store), "MEMST_OWNER": "tester"})
         return env
 
-    def pi(self, prompt: str, work: Path, store: Path, memory: bool) -> dict:
+    def pi(self, prompt: str, work: Path, store: Path, memory: bool, tools: str = MEMORY_TOOLS) -> dict:
         """One Pi session with one prompt. Returns its final answer and what it cost."""
         command = [self.args.pi, "--no-extensions", "--no-context-files", "--session-dir", str(work / "pi-sessions"), "--mode", "json"]
         # No file or shell tools in either condition: the only way anything
         # can carry over is memory. Without memory there are no tools at all.
-        command += ["-e", str(EXTENSION), "--tools", MEMORY_TOOLS] if memory else ["--no-tools"]
+        command += ["-e", str(EXTENSION), "--tools", tools] if memory else ["--no-tools"]
         command += ["--model", self.args.model, "-p", prompt]
         last_error = ""
         for _ in range(3):
@@ -111,10 +119,30 @@ class Runner:
         try:
             if memory and (scenario.seed_note or scenario.seed_said):
                 self.seed(store, scenario)
-            for prompt in scenario.sessions:
+            asked_at = None
+            for number, prompt in enumerate(scenario.sessions):
                 earlier = self.pi(prompt, work, store, memory)
                 if earlier.get("error"):
                     row["errors"].append(earlier["error"])
+                if scenario.asks_at and number == 0:
+                    # The moment the final question asks about: after the
+                    # fact was first stored, before it changes. Times in the
+                    # question are to the second.
+                    time.sleep(2)
+                    asked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    time.sleep(2)
+            if scenario.hand_edit:
+                old, new = scenario.hand_edit
+                edited = 0
+                for path in (store / "memory" / "tester" / "notes").glob("*.md"):
+                    text = path.read_text()
+                    changed = re.sub(re.escape(old), new, text, flags=re.I)
+                    if changed != text:
+                        path.write_text(changed)
+                        edited += 1
+                row["hand_edited"] = edited
+                if not edited:
+                    row["errors"].append("no note held the value to edit")
             if condition == "memory+dream":
                 extra = {"MEMST_LLM_API_URL": self.args.dream_api_url, "MEMST_LLM_MODEL": self.args.dream_model, "MEMST_LLM_API_KEY": os.environ.get("MEMST_LLM_API_KEY", "proxy-injected")}
                 words = ["dream", "--apply"] + (["--llm-extra", self.args.dream_extra] if self.args.dream_extra else [])
@@ -124,10 +152,11 @@ class Runner:
                 # scenario's own sessions, so that it is all newer.
                 size = int(condition.split("@")[1])
                 fill(store, "tester", size, size // 10, seed=scenario.instance)
-            final = self.pi(scenario.final, work, store, memory)
+            question = scenario.final.format(at=asked_at) if scenario.asks_at else scenario.final
+            final = self.pi(question, work, store, memory, PAST_TOOLS.get(condition, MEMORY_TOOLS))
             if final.get("error"):
                 row["errors"].append(final["error"])
-            row.update({"question": scenario.final, **final, **scenario.check(final["answer"])})
+            row.update({"question": question, **final, **scenario.check(final["answer"])})
             row["correct_allowing_history"] = row["correct"] or allows_history(scenario, final["answer"])
             if memory:
                 served = self.memst_cli(store, "notes")
@@ -238,6 +267,47 @@ def summarise2(rows):
     }
 
 
+def summarise4(rows):
+    """Round 4: questions about the past. Criterion V1 of the README; the
+    comparison between conditions is reported, not judged."""
+    cells = defaultdict(list)
+    for row in rows:
+        cells[(row["kind"], row["condition"])].append(row)
+    kinds, conditions = ["asof-said", "asof-edit"], list(PAST_TOOLS)
+    right = lambda kind, condition: sum(r["correct"] for r in cells[(kind, condition)])
+    table = {kind: {condition: [right(kind, condition), len(cells[(kind, condition)])] for condition in conditions} for kind in kinds}
+    v1 = all(right(kind, "notes+asof") >= 8 for kind in kinds)
+    cost = {}
+    for condition in conditions:
+        finals = [r for kind in kinds for r in cells[(kind, condition)]]
+        cost[condition] = {"prompt_tokens_mean": round(sum(r["prompt_tokens"] for r in finals) / max(1, len(finals))), "tool_calls_mean": round(sum(len(r["tools"]) for r in finals) / max(1, len(finals)), 2), "seconds_mean": round(sum(r["seconds"] for r in finals) / max(1, len(finals)), 1)}
+    return {
+        "table": table,
+        "criteria": {"V1": {"passed": v1, "detail": "; ".join(f"{kind}: {right(kind, 'notes+asof')}/10 with the as-of read" for kind in kinds)}},
+        "cost_of_final_session": cost,
+        "errors": sum(1 for r in rows if r["errors"]),
+    }
+
+
+def render4(summary, settings) -> str:
+    conditions = list(PAST_TOOLS)
+    lines = [
+        "# Memory in use, round 4 (what memory held at an earlier time): results",
+        "",
+        f"Agent: Pi {settings['pi_version']} with `{settings['model']}`. {settings['runs']} scenario runs; {summary['errors']} had a step that failed.",
+        "",
+        "Correct answers (the earlier value, given first), by what the final session could read:",
+        "",
+        "| Scenario | " + " | ".join(conditions) + " |",
+        "|---|" + "---|" * len(conditions),
+    ]
+    lines += [f"| {kind} | " + " | ".join(f"{row[c][0]}/{row[c][1]}" for c in conditions) + " |" for kind, row in summary["table"].items()]
+    v1 = summary["criteria"]["V1"]
+    lines += ["", f"V1: {'**pass**' if v1['passed'] else '**fail**'} ({v1['detail']}).", "", "Final session, on average:", "", "| Could read | Prompt tokens | Tool calls | Seconds |", "|---|---|---|---|"]
+    lines += [f"| {c} | {v['prompt_tokens_mean']:,} | {v['tool_calls_mean']} | {v['seconds_mean']} |" for c, v in summary["cost_of_final_session"].items()]
+    return "\n".join(lines) + "\n"
+
+
 def summarise3(rows):
     """Round 3: memory at size. Criteria S1 to S5 of the README."""
     cells = defaultdict(list)
@@ -335,7 +405,7 @@ def main():
     parser.add_argument("--dream-api-url", default=os.environ.get("MEMST_LLM_API_URL", "https://api.deepseek.com"))
     parser.add_argument("--dream-model", default=os.environ.get("MEMST_LLM_MODEL", "deepseek-flash"))
     parser.add_argument("--dream-extra", default='{"thinking":{"type":"disabled"}}', help="extra request fields for the offline pass, as JSON ('' for none)")
-    parser.add_argument("--round", type=int, default=1, choices=[1, 2, 3], help="1: the first evaluation; 2: sprint 12's (memory only); 3: sprint 13's (memory at size)")
+    parser.add_argument("--round", type=int, default=1, choices=[1, 2, 3, 4], help="1: the first evaluation; 2: sprint 12's (memory only); 3: sprint 13's (memory at size); 4: sprint 15's (questions about the past)")
     parser.add_argument("--sizes", default="500,5000", help="round 3: how many other notes the memory holds")
     parser.add_argument("--kinds", help="comma-separated scenario kinds (default: all)")
     parser.add_argument("--conditions", default=",".join(CONDITIONS))
@@ -356,7 +426,11 @@ def main():
         args.kinds = args.kinds or "recall,update,stale,abstain"
         if args.out == "benchmarks/results/sessions":
             args.out = "benchmarks/results/sessions-round3"
-    scenarios = [s for s in (build_round2() if args.round >= 2 else build()) if s.instance < args.instances and (not args.kinds or s.kind in args.kinds.split(","))]
+    if args.round == 4:
+        args.conditions = ",".join(PAST_TOOLS)
+        if args.out == "benchmarks/results/sessions":
+            args.out = "benchmarks/results/sessions-round4"
+    scenarios = [s for s in (build_round4() if args.round == 4 else build_round2() if args.round >= 2 else build()) if s.instance < args.instances and (not args.kinds or s.kind in args.kinds.split(","))]
     conditions = args.conditions.split(",")
     runner = Runner(args)
     jobs = [(scenario, condition) for scenario in scenarios for condition in conditions]
@@ -376,8 +450,8 @@ def main():
     shown = subprocess.run([args.pi, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True)
     version = (shown.stdout + shown.stderr).strip().splitlines()[-1] if (shown.stdout + shown.stderr).strip() else "unknown"
     settings = {"pi_version": version, "model": args.model, "dream_model": args.dream_model, "runs": len(rows)}
-    summary = {1: summarise, 2: summarise2, 3: summarise3}[args.round](rows)
-    report = {1: render, 2: render2, 3: render3}[args.round](summary, settings)
+    summary = {1: summarise, 2: summarise2, 3: summarise3, 4: summarise4}[args.round](rows)
+    report = {1: render, 2: render2, 3: render3, 4: render4}[args.round](summary, settings)
     (out / "summary.json").write_text(json.dumps({"settings": settings, **summary}, indent=2))
     (out / "REPORT.md").write_text(report)
     print(report)

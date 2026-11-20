@@ -10,7 +10,7 @@ What a session gets:
   first line, with whether you approved each one. It is fetched once per
   session, so the prompt stays the same from turn to turn.
 - **Tools for the model**: `memory_search`, `memory_read`, `memory_get`,
-  `memory_history`, `memory_write`, `memory_update`, `memory_forget`.
+  `memory_as_of`, `memory_history`, `memory_write`, `memory_update`, `memory_forget`.
 - **A record of the session.** What you and the assistant say is appended to
   a transcript that later sessions can search. Tool output is not recorded.
 - **`/memory` for you**: review and approve notes, pin, forget, see the

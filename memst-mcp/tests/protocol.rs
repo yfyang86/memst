@@ -50,7 +50,7 @@ fn a_session_from_handshake_to_tool_calls() {
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
-        ["memory_context", "memory_search", "memory_read", "memory_get", "memory_history", "memory_status", "memory_write", "memory_update", "memory_forget", "transcript_append"]
+        ["memory_context", "memory_search", "memory_read", "memory_get", "memory_history", "memory_as_of", "memory_status", "memory_write", "memory_update", "memory_forget", "transcript_append"]
     );
     for tool in tools {
         assert_eq!(tool["inputSchema"]["type"], "object", "{tool}");
@@ -124,5 +124,5 @@ fn a_read_only_server_lists_no_writing_tools() {
     drop(server(dir.path(), false)); // creates the store
     let reply = server(dir.path(), true).handle_line(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).unwrap();
     let names: Vec<&str> = reply["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["memory_context", "memory_search", "memory_read", "memory_get", "memory_history", "memory_status"]);
+    assert_eq!(names, ["memory_context", "memory_search", "memory_read", "memory_get", "memory_history", "memory_as_of", "memory_status"]);
 }

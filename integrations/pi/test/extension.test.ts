@@ -98,7 +98,7 @@ test("a later session is given what an earlier one wrote", async () => {
 test("the model's tools cover reading, correcting and forgetting; a refusal reaches it as an error", async () => {
 	const store = mkdtempSync(join(tmpdir(), "memst-pi-"));
 	const host = await session(store);
-	assert.deepEqual([...host.tools.keys()].sort(), ["memory_forget", "memory_get", "memory_history", "memory_read", "memory_search", "memory_update", "memory_write"]);
+	assert.deepEqual([...host.tools.keys()].sort(), ["memory_as_of", "memory_forget", "memory_get", "memory_history", "memory_read", "memory_search", "memory_update", "memory_write"]);
 	for (const definition of host.tools.values()) {
 		assert.ok(definition.description.length > 20 && definition.label && definition.parameters.type === "object", definition.name);
 	}
@@ -141,7 +141,7 @@ test("read-only: nothing is written, recorded, or offered for writing", async ()
 	await writer.fire("session_shutdown", {});
 
 	const reader = await session(store, { readOnly: true });
-	assert.deepEqual([...reader.tools.keys()].sort(), ["memory_get", "memory_history", "memory_read", "memory_search"]);
+	assert.deepEqual([...reader.tools.keys()].sort(), ["memory_as_of", "memory_get", "memory_history", "memory_read", "memory_search"]);
 	await reader.fire("message_end", { message: { role: "user", content: "Remember that I like coffee." } });
 	assert.match((await reader.fire("before_agent_start", { prompt: "x", systemPrompt: "" })).systemPrompt, /Alice drinks tea\./);
 	assert.match(await reader.run("memory_search", { query: "tea" }), /tea/);

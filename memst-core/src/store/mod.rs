@@ -57,8 +57,31 @@ pub struct SessionStore {
     sessions_dir: PathBuf,
     /// Attachments directory path
     _attachments_dir: PathBuf,
-    /// Lock file
-    _lock_file: File,
+    /// The store's lock file. It is locked for the length of one operation,
+    /// not for the life of this handle.
+    lock_file: File,
+    /// Where the lock file is, for error messages.
+    lock_path: PathBuf,
+    /// How many operations of this handle are in progress, one inside
+    /// another (`append_message` reads the session's metadata, and so on).
+    /// The file is locked while this is above zero.
+    lock_depth: std::sync::Mutex<usize>,
+}
+
+/// Held for the length of one operation on the store. See
+/// [`SessionStore::hold`].
+pub struct StoreGuard<'a> {
+    store: &'a SessionStore,
+}
+
+impl Drop for StoreGuard<'_> {
+    fn drop(&mut self) {
+        let mut depth = self.store.lock_depth.lock().unwrap_or_else(|e| e.into_inner());
+        *depth -= 1;
+        if *depth == 0 {
+            let _ = fs2::FileExt::unlock(&self.store.lock_file);
+        }
+    }
 }
 
 impl Drop for SessionStore {
@@ -67,10 +90,10 @@ impl Drop for SessionStore {
     }
 }
 
-/// Take the store's lock, waiting a bounded time. A store handle holds the
-/// lock for as long as it lives, so another process with the store open (a
-/// server, a notebook) would otherwise make this one wait for ever, in
-/// silence. The wait is 30 seconds, or `MEMST_LOCK_TIMEOUT_SECS`.
+/// Take the store's lock, waiting a bounded time: 30 seconds, or
+/// `MEMST_LOCK_TIMEOUT_SECS`. Another process is normally inside the lock
+/// for the length of one operation only; if one holds it for longer, this
+/// says so instead of waiting for ever in silence.
 fn lock_store(file: &File, path: &Path) -> Result<()> {
     let wait = std::env::var("MEMST_LOCK_TIMEOUT_SECS").ok().and_then(|s| s.parse::<f64>().ok()).unwrap_or(30.0).max(0.0);
     let started = std::time::Instant::now();
@@ -111,14 +134,15 @@ impl SessionStore {
             .write(true)
             .create(true)
             .open(&lock_path)?;
-        lock_store(&lock_file, &lock_path)?;
 
         Ok(Self {
             _base_path: base_path.to_path_buf(),
             manifest_path,
             sessions_dir: base_path.join("sessions"),
             _attachments_dir: base_path.join("attachments"),
-            _lock_file: lock_file,
+            lock_file,
+            lock_path,
+            lock_depth: std::sync::Mutex::new(0),
         })
     }
 
@@ -136,15 +160,33 @@ impl SessionStore {
         // Open lock file
         let lock_path = base_path.join("store.lock");
         let lock_file = OpenOptions::new().read(true).write(true).open(&lock_path)?;
-        lock_store(&lock_file, &lock_path)?;
 
         Ok(Self {
             _base_path: base_path.to_path_buf(),
             manifest_path: base_path.join("manifest.json"),
             sessions_dir: base_path.join("sessions"),
             _attachments_dir: base_path.join("attachments"),
-            _lock_file: lock_file,
+            lock_file,
+            lock_path,
+            lock_depth: std::sync::Mutex::new(0),
         })
+    }
+
+    /// Take the store's lock until the returned guard is dropped.
+    ///
+    /// Every operation of the store does this for itself, so there is
+    /// normally no need to call it. Call it to make several operations one
+    /// step that no other process can come between (read, decide, write).
+    /// Other handles, in this process or another, wait their turn; they
+    /// give up after `MEMST_LOCK_TIMEOUT_SECS` (30 by default). Threads
+    /// sharing one handle are not kept apart by this.
+    pub fn hold(&self) -> Result<StoreGuard<'_>> {
+        let mut depth = self.lock_depth.lock().unwrap_or_else(|e| e.into_inner());
+        if *depth == 0 {
+            lock_store(&self.lock_file, &self.lock_path)?;
+        }
+        *depth += 1;
+        Ok(StoreGuard { store: self })
     }
 
     /// Get the path for a session.
@@ -166,6 +208,7 @@ impl SessionStore {
 
     /// Create a new session.
     pub fn create_session(&self, metadata: SessionMetadata) -> Result<Uuid> {
+        let _guard = self.hold()?;
         let session_id = Uuid::new_v4();
         let session_path = self.session_path(session_id);
 
@@ -215,6 +258,7 @@ impl SessionStore {
 
     /// Get a session's metadata.
     pub fn get_session(&self, session_id: Uuid) -> Result<Option<SessionMetadata>> {
+        let _guard = self.hold()?;
         let session_path = self.session_path(session_id);
         let metadata_path = session_path.join("metadata.json");
 
@@ -228,12 +272,14 @@ impl SessionStore {
 
     /// List all sessions.
     pub fn list_sessions(&self) -> Result<Vec<SessionSummary>> {
+        let _guard = self.hold()?;
         let manifest = self.read_manifest()?;
         Ok(manifest.sessions.values().cloned().collect())
     }
 
     /// Delete a session.
     pub fn delete_session(&self, session_id: Uuid) -> Result<()> {
+        let _guard = self.hold()?;
         let session_path = self.session_path(session_id);
 
         if !session_path.exists() {
@@ -260,8 +306,97 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Delete one message of a session, for good.
+    ///
+    /// The message file and its index are rewritten without it (to a
+    /// temporary file, renamed over the original, so a crash leaves the old
+    /// file or the new one). The message's id and the time are recorded in
+    /// `deleted.idx`, with nothing of its content, so that whatever cites
+    /// the id can say "deleted" and a copy made earlier does not bring it
+    /// back unnoticed. Its entry in the search index is removed.
+    ///
+    /// What was derived from the message elsewhere is not reached from
+    /// here: facts in the knowledge graph (see
+    /// `KnowledgeGraph::forget_message`), memory items, and summaries. The
+    /// operations log is not rewritten either.
+    pub fn delete_message(&self, session_id: Uuid, message_id: Uuid) -> Result<()> {
+        let _guard = self.hold()?;
+        let session_path = self.session_path(session_id);
+        if !session_path.exists() {
+            return Err(Error::SessionNotFound(session_id));
+        }
+        let messages = self.get_messages(session_id)?;
+        let Some(deleted) = messages.iter().find(|m| m.id == message_id) else {
+            return Err(Error::MessageNotFound(message_id));
+        };
+        let deleted_tokens = deleted.token_count.unwrap_or(0) as u64;
+
+        let options = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes();
+        let index_path = session_path.join("messages.idx");
+        let header = fs::read_to_string(&index_path)?.lines().next().unwrap_or_default().to_string();
+        let mut data = Vec::new();
+        let mut index = header + "\n";
+        for message in messages.iter().filter(|m| m.id != message_id) {
+            let encoded = options.serialize(message)?;
+            index.push_str(&format!(
+                "{} {} {} {} {}\n",
+                message.id,
+                data.len(),
+                encoded.len(),
+                message.timestamp.format("%Y-%m-%dT%H:%M:%SZ"),
+                message.role
+            ));
+            data.extend_from_slice(&encoded);
+        }
+        let replace = |path: PathBuf, bytes: &[u8]| -> Result<()> {
+            let temporary = path.with_extension("tmp");
+            fs::write(&temporary, bytes)?;
+            fs::rename(&temporary, &path)?;
+            Ok(())
+        };
+        replace(session_path.join("messages.bin"), &data)?;
+        replace(index_path, index.as_bytes())?;
+
+        let mut tombstones = OpenOptions::new().create(true).append(true).open(session_path.join("deleted.idx"))?;
+        writeln!(tombstones, "{} {}", message_id, Utc::now().format("%Y-%m-%dT%H:%M:%SZ"))?;
+
+        if self.search_index_path().exists() {
+            self.search_index()
+                .and_then(|index| index.delete_document(message_id))
+                .map_err(|e| Error::InvalidOperation(format!("message deleted, but its search entry was not: {e}")))?;
+        }
+
+        if let Some(mut metadata) = self.get_session(session_id)? {
+            metadata.message_count = metadata.message_count.saturating_sub(1);
+            metadata.token_count = metadata.token_count.saturating_sub(deleted_tokens);
+            fs::write(session_path.join("metadata.json"), serde_json::to_string_pretty(&metadata)?)?;
+            let mut manifest = self.read_manifest()?;
+            if let Some(summary) = manifest.sessions.get_mut(&session_id) {
+                summary.message_count = metadata.message_count;
+            }
+            self.write_manifest(&manifest)?;
+        }
+        Ok(())
+    }
+
+    /// The ids of messages deleted from a session, with when.
+    pub fn deleted_messages(&self, session_id: Uuid) -> Result<Vec<(Uuid, chrono::DateTime<Utc>)>> {
+        let _guard = self.hold()?;
+        let Ok(text) = fs::read_to_string(self.session_path(session_id).join("deleted.idx")) else {
+            return Ok(Vec::new());
+        };
+        Ok(text
+            .lines()
+            .filter_map(|line| {
+                let (id, when) = line.split_once(' ')?;
+                Some((Uuid::parse_str(id).ok()?, chrono::DateTime::parse_from_rfc3339(when).ok()?.with_timezone(&Utc)))
+            })
+            .collect())
+    }
+
     /// Append a message to a session.
     pub fn append_message(&self, session_id: Uuid, message: Message) -> Result<()> {
+        let _guard = self.hold()?;
         let session_path = self.session_path(session_id);
         let messages_path = session_path.join("messages.bin");
         let index_path = session_path.join("messages.idx");
@@ -322,6 +457,7 @@ impl SessionStore {
 
     /// Get all messages in a session.
     pub fn get_messages(&self, session_id: Uuid) -> Result<Vec<Message>> {
+        let _guard = self.hold()?;
         let session_path = self.session_path(session_id);
         let messages_path = session_path.join("messages.bin");
 
@@ -364,6 +500,7 @@ impl SessionStore {
         start: usize,
         end: usize,
     ) -> Result<Vec<Message>> {
+        let _guard = self.hold()?;
         let all_messages = self.get_messages(session_id)?;
         let messages: Vec<Message> = all_messages
             .into_iter()
@@ -375,6 +512,7 @@ impl SessionStore {
 
     /// Read the message index for a session.
     pub fn read_message_index(&self, session_id: Uuid) -> Result<Vec<MessageIndexEntry>> {
+        let _guard = self.hold()?;
         let session_path = self.session_path(session_id);
         let index_path = session_path.join("messages.idx");
 
@@ -423,6 +561,7 @@ impl SessionStore {
         session_id: Uuid,
         operation: crate::types::Operation,
     ) -> Result<()> {
+        let _guard = self.hold()?;
         let session_path = self.session_path(session_id);
         let ops_path = session_path.join("operations.log");
 
@@ -441,6 +580,7 @@ impl SessionStore {
 
     /// Get all operations for a session.
     pub fn get_operations(&self, session_id: Uuid) -> Result<Vec<crate::types::Operation>> {
+        let _guard = self.hold()?;
         let session_path = self.session_path(session_id);
         let ops_path = session_path.join("operations.log");
 
@@ -468,6 +608,7 @@ impl SessionStore {
         session_id: Uuid,
         query: crate::types::OperationQuery,
     ) -> Result<Vec<crate::types::Operation>> {
+        let _guard = self.hold()?;
         let all_ops = self.get_operations(session_id)?;
 
         let mut filtered: Vec<_> = all_ops
@@ -508,6 +649,7 @@ impl SessionStore {
         session_id: Uuid,
         op_type: crate::types::OperationType,
     ) -> Result<Vec<crate::types::Operation>> {
+        let _guard = self.hold()?;
         self.query_operations(
             session_id,
             crate::types::OperationQuery::new().by_type(op_type),
@@ -531,6 +673,7 @@ impl SessionStore {
         tier: crate::types::MemoryTier,
         item: crate::types::MemoryItem,
     ) -> Result<crate::types::MemoryItem> {
+        let _guard = self.hold()?;
         let tier_path = self.memory_tier_path(session_id, tier);
 
         // Ensure directory exists
@@ -556,6 +699,7 @@ impl SessionStore {
         session_id: Uuid,
         tier: crate::types::MemoryTier,
     ) -> Result<Vec<crate::types::MemoryItem>> {
+        let _guard = self.hold()?;
         let tier_path = self.memory_tier_path(session_id, tier);
         self.load_memories(&tier_path)
     }
@@ -566,6 +710,7 @@ impl SessionStore {
         session_id: Uuid,
         memory_id: Uuid,
     ) -> Result<Option<crate::types::MemoryItem>> {
+        let _guard = self.hold()?;
         for tier in [
             crate::types::MemoryTier::Working,
             crate::types::MemoryTier::ShortTerm,
@@ -581,6 +726,7 @@ impl SessionStore {
 
     /// Record an access to a memory and optionally promote.
     pub fn access_memory(&self, session_id: Uuid, memory_id: Uuid) -> Result<bool> {
+        let _guard = self.hold()?;
         // Find and update the memory
         for tier in [
             crate::types::MemoryTier::Working,
@@ -608,6 +754,7 @@ impl SessionStore {
         session_id: Uuid,
         query: crate::types::MemoryQuery,
     ) -> Result<Vec<crate::types::MemoryItem>> {
+        let _guard = self.hold()?;
         let mut results = Vec::new();
 
         // Search all tiers
@@ -666,6 +813,7 @@ impl SessionStore {
         memory_id: Uuid,
         change: impl FnOnce(&mut crate::types::MemoryItem),
     ) -> Result<bool> {
+        let _guard = self.hold()?;
         for tier in [
             crate::types::MemoryTier::Working,
             crate::types::MemoryTier::ShortTerm,
@@ -692,6 +840,7 @@ impl SessionStore {
     /// index it was added to, a commit that captured it, a backup) are not
     /// touched; see `docs/deletion-design.md`.
     pub fn remove_memory(&self, session_id: Uuid, memory_id: Uuid) -> Result<Option<crate::types::MemoryItem>> {
+        let _guard = self.hold()?;
         for tier in [
             crate::types::MemoryTier::Working,
             crate::types::MemoryTier::ShortTerm,
@@ -718,6 +867,7 @@ impl SessionStore {
         memory_id: Uuid,
         to_tier: crate::types::MemoryTier,
     ) -> Result<bool> {
+        let _guard = self.hold()?;
         // Find and remove from current tier
         for tier in [
             crate::types::MemoryTier::Working,
@@ -804,12 +954,14 @@ impl SessionStore {
 
     /// Get or create the search index for this store.
     pub fn search_index(&self) -> anyhow::Result<super::search::SearchIndex> {
+        let _guard = self.hold()?;
         let path = self.search_index_path();
         Ok(super::search::SearchIndex::new(&path)?)
     }
 
     /// Index a message in the search engine.
     pub fn index_message(&self, session_id: Uuid, message: &Message) -> anyhow::Result<()> {
+        let _guard = self.hold()?;
         let index = self.search_index()?;
         let _role_str = match message.role {
             crate::types::Role::System => "system",
@@ -829,6 +981,9 @@ impl SessionStore {
                 .join("\n"),
         };
         index.add_message(session_id, message.id, &content, "", message.timestamp)?;
+        // The native index keeps what it is given in memory until told to
+        // write it; this handle is dropped on return.
+        index.commit()?;
         Ok(())
     }
 
@@ -838,6 +993,7 @@ impl SessionStore {
         session_id: Uuid,
         memory: &crate::types::MemoryItem,
     ) -> anyhow::Result<()> {
+        let _guard = self.hold()?;
         let index = self.search_index()?;
         index.add_memory(
             session_id,
@@ -847,6 +1003,7 @@ impl SessionStore {
             memory.confidence,
             memory.created_at,
         )?;
+        index.commit()?;
         Ok(())
     }
 
@@ -855,6 +1012,7 @@ impl SessionStore {
         &self,
         query: super::search::SearchQuery,
     ) -> anyhow::Result<Vec<super::search::SearchResult>> {
+        let _guard = self.hold()?;
         let index = self.search_index()?;
         index.search(query)
     }
@@ -866,6 +1024,7 @@ impl SessionStore {
         terms: Vec<String>,
         limit: usize,
     ) -> anyhow::Result<Vec<super::search::SearchResult>> {
+        let _guard = self.hold()?;
         let index = self.search_index()?;
         index.search(
             super::search::SearchQuery::new()
@@ -882,6 +1041,7 @@ impl SessionStore {
         session_id: Option<Uuid>,
         limit: usize,
     ) -> anyhow::Result<Vec<super::search::SearchResult>> {
+        let _guard = self.hold()?;
         let index = self.search_index()?;
         let mut query = super::search::SearchQuery::new()
             .with_terms(terms)
@@ -900,6 +1060,7 @@ impl SessionStore {
         session_id: Option<Uuid>,
         limit: usize,
     ) -> anyhow::Result<Vec<super::search::SearchResult>> {
+        let _guard = self.hold()?;
         let index = self.search_index()?;
         let mut query = super::search::SearchQuery::new()
             .with_terms(terms)
@@ -913,13 +1074,16 @@ impl SessionStore {
 
     /// Delete a session from the search index.
     pub fn delete_session_from_index(&self, session_id: Uuid) -> anyhow::Result<()> {
+        let _guard = self.hold()?;
         let index = self.search_index()?;
         index.delete_session(session_id)?;
+        index.commit()?;
         Ok(())
     }
 
     /// Get the number of indexed documents.
     pub fn search_index_count(&self) -> anyhow::Result<u64> {
+        let _guard = self.hold()?;
         let index = self.search_index()?;
         Ok(index.count())
     }
@@ -951,17 +1115,71 @@ mod tests {
     }
 
     #[test]
-    fn a_store_in_use_is_reported_instead_of_waited_for_without_end() {
+    fn two_handles_take_turns_and_a_held_store_is_reported() {
         let temp_dir = TempDir::new().unwrap();
-        let held = SessionStore::init(temp_dir.path()).unwrap();
+        let first = SessionStore::init(temp_dir.path()).unwrap();
+        // A second handle on the same store used to wait for ever.
+        let second = SessionStore::open(temp_dir.path()).unwrap();
+        let a = first.create_session(SessionMetadata::default()).unwrap();
+        let b = second.create_session(SessionMetadata::default()).unwrap();
+        first.append_message(b, Message::new(Role::User, Content::Text("from the first handle".into()))).unwrap();
+        second.append_message(a, Message::new(Role::User, Content::Text("from the second handle".into()))).unwrap();
+        assert_eq!(first.list_sessions().unwrap().len(), 2);
+        assert_eq!(second.get_messages(b).unwrap().len(), 1);
+
+        // While one handle holds the store across several operations, the
+        // other waits, and says so when the wait runs out.
+        let held = first.hold().unwrap();
+        first.append_message(a, Message::new(Role::User, Content::Text("inside the hold".into()))).unwrap();
         std::env::set_var("MEMST_LOCK_TIMEOUT_SECS", "0.2");
-        let started = std::time::Instant::now();
-        let refused = SessionStore::open(temp_dir.path());
+        let refused = second.list_sessions();
         std::env::remove_var("MEMST_LOCK_TIMEOUT_SECS");
         assert!(matches!(&refused, Err(Error::LockError(reason)) if reason.contains("in use by another MemSt process")));
-        assert!(started.elapsed() < std::time::Duration::from_secs(5));
         drop(held);
-        assert!(SessionStore::open(temp_dir.path()).is_ok());
+        assert_eq!(second.get_messages(a).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn one_message_can_be_deleted_for_good() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = SessionStore::init(temp_dir.path()).unwrap();
+        let session = store.create_session(SessionMetadata::default()).unwrap();
+        let mut ids = Vec::new();
+        for text in ["The first thing said.", "My passport number is XK-4471 zebra.", "The third thing said."] {
+            let message = Message::new(Role::User, Content::Text(text.into()));
+            ids.push(message.id);
+            store.append_message(session, message.clone()).unwrap();
+            store.index_message(session, &message).unwrap();
+        }
+        let found = |term: &str| store.search_messages(vec![term.to_string()], None, 10).unwrap().len();
+        assert_eq!((found("zebra"), found("third")), (1, 1));
+
+        store.delete_message(session, ids[1]).unwrap();
+
+        let left = store.get_messages(session).unwrap();
+        assert_eq!(left.iter().map(|m| m.id).collect::<Vec<_>>(), [ids[0], ids[2]]);
+        let index = store.read_message_index(session).unwrap();
+        assert_eq!(index.iter().map(|e| e.message_id).collect::<Vec<_>>(), [ids[0], ids[2]]);
+        assert_eq!(index[0].byte_offset, 0);
+        assert_eq!(index[1].byte_offset, index[0].byte_length);
+        assert_eq!(store.get_session(session).unwrap().unwrap().message_count, 2);
+        assert_eq!((found("zebra"), found("third")), (0, 1));
+        assert_eq!(store.deleted_messages(session).unwrap().iter().map(|(id, _)| *id).collect::<Vec<_>>(), [ids[1]]);
+
+        // Not a byte of it is left under the store.
+        fn holds(path: &Path, needle: &[u8]) -> bool {
+            fs::read_dir(path).unwrap().flatten().any(|entry| {
+                let path = entry.path();
+                if path.is_dir() { holds(&path, needle) } else { fs::read(&path).unwrap().windows(needle.len()).any(|w| w == needle) }
+            })
+        }
+        assert!(!holds(temp_dir.path(), b"XK-4471"));
+        assert!(holds(temp_dir.path(), b"third thing"));
+
+        // Appending still works, and a second delete says it is gone.
+        store.append_message(session, Message::new(Role::User, Content::Text("A fourth.".into()))).unwrap();
+        assert_eq!(store.get_messages(session).unwrap().len(), 3);
+        assert!(matches!(store.delete_message(session, ids[1]), Err(Error::MessageNotFound(_))));
     }
 
     #[test]

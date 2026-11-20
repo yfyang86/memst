@@ -382,10 +382,21 @@ impl super::SearchIndexBackend for TantivySearchIndex {
 
         index_writer.delete_term(session_term);
         index_writer.commit()?;
+        self.purge_deleted(&mut index_writer)?;
 
         // Refresh the reader to see the deleted documents
         self.reader.reload()?;
 
+        Ok(())
+    }
+
+    /// Delete one document by its id.
+    fn delete_document(&self, doc_id: Uuid) -> Result<()> {
+        let mut index_writer: tantivy::IndexWriter<tantivy::TantivyDocument> = self.index.writer(50_000_000)?;
+        index_writer.delete_term(Term::from_field_text(self.schema.doc_id_field, &doc_id.to_string()));
+        index_writer.commit()?;
+        self.purge_deleted(&mut index_writer)?;
+        self.reader.reload()?;
         Ok(())
     }
 
@@ -508,11 +519,61 @@ impl ExtendedSearchQuery {
     }
 }
 
+impl TantivySearchIndex {
+    /// Rewrite the index without the documents that were deleted.
+    ///
+    /// Deleting in tantivy marks a document; its stored text stays in its
+    /// segment file until that segment is next merged, which may be never.
+    /// For "delete" to mean the text is gone from disk, the segments are
+    /// merged now and the files nothing refers to are removed. This costs a
+    /// pass over the whole index for each deletion.
+    fn purge_deleted(&self, index_writer: &mut tantivy::IndexWriter<tantivy::TantivyDocument>) -> Result<()> {
+        let segments = self.index.searchable_segment_ids()?;
+        if !segments.is_empty() {
+            index_writer.merge(&segments).wait()?;
+        }
+        index_writer.garbage_collect_files().wait()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::search::SearchIndexBackend;
     use chrono::Utc;
+
+    #[test]
+    fn a_deleted_document_is_not_left_in_a_segment_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let index = create_test_index(&dir);
+        let session = Uuid::new_v4();
+        let secret = Uuid::new_v4();
+        for i in 0..6 {
+            index.add_message(session, Uuid::new_v4(), &format!("ordinary remark number {i} about the weather"), "user", Utc::now()).unwrap();
+        }
+        index.add_message(session, secret, "my passport number is XK-4471-ZEBRA", "user", Utc::now()).unwrap();
+        // Put everything in one segment, as tantivy's own merging would in
+        // time: a deleted document then shares a file with live ones.
+        {
+            let mut writer: tantivy::IndexWriter<tantivy::TantivyDocument> = index.index.writer(50_000_000).unwrap();
+            let segments = index.index.searchable_segment_ids().unwrap();
+            writer.merge(&segments).wait().unwrap();
+            writer.garbage_collect_files().wait().unwrap();
+        }
+        fn holds(path: &std::path::Path, needle: &[u8]) -> bool {
+            std::fs::read_dir(path).unwrap().flatten().any(|entry| {
+                let path = entry.path();
+                if path.is_dir() { holds(&path, needle) } else { std::fs::read(&path).unwrap().windows(needle.len()).any(|w| w == needle) }
+            })
+        }
+        assert!(holds(dir.path(), b"XK-4471"), "the test needs the text to be readable in the index files");
+
+        index.delete_document(secret).unwrap();
+        assert!(!holds(dir.path(), b"XK-4471"));
+        assert!(holds(dir.path(), b"weather"));
+        assert_eq!(index.count(), 6);
+    }
 
     fn create_test_index(dir: &tempfile::TempDir) -> TantivySearchIndex {
         let path = dir.path().join("tantivy_search");

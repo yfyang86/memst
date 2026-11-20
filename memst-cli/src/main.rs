@@ -186,6 +186,18 @@ enum McpCommand {
         /// A revision id (or its first characters) from `history`
         revision: String,
     },
+    /// Merge another copy of this owner's memory (from another machine or
+    /// another agent) into this one. Changes made in one copy are kept;
+    /// notes changed differently in both are both kept, for you to decide;
+    /// what was forgotten in either stays forgotten. The other copy is
+    /// only read. `restore` undoes the merge, except the forgetting.
+    Merge {
+        /// The other copy's store directory
+        other_store: PathBuf,
+        /// The owner's name in the other store, if it differs
+        #[arg(long)]
+        other_owner: Option<String>,
+    },
     /// Review memory offline: check the notes against what was said, add
     /// what was missed, and build pages. Without `--apply` the proposal is
     /// shown and kept for you to look at; nothing changes.
@@ -245,10 +257,19 @@ enum SessionCommand {
         id: Uuid,
     },
 
-    #[command(about = "Delete a session")]
+    /// Delete a session: its messages, memories, search entries, and the
+    /// facts the knowledge graph took from it.
     Delete {
         /// Session ID
         id: Uuid,
+
+        /// Graph backend holding the session's facts: auto, json or helix
+        #[arg(long, default_value = "auto")]
+        graph_backend: String,
+
+        /// Whose graph to remove the session's facts from
+        #[arg(long, default_value = "default")]
+        owner: String,
     },
 }
 
@@ -284,6 +305,24 @@ enum MessageCommand {
         /// Skip first N messages
         #[arg(long, default_value = "0")]
         offset: u32,
+    },
+
+    /// Delete one message for good, with its search entry and the facts
+    /// the knowledge graph took from it.
+    Delete {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Message ID (shown by `message list`)
+        message_id: Uuid,
+
+        /// Graph backend holding the session's facts: auto, json or helix
+        #[arg(long, default_value = "auto")]
+        graph_backend: String,
+
+        /// Whose graph to remove the message's facts from
+        #[arg(long, default_value = "default")]
+        owner: String,
     },
 }
 
@@ -603,6 +642,17 @@ fn open_graph(
     }
 }
 
+/// Whether there is a knowledge graph that could hold this session's facts.
+/// Deleting must not create one as a side effect.
+fn graph_exists(store_dir: &std::path::Path, session_dir: &std::path::Path) -> bool {
+    #[cfg(feature = "helix")]
+    if memst_graph_helix::HelixGraphBackend::exists(store_dir) || memst_graph_helix::HelixGraphBackend::exists(session_dir) {
+        return true;
+    }
+    let _ = store_dir;
+    session_dir.join("graph.json").exists()
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -659,7 +709,21 @@ fn main() -> Result<()> {
                     }
                 }
 
-                SessionCommand::Delete { id } => {
+                SessionCommand::Delete { id, graph_backend, owner } => {
+                    if store.get_session(*id)?.is_none() {
+                        anyhow::bail!("Session not found: {id}");
+                    }
+                    // The graph first: a session from an older MemSt keeps
+                    // its graph in its own directory, which is about to go.
+                    let session_path = store.session_path(*id);
+                    if graph_exists(&args.store, &session_path) {
+                        let mut graph = open_graph(&args.store, &session_path, graph_backend, owner, false)?;
+                        let gone = graph.forget_session(*id)?;
+                        println!(
+                            "Removed from the knowledge graph: {} fact(s), {} entit(ies); {} entit(ies) kept because something else refers to them.",
+                            gone.relationships, gone.entities, gone.entities_kept
+                        );
+                    }
                     store.delete_session(*id)?;
                     println!("Deleted session: {}", id);
                 }
@@ -699,6 +763,22 @@ fn main() -> Result<()> {
                 println!("Added message to session {}: {}", session_id, message_id);
             }
 
+            MessageCommand::Delete { session_id, message_id, graph_backend, owner } => {
+                let store = SessionStore::open(&args.store)?;
+                store.delete_message(*session_id, *message_id)?;
+                println!("Deleted message {message_id}, and its entry in the search index.");
+                let session_path = store.session_path(*session_id);
+                if graph_exists(&args.store, &session_path) {
+                    let mut graph = open_graph(&args.store, &session_path, graph_backend, owner, false)?;
+                    let gone = graph.forget_message(*message_id)?;
+                    println!(
+                        "Removed from the knowledge graph: {} fact(s), {} entit(ies); {} entit(ies) kept because something else refers to them.",
+                        gone.relationships, gone.entities, gone.entities_kept
+                    );
+                }
+                println!("Not reached: memory items and summaries made from the message, and the operations log.");
+            }
+
             MessageCommand::List {
                 session_id,
                 limit,
@@ -733,10 +813,11 @@ fn main() -> Result<()> {
                                 .join("\n"),
                         };
                         println!(
-                            "\n{}{} {}:",
+                            "\n{}{} {} (id {}):",
                             role_str,
                             i + *offset as usize,
-                            msg.timestamp.format("%Y-%m-%d %H:%M")
+                            msg.timestamp.format("%Y-%m-%d %H:%M"),
+                            msg.id
                         );
                         println!("{}", content);
                     }
@@ -1160,6 +1241,29 @@ fn main() -> Result<()> {
                     if skipped > 0 {
                         println!("{skipped} note(s) that were forgotten since then were not brought back.");
                     }
+                }
+                McpCommand::Merge { other_store, other_owner } => {
+                    let other = other_store.join("memory").join(other_owner.as_deref().unwrap_or(owner));
+                    let done = mine()?.merge_from(&other).map_err(refused)?;
+                    match &done.common_revision {
+                        Some(revision) => println!("The two copies were the same at revision {}.", &revision[..12.min(revision.len())]),
+                        None => println!("The two copies share no history: every note that differs is treated as changed in both."),
+                    }
+                    println!("Notes: {} updated from the other copy, {} added, {} removed.", done.taken, done.added, done.removed);
+                    if done.forgotten + done.kept_forgotten > 0 {
+                        println!("Forgotten: {} note(s) the other copy had forgotten are now forgotten here; {} forgotten here were not brought back.", done.forgotten, done.kept_forgotten);
+                    }
+                    for (ours, theirs) in &done.conflicts {
+                        println!("Changed in both: {ours} is kept as it is here; the other copy's version is the new note {theirs}. Compare them and forget one.");
+                    }
+                    if done.set_aside > 0 {
+                        println!("{} incoming note(s) read like instructions and wait for `review`.", done.set_aside);
+                    }
+                    println!("Transcripts: {} session(s) added, {} extended.", done.sessions_added, done.sessions_extended);
+                    for name in &done.sessions_diverged {
+                        println!("A session differs between the copies; the other copy's part is kept as session {name}.");
+                    }
+                    println!("Everything that came in is unverified. `history` shows the merge; `restore` undoes it.");
                 }
                 McpCommand::Dream { apply, discard, llm_extra, max_chars } => {
                     use memst_mcp::dream::{self, DreamConfig, Proposal};

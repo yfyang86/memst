@@ -633,6 +633,32 @@ impl super::SearchIndexBackend for NativeSearchIndex {
         Ok(())
     }
 
+    /// Delete one document by its id, and write the index to disk without it.
+    fn delete_document(&self, doc_id: Uuid) -> Result<()> {
+        let doc_id = doc_id.to_string();
+        {
+            let mut inverted = self.inverted_index.write().unwrap();
+            let mut docs = self.document_store.write().unwrap();
+            let mut sessions = self.session_docs.write().unwrap();
+            let mut num_docs = self.num_docs.write().unwrap();
+            if docs.remove(&doc_id).is_none() {
+                return Ok(());
+            }
+            for entry in inverted.values_mut() {
+                entry.postings.retain(|p| p.doc_id != doc_id);
+                entry.df = entry.postings.len() as u32;
+            }
+            inverted.retain(|_, entry| !entry.postings.is_empty());
+            for ids in sessions.values_mut() {
+                ids.remove(&doc_id);
+            }
+            *num_docs = num_docs.saturating_sub(1);
+            let mut avg_len = self.avg_doc_len.write().unwrap();
+            *avg_len = if *num_docs > 0 { docs.values().map(|d| d.tokens.len() as u32).sum::<u32>() as f32 / *num_docs as f32 } else { 0.0 };
+        }
+        self.persist_to_disk()
+    }
+
     /// Commit pending changes (persists to disk).
     fn commit(&self) -> Result<()> {
         self.persist_to_disk()
