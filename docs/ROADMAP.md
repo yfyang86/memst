@@ -545,9 +545,18 @@ there were no answer errors. Results: `sessions-round11-embeddings-full/`.
 An HTTP embedding call made inside Tokio no longer starts a nested blocking
 runtime; a regression test covers it. All 522 Rust tests and six Pi tests pass.
 
-Next: matching by meaning for forgetting and stale notes, on the same
-embedder; have a plain client's sessions recorded (round 6); then **23**,
-the release and a client we did not write.
+**23. Matching by meaning for stale notes and forgetting** *(done)*. With
+an embedder, a statement the user made later is shown beside a note when
+the two are near in meaning, not only when they share words, and the
+entries offered after a forget are found the same way. The limit (0.52
+with BGE-M3) was set from sixteen sentence pairs outside any test. Round
+12 (criteria first): with a later statement that shares no word with the
+note, the agent answered from the stale note in 30 of 30 runs without the
+embedder and from the statement in 27 of 30 with it, correcting the note
+each time. The three misses are one pair whose nearness is 0.43.
+
+Next: have a plain client's sessions recorded (round 6); then **24**, the
+release and a client we did not write.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost

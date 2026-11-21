@@ -193,6 +193,15 @@ enum McpCommand {
         /// A revision id (or its first characters) from `history`
         revision: String,
     },
+    /// How near two texts are in meaning, as the embedder sees them: the
+    /// figure search and the stale-note check compare with their limits
+    /// (0.45 to be listed by a search, 0.6 to be shown beside a note).
+    Nearness {
+        /// One text
+        a: String,
+        /// The other
+        b: String,
+    },
     /// Make the vectors that search by meaning needs, for every note and
     /// transcript entry that has none. Search makes a few as it goes; this
     /// makes them all. Needs `--embedder`.
@@ -1301,6 +1310,14 @@ fn main() -> Result<()> {
                     if skipped > 0 {
                         println!("{skipped} note(s) that were forgotten since then were not brought back.");
                     }
+                }
+                McpCommand::Nearness { a, b } => {
+                    use memst_core::embed::Embedder;
+                    if memory_embedder == "none" {
+                        anyhow::bail!("choose an embedder: --embedder local (or http, or auto)");
+                    }
+                    let vectors = LazyEmbedder::new(memory_embedder).embed(&[a.clone(), b.clone()])?;
+                    println!("{:.3}", memst_mcp::vectors::cosine(&vectors[0], &vectors[1]));
                 }
                 McpCommand::Embed => {
                     if memory_embedder == "none" {

@@ -1,0 +1,126 @@
+{
+  "settings": {
+    "questions": 16,
+    "per_type": 8,
+    "types": [
+      "knowledge-update",
+      "multi-session"
+    ],
+    "model": "deepseek-flash",
+    "judge": "deepseek-flash"
+  },
+  "table": {
+    "agent with memory tools": {
+      "n": 16,
+      "judged": 87.5,
+      "by_category": {
+        "knowledge-update": 87.5,
+        "multi-session": 87.5
+      },
+      "prompt_tokens": 11204
+    },
+    "raw-bm25": {
+      "n": 16,
+      "judged": 68.8,
+      "by_category": {
+        "knowledge-update": 87.5,
+        "multi-session": 50.0
+      },
+      "prompt_tokens": 5063
+    },
+    "raw-dense": {
+      "n": 16,
+      "judged": 75.0,
+      "by_category": {
+        "knowledge-update": 87.5,
+        "multi-session": 62.5
+      },
+      "prompt_tokens": 4562
+    },
+    "dense-wide-reason": {
+      "n": 16,
+      "judged": 93.8,
+      "by_category": {
+        "knowledge-update": 100.0,
+        "multi-session": 87.5
+      },
+      "prompt_tokens": 8514
+    },
+    "rerank-reason": {
+      "n": 16,
+      "judged": 93.8,
+      "by_category": {
+        "knowledge-update": 100.0,
+        "multi-session": 87.5
+      },
+      "prompt_tokens": 4744
+    }
+  },
+  "agent_minus": {
+    "raw-bm25": {
+      "difference": 18.8,
+      "low": -6.2,
+      "high": 43.8,
+      "n": 16
+    },
+    "raw-dense": {
+      "difference": 12.5,
+      "low": -12.5,
+      "high": 37.5,
+      "n": 16
+    },
+    "dense-wide-reason": {
+      "difference": -6.2,
+      "low": -18.8,
+      "high": 0.0,
+      "n": 16
+    },
+    "rerank-reason": {
+      "difference": -6.2,
+      "low": -18.8,
+      "high": 0.0,
+      "n": 16
+    }
+  },
+  "agent_reading_abstentions_fairly": 87.5,
+  "criterion": {
+    "name": "L1",
+    "passed": true,
+    "detail": "agent minus raw-dense: 12.5 points"
+  },
+  "agent": {
+    "tool_calls_mean": 1.5,
+    "model_calls_mean": 2.19,
+    "seconds_mean": 6.6,
+    "errors": 0,
+    "no_answer": 0
+  },
+  "against_compared_run": {
+    "n": 16,
+    "this": 87.5,
+    "other": 75.0,
+    "difference": 12.5,
+    "low": 0.0,
+    "high": 31.2,
+    "this_fair": 87.5,
+    "other_fair": 75.0,
+    "this_prompt_tokens": 11204,
+    "by_category": {
+      "knowledge-update": [
+        7.0,
+        7.0,
+        8
+      ],
+      "multi-session": [
+        7.0,
+        5.0,
+        8
+      ]
+    },
+    "other_prompt_tokens": 11484
+  },
+  "embedding": {
+    "embedder": "local",
+    "seconds_mean": 291.3
+  }
+}

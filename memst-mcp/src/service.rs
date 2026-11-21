@@ -821,7 +821,55 @@ impl MemoryService {
     /// What the user has said, for marking notes they have since spoken
     /// about. See [`Said`].
     pub fn said(&self) -> Result<Said, Refusal> {
-        Ok(Said::new(self.turns()?))
+        self.said_beside(&self.readable()?)
+    }
+
+    /// As [`said`](Self::said), for notes already in hand. The index is
+    /// written while the memory directory is held open, and reading the
+    /// notes again from inside would wait on that lock for ever.
+    fn said_beside(&self, notes: &[Note]) -> Result<Said, Refusal> {
+        let turns = self.turns()?;
+        let mut said = Said::new(turns.clone());
+        if self.vectors.is_some() {
+            said.statement_vectors = self.turn_vectors(&turns, 32);
+            said.note_vectors = self.note_vectors(notes, 32);
+        }
+        Ok(said)
+    }
+
+    /// The vectors of transcript entries, by session and entry number.
+    /// Makes up to `allowance` that are missing. Empty without an embedder.
+    fn turn_vectors(&self, turns: &[Turn], mut allowance: usize) -> HashMap<(String, usize), Vec<f32>> {
+        let Some(vectors) = &self.vectors else { return HashMap::new() };
+        let mut by_session: std::collections::BTreeMap<&str, Vec<&Turn>> = std::collections::BTreeMap::new();
+        for turn in turns.iter().filter(|t| t.text != REMOVED) {
+            by_session.entry(turn.session.as_str()).or_default().push(turn);
+        }
+        let mut found = HashMap::new();
+        for (session, entries) in by_session {
+            // Every entry of the session, as search passes them: the file
+            // is kept to exactly the texts that exist.
+            let texts: Vec<&str> = entries.iter().map(|t| t.text.as_str()).collect();
+            let (made, _, made_now) = vectors.for_texts(&crate::vectors::session_group(session), &texts, allowance, !self.scope.read_only);
+            allowance = allowance.saturating_sub(made_now);
+            for (turn, vector) in entries.iter().zip(made) {
+                if let Some(vector) = vector {
+                    found.insert((turn.session.clone(), turn.number), vector);
+                }
+            }
+        }
+        found
+    }
+
+    /// The vectors of the served notes, by id. Empty without an embedder.
+    fn note_vectors(&self, notes: &[Note], allowance: usize) -> HashMap<Uuid, Vec<f32>> {
+        let Some(vectors) = &self.vectors else { return HashMap::new() };
+        // The served notes, as search passes them: the file is kept to
+        // exactly the texts that exist.
+        let served: Vec<&Note> = notes.iter().filter(|n| n.status == Status::Active).collect();
+        let bodies: Vec<&str> = served.iter().map(|n| n.body.as_str()).collect();
+        let (made, _, _) = vectors.for_texts(crate::vectors::NOTES, &bodies, allowance, !self.scope.read_only);
+        served.iter().zip(made).filter_map(|(note, vector)| vector.map(|v| (note.id, v))).collect()
     }
 
     /// Transcript entries that share enough words with `text` to be about
@@ -829,10 +877,18 @@ impl MemoryService {
     /// what may still say it in other words.
     pub fn related_said(&self, text: &str, limit: usize) -> Result<Vec<Turn>, Refusal> {
         let wanted = content_terms(text);
-        let mut related: Vec<Turn> = self
-            .turns()?
+        let turns = self.turns()?;
+        // With an embedder, also what means the same in other words: the
+        // paraphrase that matching by words leaves behind.
+        let near: HashMap<(String, usize), Vec<f32>> = self.turn_vectors(&turns, 64);
+        let asked = self.vectors.as_ref().filter(|_| !text.trim().is_empty()).and_then(|vectors| vectors.of_query(text));
+        let mut related: Vec<Turn> = turns
             .into_iter()
-            .filter(|turn| turn.text != REMOVED && same_subject(&wanted, &content_terms(&turn.text)))
+            .filter(|turn| {
+                turn.text != REMOVED
+                    && (same_subject(&wanted, &content_terms(&turn.text))
+                        || asked.as_ref().zip(near.get(&(turn.session.clone(), turn.number))).is_some_and(|(a, b)| crate::vectors::cosine(a, b) >= SAME_SUBJECT))
+            })
             .collect();
         related.sort_by(|a, b| b.at.cmp(&a.at));
         related.truncate(limit);
@@ -885,7 +941,7 @@ impl MemoryService {
     fn write_index(&self, dir: &VersionedDir) -> Result<(), Refusal> {
         let notes = self.notes_in(dir)?;
         let pages = pages_in(dir)?;
-        let text = build_index(&self.scope.owner, &notes, &pages, &self.said()?, self.policy.index_max_lines, self.policy.index_max_bytes);
+        let text = build_index(&self.scope.owner, &notes, &pages, &self.said_beside(&notes)?, self.policy.index_max_lines, self.policy.index_max_bytes);
         fs::write(self.root.join(INDEX), text).map_err(store_error)
     }
 
@@ -1984,7 +2040,25 @@ pub struct Said {
     statements: Vec<(Turn, Vec<String>)>,
     /// In how many statements each word appears.
     spread: HashMap<String, usize>,
+    /// With an embedder: the vector of each statement, by session and
+    /// entry, and of each note. A statement can then be on a note's subject
+    /// without sharing a word with it ("we ship on Mondays now" and a note
+    /// that deploys go out on Thursdays).
+    statement_vectors: HashMap<(String, usize), Vec<f32>>,
+    note_vectors: HashMap<Uuid, Vec<f32>>,
 }
+
+/// The least cosine similarity at which a statement counts as being on a
+/// note's subject. Higher than [`NEAR_ENOUGH`]: a search may list what is
+/// loosely related, but this puts a statement beside a note as something
+/// that may have replaced it.
+///
+/// Set from sixteen pairs of sentences measured with BGE-M3, none of them
+/// from a test scenario: eight where the second sentence changes the fact
+/// in the first, in other words (0.56 to 0.72), and eight unrelated (0.36
+/// to 0.48). The figure is half-way between the two groups. It belongs to
+/// that model; `memst mcp nearness` prints the figure for any two texts.
+pub const SAME_SUBJECT: f32 = 0.52;
 
 impl Said {
     /// At most the latest 5,000 statements are considered.
@@ -2005,7 +2079,7 @@ impl Said {
                 *spread.entry(term.clone()).or_default() += 1;
             }
         }
-        Self { statements, spread }
+        Self { statements, spread, statement_vectors: HashMap::new(), note_vectors: HashMap::new() }
     }
 
     /// What the user said on the note's subject after it was last written:
@@ -2021,17 +2095,24 @@ impl Said {
         let subject = content_terms(&note.body);
         let total = self.statements.len() as f32;
         let frequent = (self.statements.len() / 20).max(3);
+        let note_vector = self.note_vectors.get(&note.id);
         let mut matched: Vec<(f32, &Turn)> = self
             .statements
             .iter()
             .take_while(|(turn, _)| turn.at > note.updated)
-            .filter(|(_, terms)| same_subject(&subject, terms))
             .filter_map(|(turn, terms)| {
+                // By words, as before: enough in common, and not only words
+                // that are in every other statement.
                 let shared: Vec<usize> = subject.iter().filter(|t| terms.contains(t)).map(|t| self.spread.get(t).copied().unwrap_or(1)).collect();
-                if shared.iter().all(|count| *count > frequent) {
-                    return None;
-                }
-                Some((shared.iter().map(|count| (1.0 + total / *count as f32).ln()).sum(), turn))
+                let by_words = if same_subject(&subject, terms) && !shared.iter().all(|count| *count > frequent) {
+                    shared.iter().map(|count| (1.0 + total / *count as f32).ln()).sum::<f32>()
+                } else {
+                    0.0
+                };
+                // By meaning, with an embedder.
+                let nearness = note_vector.zip(self.statement_vectors.get(&(turn.session.clone(), turn.number))).map(|(a, b)| crate::vectors::cosine(a, b)).unwrap_or(0.0);
+                let by_meaning = if nearness >= SAME_SUBJECT { 10.0 * nearness } else { 0.0 };
+                (by_words > 0.0 || by_meaning > 0.0).then_some((by_words + by_meaning, turn))
             })
             .collect();
         matched.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.at.cmp(&a.1.at)));

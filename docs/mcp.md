@@ -360,8 +360,21 @@ and that the note should then be corrected. The index marks such notes.
 Without this, an agent answered from an out-of-date note every time
 (`benchmarks/sessions`, round 1).
 
-The match is by shared words (at least a third of the shorter text's
-content words, and two unless that text has three or fewer). It does not
+With an embedder the match is also by meaning: a statement is shown
+beside a note when the two are near enough (a cosine of 0.52 or more with
+BGE-M3), whether or not they share a word. That limit was set from sixteen
+pairs of sentences outside any test: pairs in which the second changes
+the fact in the first, in other words, measured 0.56 to 0.72, and
+unrelated pairs 0.36 to 0.48. `memst mcp --embedder local nearness "<a>"
+"<b>"` prints the figure for any two texts. With a note and a later
+statement that share no word, the agent answered from the stale note in
+30 runs of 30 without the embedder and from the statement in 27 of 30
+with it (`benchmarks/sessions`, round 12). The entries offered after a
+forget are found the same way.
+
+Without an embedder the match is by shared words (at least a third of the
+shorter text's content words, and two unless that text has three or
+fewer). It does not
 judge whether the two disagree, misses a statement in wholly different
 words, and skips questions. At most the latest 5,000 statements are
 considered, and the two that share the most with the note are shown, a rare

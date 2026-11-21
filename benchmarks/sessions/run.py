@@ -23,7 +23,7 @@ from . import mcp_agent
 from .filler import fill
 from datetime import datetime, timezone
 
-from .scenarios import build, build_round2, build_round4, build_round8
+from .scenarios import build, build_round2, build_round4, build_round8, build_round12
 
 REPO = Path(__file__).resolve().parents[2]
 EXTENSION = REPO / "integrations" / "pi" / "extensions" / "memst.ts"
@@ -276,6 +276,33 @@ def summarise2(rows):
     }
 
 
+def summarise12(rows):
+    """Round 12: a note changed since in other words. One cell, repeated."""
+    right = sum(r["correct"] for r in rows)
+    return {
+        "table": {"stale-paraphrase": [right, len(rows)]},
+        "note_corrected": sum(1 for r in rows if r.get("note_corrected")),
+        "embedder": os.environ.get("MEMST_EMBEDDER", "none"),
+        "cost_of_final_session": {"prompt_tokens_mean": round(sum(r["prompt_tokens"] for r in rows) / max(1, len(rows))), "tool_calls_mean": round(sum(len(r["tools"]) for r in rows) / max(1, len(rows)), 2), "seconds_mean": round(sum(r["seconds"] for r in rows) / max(1, len(rows)), 1)},
+        "errors": sum(1 for r in rows if r["errors"]),
+    }
+
+
+def render12(summary, settings) -> str:
+    right, total = summary["table"]["stale-paraphrase"]
+    cost = summary["cost_of_final_session"]
+    return "\n".join([
+        "# Memory in use, round 12 (a note the user has since changed, in other words): results",
+        "",
+        f"Agent: Pi {settings['pi_version']} with `{settings['model']}`, with memory, no offline pass. Embedder: `{summary['embedder']}`. {settings['runs']} scenario runs; {summary['errors']} had a session that failed.",
+        "",
+        f"Answered from what the user said later: **{right}/{total}**. The note was corrected in {summary['note_corrected']}/{total}.",
+        "",
+        f"Final session, on average: {cost['prompt_tokens_mean']:,} prompt tokens, {cost['tool_calls_mean']} tool calls, {cost['seconds_mean']} s.",
+        "",
+    ])
+
+
 def summarise8(rows):
     """Round 8: the user's own fact against the same fact about others."""
     kinds = ["others-own", "others-named"]
@@ -443,7 +470,8 @@ def main():
     parser.add_argument("--dream-api-url", default=os.environ.get("MEMST_LLM_API_URL", "https://api.deepseek.com"))
     parser.add_argument("--dream-model", default=os.environ.get("MEMST_LLM_MODEL", "deepseek-flash"))
     parser.add_argument("--dream-extra", default='{"thinking":{"type":"disabled"}}', help="extra request fields for the offline pass, as JSON ('' for none)")
-    parser.add_argument("--round", type=int, default=1, choices=[1, 2, 3, 4, 8], help="1: the first evaluation; 2: sprint 12's (memory only); 3: sprint 13's (memory at size); 4: sprint 15's (questions about the past); 8: sprint 18's (the user's own fact among others')")
+    parser.add_argument("--round", type=int, default=1, choices=[1, 2, 3, 4, 8, 12], help="12: sprint 23's (a note changed since, in other words; set MEMST_EMBEDDER); 1: the first evaluation; 2: sprint 12's (memory only); 3: sprint 13's (memory at size); 4: sprint 15's (questions about the past); 8: sprint 18's (the user's own fact among others')")
+    parser.add_argument("--repeat", type=int, default=1, help="run every scenario this many times")
     parser.add_argument("--subjects", action="store_true", help="round 3: the filler's notes say whom they are about")
     parser.add_argument("--filler-seed", type=int, default=0, help="round 3: a different filler for the same scenarios")
     parser.add_argument("--sizes", default="500,5000", help="round 3: how many other notes the memory holds")
@@ -475,10 +503,14 @@ def main():
         args.conditions = "memory"
         if args.out == "benchmarks/results/sessions":
             args.out = "benchmarks/results/sessions-round8-others"
-    scenarios = [s for s in (build_round8() if args.round == 8 else build_round4() if args.round == 4 else build_round2() if args.round >= 2 else build()) if s.instance < args.instances and (not args.kinds or s.kind in args.kinds.split(","))]
+    if args.round == 12:
+        args.conditions = "memory"
+        if args.out == "benchmarks/results/sessions":
+            args.out = "benchmarks/results/sessions-round12-paraphrase/embedder-" + os.environ.get("MEMST_EMBEDDER", "none")
+    scenarios = [s for s in (build_round12() if args.round == 12 else build_round8() if args.round == 8 else build_round4() if args.round == 4 else build_round2() if args.round >= 2 else build()) if s.instance < args.instances and (not args.kinds or s.kind in args.kinds.split(","))]
     conditions = args.conditions.split(",")
     runner = Runner(args)
-    jobs = [(scenario, condition) for scenario in scenarios for condition in conditions]
+    jobs = [(scenario, condition) for _ in range(args.repeat) for scenario in scenarios for condition in conditions]
     print(f"{len(jobs)} scenario runs, {args.workers} at a time", flush=True)
 
     def work(job):
@@ -498,8 +530,8 @@ def main():
         shown = subprocess.run([args.pi, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         version = (shown.stdout + shown.stderr).strip().splitlines()[-1] if (shown.stdout + shown.stderr).strip() else "unknown"
     settings = {"pi_version": version, "client": args.client, "model": args.model, "dream_model": args.dream_model, "runs": len(rows)}
-    summary = {1: summarise, 2: summarise2, 3: summarise3, 4: summarise4, 8: summarise8}[args.round](rows)
-    report = {1: render, 2: render2, 3: render3, 4: render4, 8: render8}[args.round](summary, settings)
+    summary = {1: summarise, 2: summarise2, 3: summarise3, 4: summarise4, 8: summarise8, 12: summarise12}[args.round](rows)
+    report = {1: render, 2: render2, 3: render3, 4: render4, 8: render8, 12: render12}[args.round](summary, settings)
     (out / "summary.json").write_text(json.dumps({"settings": settings, **summary}, indent=2))
     (out / "REPORT.md").write_text(report)
     print(report)

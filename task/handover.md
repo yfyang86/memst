@@ -1,14 +1,13 @@
 # Handover
 
-Written 2026-11-20 and updated on 2026-11-21, part of the way through
-sprint 22. Sprints 1 to 21 are merged into `dev` (pull requests 1 to 10).
-Sprint 22's code is merged with this file; its measurement is yours to
-run on the Mac (see "Tasks for the Mac" below).
+Written 2026-11-20 and updated on 2026-11-21 after sprint 22. Sprints 1 to
+22 are on `dev`, including the full run of round 11 made on the Mac
+(commit `31f7914`).
 
 Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
-`CodeReview/CR-20261114.md` (findings 1 to 108, each marked fixed or open),
+`CodeReview/CR-20261114.md` (findings 1 to 110, each marked fixed or open),
 `benchmarks/sessions/README.md` (the memory-in-use evaluation, rounds 1 to
-11), `docs/mcp.md` (the agent memory and its tools),
+12), `docs/mcp.md` (the agent memory and its tools),
 `docs/deletion-design.md`.
 
 ## Sprints
@@ -38,8 +37,9 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 19 | What deletion and forgetting do not reach | Done in two of three parts; matching by meaning not done |
 | 20 | Pages and the offline pass at size | Done: the pass is bounded at 5,000 notes and corrects 8 of 10 after a fix; pages and notes not shown to help or hurt |
 | 21 | The read path in the memory tools | Done: 61.7% to 71.7% on sixty LongMemEval-S questions; ten points still to the harness's best |
-| 22 | Search by meaning in the memory tools | **Built and unit-tested; not yet measured.** The measurement is the first task for the Mac |
-| 23 | Release and a client we did not write | Planned |
+| 22 | Search by meaning in the memory tools | Done: 71.7% to 83.3% on sixty LongMemEval-S questions (+11.7 points, interval +1.7 to +21.7) |
+| 23 | Matching by meaning for stale notes and forgetting | Done: 0 of 30 without the embedder, 27 of 30 with it, on notes changed since in other words |
+| 24 | Release and a client we did not write | Planned |
 
 Candidates ahead of 21, by size of the known gap: give `memory_read` the
 harness's read path (finding 98); record a plain client's sessions
@@ -75,12 +75,14 @@ model: a 551-turn history embedded in 332 s on four CPU cores, a read in
 
 - The whole workspace's tests were not run after this change here (the
   machine was busy embedding); only the memory crate's. CI runs them.
-- **No measurement of whether it helps.** A 16-question run (round 11) was
-  started on the build machine and had not finished when this was written;
-  if its results are in `benchmarks/results/sessions-round11-embeddings`,
-  they are that run. Sixteen questions can show only a large effect.
-- Matching by meaning for forgetting and for stale notes (finding 103) is
-  not built. The embedder it waited on is now there.
+- **Measured since** (the Mac's run, all sixty questions, the same model
+  through the local HTTP embedding service): 83.3% against 71.7% by
+  keyword, +11.7 points with an interval of +1.7 to +21.7; `multi-session`
+  18 of 27 to 24 of 27. With abstentions read fairly, 93.3%. The agent is
+  8.3 points behind `dense-wide-reason` as scored, with an interval that
+  includes no difference. One run; not replicated.
+- Matching by meaning for stale notes and for forgetting was built on the
+  embedder in sprint 23 (round 12: 27 of 30 against 0 of 30).
 
 ## Tasks for the Mac
 
@@ -88,7 +90,9 @@ In order. Each is one command; all need the model key in the environment
 (`MEMST_LLM_API_KEY`) and `third/longmemeval/longmemeval_s_cleaned.json`
 (see `benchmarks/harness/README.md` for the download).
 
-- [ ] **0. Build and test.**
+- [x] **0. Build and test.** Done: 522 Rust tests, 6 Pi tests. It found a
+  fault: the HTTP embedder panicked when called from inside Tokio; fixed in
+  `memst-core/src/embed.rs` with a regression test.
   ```bash
   cargo build --release -p memst-cli
   cargo test --workspace
@@ -98,7 +102,8 @@ In order. Each is one command; all need the model key in the environment
   521, and 6 Pi tests; the whole set was not run here after the change.
   If anything fails, stop and fix that first.
 
-- [ ] **1. Round 11 in full: does search by meaning help?** The criterion
+- [x] **1. Round 11 in full: does search by meaning help?** Done, with
+  `--embedder http`; see `benchmarks/results/sessions-round11-embeddings-full`. The criterion
   and what we expected are already in `benchmarks/sessions/README.md`,
   "Round 11", written before any run; the full run replaces the sixteen
   questions there with all sixty.
@@ -139,7 +144,7 @@ In order. Each is one command; all need the model key in the environment
   comparison is `benchmarks/results/sessions-round8-size/subjects-on-every-note-*`
   (3 wrong of 120). Do it only if task 1 shows a gain.
 
-- [ ] **4. Push the results** to `dev`, as with the full-scale harness
+- [x] **4. Push the results** to `dev`, as with the full-scale harness
   runs, and say which tasks were run. The write-up in
   `benchmarks/sessions/README.md` ("Round 11 results"), the roadmap and
   the review log (finding 108) are then to be filled in from them.
@@ -227,9 +232,8 @@ From the code review log, the ones most likely to matter next:
 - **101.** Deleting a message removes memory items that say they were
   made from it; ones that do not say, and the operations log, are not
   reached.
-- **103.** Forgetting and the stale-note match are by shared words. The
-  embedder they waited on exists from sprint 22; the matching is not yet
-  built on it.
+- **110.** The memory directory's lock is not re-entrant, and new code has
+  twice waited on itself. Worth fixing before more is built on it.
 - **102.** The native search index is loaded afresh for every operation,
   so indexing is still linear in its size (12.6 ms a message at 2,000).
   Finding 91, as first written, was wrong; see the log.

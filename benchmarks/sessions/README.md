@@ -933,6 +933,30 @@ ones, of which there are few here. We expect no difference we could
 defend, and the purpose of the run is as much to see that the path works
 end to end with the real model, and what it costs, as to measure a gain.
 
+### Round 11 results: a first sixteen questions
+
+One run, nothing changed afterwards (`sessions-round11-embeddings`).
+
+| | All 16 | knowledge-update (8) | multi-session (8) |
+|---|---|---|---|
+| Round 10, by keyword | 12 (75.0%) | 7 | 5 |
+| Round 11, by keyword and meaning | 14 (87.5%) | 7 | 7 |
+| `dense-wide-reason` | 15 (93.8%) | 8 | 7 |
+
+**E1 passes.** Two more `multi-session` questions were answered, and none
+fewer: 12.5 points, with an interval from 0.0 to +31.2. That is two
+questions. It is in the direction hoped for and on the type of question
+where a gain was expected, and it is not enough to say that search by
+meaning helps; the full sixty are needed for that (`task/handover.md`).
+
+Embedding a history took 291 s on average on four cores. The questions
+themselves cost the same as in round 10 (about 11,200 prompt tokens) and
+took 6.6 s against 3.0 s, the difference being the model loading for each
+question's server.
+
+The full run below supersedes this one; it is kept because it was the run
+the criterion was first applied to.
+
 ### Round 11 results: all sixty questions
 
 The full run replaces the planned sixteen questions with all sixty of round
@@ -965,6 +989,68 @@ embedder. That was fixed before this run, with a regression test in
 `memst-core/tests/http_embedder.rs`; real MCP semantic search was then checked
 before the full run. This is one full run on the same questions and model, not
 an independent replication or the optional 5,000-note size test.
+
+## Round 12 (sprint 23): a note changed since, in other words
+
+Since sprint 12 a note is shown with what the user said on its subject
+afterwards, matched by shared words; a later statement in other words was
+missed (findings 80 and 103). With an embedder the match is also by
+meaning. Written before the first run.
+
+```bash
+MEMST_EMBEDDER=none  python -m benchmarks.sessions.run --round 12 --repeat 3 ...
+MEMST_EMBEDDER=local python -m benchmarks.sessions.run --round 12 --repeat 3 ...
+```
+
+The `stale` scenario of round 2 with one difference: the user's later
+statement shares no content word with the note. The note says "Our team's
+deploys go out on Thursdays"; the user later said "We ship to production
+on Mondays these days". Ten facts, three times each, thirty runs to a
+condition, with Pi and no offline pass. The two conditions differ only in
+whether the memory server has the embedder.
+
+The limit of nearness at which a statement is shown beside a note (0.52)
+was set beforehand from sixteen other pairs of sentences, not from these.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| M1 | With the embedder, a change said in other words is not missed | at least 24 of 30 answer from the later statement |
+| M2 | That is the embedder's doing | more than without it, on the same thirty |
+
+Expected beforehand. Without the embedder, few: the note is not marked,
+and a keyword search for the question's words does not find the statement
+either. Not none, because an agent sometimes reads the transcripts anyway.
+With it, most; where it fails we expect the nearness of a particular pair
+to fall under the limit.
+
+### Round 12 results
+
+One run of each, nothing changed afterwards
+(`sessions-round12-paraphrase`).
+
+| The memory server | Answered from the later statement | Corrected the note | Prompt tokens | Seconds |
+|---|---|---|---|---|
+| without the embedder | 0/30 | 0/30 | 6,519 | 5.6 |
+| with BGE-M3 | 27/30 | 27/30 | 9,752 | 9.7 |
+
+**M1 and M2 pass.** Without the embedder the agent answered from the stale
+note every time: we had expected a few right answers from an agent reading
+the transcripts unprompted, and there were none. With it, the later
+statement was shown beside the note, and the agent answered from it and
+corrected the note, in 27 of 30.
+
+The three failures are one fact, three times: the note "Our staging server
+is stg-quokka.internal" and the statement "The pre-production box was
+replaced by one called wombat". Their nearness is 0.43, under the limit
+of 0.52, as expected of a failure. Nothing in the note's words says
+staging and pre-production are the same thing to this model strongly
+enough. Lowering the limit to catch it would be fitting it to this test;
+it is left where the sixteen calibration pairs put it.
+
+A session costs half as much again with the embedder here (the agent
+reads, searches and corrects, where before it answered from the index),
+and four seconds more, most of it loading the model for each session's
+server.
 
 ## Limits
 
