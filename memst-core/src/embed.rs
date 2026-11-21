@@ -33,7 +33,9 @@ impl HttpEmbedder {
         Ok(Self {
             client: EmbeddingClient::new(config)?,
             model,
-            runtime: tokio::runtime::Builder::new_current_thread().enable_all().build()?,
+            runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?,
         })
     }
 
@@ -50,6 +52,18 @@ impl Embedder for HttpEmbedder {
     }
 
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return std::thread::scope(|scope| {
+                scope
+                    .spawn(|| self.runtime.block_on(self.client.embed_batch(texts)))
+                    .join()
+                    .map_err(|_| {
+                        crate::error::Error::InvalidOperation(
+                            "HTTP embedding worker panicked".to_string(),
+                        )
+                    })?
+            });
+        }
         self.runtime.block_on(self.client.embed_batch(texts))
     }
 }

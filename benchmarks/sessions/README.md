@@ -933,6 +933,39 @@ ones, of which there are few here. We expect no difference we could
 defend, and the purpose of the run is as much to see that the path works
 end to end with the real model, and what it costs, as to measure a gain.
 
+### Round 11 results: all sixty questions
+
+The full run replaces the planned sixteen questions with all sixty of round
+10's questions. It used the same BGE-M3 model through the local HTTP embedding
+service (`--embedder http`), rather than the slower CPU implementation. Output:
+`benchmarks/results/sessions-round11-embeddings-full/`; all sixty answers are
+present, with no errors or empty answers.
+
+| | Judged correct | Abstentions read fairly | knowledge-update correct | multi-session correct | Prompt tokens |
+|---|---:|---:|---:|---:|---:|
+| Round 10, keyword retrieval | 71.7% (43/60) | 81.7% | 25/27 | 18/27 | 12,411 |
+| Round 11, keyword + meaning | 83.3% (50/60) | 93.3% | 26/27 | 24/27 | 11,885 |
+
+**E1 passes.** The paired gain is 11.7 points with a 95% interval of 1.7 to
+21.7, so the interval does not include no difference. Nine answers changed
+from wrong to right and two from right to wrong. The gain is mainly in
+multi-session questions. Against `dense-wide-reason`, the agent is 8.3 points
+behind on judged accuracy (interval -20.0 to +3.3); its 93.3% with abstentions
+read fairly is above the harness's 91.7%, but those are different readings of
+the six abstention answers, not another paired comparison.
+
+Embedding every entry took 16.7 seconds per history on average through the
+local HTTP service. The agent made 2.32 model calls and 1.77 tool calls per
+question, took 3.6 seconds after embedding, and used slightly fewer prompt
+tokens than round 10. The HTTP embedding time is not comparable with the CPU
+figure above.
+
+An initial preflight exposed a nested Tokio runtime panic in the HTTP
+embedder. That was fixed before this run, with a regression test in
+`memst-core/tests/http_embedder.rs`; real MCP semantic search was then checked
+before the full run. This is one full run on the same questions and model, not
+an independent replication or the optional 5,000-note size test.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

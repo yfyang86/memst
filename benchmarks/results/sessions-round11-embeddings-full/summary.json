@@ -1,0 +1,136 @@
+{
+  "settings": {
+    "questions": 60,
+    "per_type": 30,
+    "types": [
+      "knowledge-update",
+      "multi-session"
+    ],
+    "model": "deepseek-flash",
+    "judge": "deepseek-flash"
+  },
+  "table": {
+    "agent with memory tools": {
+      "n": 60,
+      "judged": 83.3,
+      "by_category": {
+        "abstention": 0.0,
+        "knowledge-update": 96.3,
+        "multi-session": 88.9
+      },
+      "prompt_tokens": 11885
+    },
+    "raw-bm25": {
+      "n": 60,
+      "judged": 63.3,
+      "by_category": {
+        "abstention": 83.3,
+        "knowledge-update": 85.2,
+        "multi-session": 37.0
+      },
+      "prompt_tokens": 4985
+    },
+    "raw-dense": {
+      "n": 60,
+      "judged": 68.3,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 85.2,
+        "multi-session": 44.4
+      },
+      "prompt_tokens": 4413
+    },
+    "dense-wide-reason": {
+      "n": 60,
+      "judged": 91.7,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 96.3,
+        "multi-session": 85.2
+      },
+      "prompt_tokens": 8640
+    },
+    "rerank-reason": {
+      "n": 60,
+      "judged": 91.7,
+      "by_category": {
+        "abstention": 100.0,
+        "knowledge-update": 88.9,
+        "multi-session": 92.6
+      },
+      "prompt_tokens": 4952
+    }
+  },
+  "agent_minus": {
+    "raw-bm25": {
+      "difference": 20.0,
+      "low": 5.0,
+      "high": 35.0,
+      "n": 60
+    },
+    "raw-dense": {
+      "difference": 15.0,
+      "low": 0.0,
+      "high": 30.0,
+      "n": 60
+    },
+    "dense-wide-reason": {
+      "difference": -8.3,
+      "low": -20.0,
+      "high": 3.3,
+      "n": 60
+    },
+    "rerank-reason": {
+      "difference": -8.3,
+      "low": -20.0,
+      "high": 3.3,
+      "n": 60
+    }
+  },
+  "agent_reading_abstentions_fairly": 93.3,
+  "criterion": {
+    "name": "L1",
+    "passed": true,
+    "detail": "agent minus raw-dense: 15.0 points"
+  },
+  "agent": {
+    "tool_calls_mean": 1.77,
+    "model_calls_mean": 2.32,
+    "seconds_mean": 3.6,
+    "errors": 0,
+    "no_answer": 0
+  },
+  "against_compared_run": {
+    "n": 60,
+    "this": 83.3,
+    "other": 71.7,
+    "difference": 11.7,
+    "low": 1.7,
+    "high": 21.7,
+    "this_fair": 93.3,
+    "other_fair": 81.7,
+    "this_prompt_tokens": 11885,
+    "by_category": {
+      "abstention": [
+        0.0,
+        0.0,
+        6
+      ],
+      "knowledge-update": [
+        26.0,
+        25.0,
+        27
+      ],
+      "multi-session": [
+        24.0,
+        18.0,
+        27
+      ]
+    },
+    "other_prompt_tokens": 12411
+  },
+  "embedding": {
+    "embedder": "http",
+    "seconds_mean": 16.7
+  }
+}
