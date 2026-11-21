@@ -531,14 +531,19 @@ points (-1.7 to +21.7), and above one-shot dense retrieval. With
 abstentions read fairly, 81.7% against 91.7% for the harness's best read
 path. Retrieval is still by keyword. A question costs twice the tokens.
 
-**22. Search by meaning in the memory tools** *(built; not yet measured)*.
+**22. Search by meaning in the memory tools** *(done; E1 passes)*.
 With an embedder, memory search joins the keyword order with nearness of
 meaning. `--embedder local` is BGE-M3 on the machine; vectors are kept per
 owner, made as needed or all at once with `memst mcp embed`, and removed
-when their text is forgotten. Tested with a stand-in model and run once
-with the real one (five and a half minutes to embed a 500-turn history on
-four cores). Round 11, whether it helps, has its criterion written and
-its full run left for a faster machine: see `task/handover.md`.
+when their text is forgotten. The full sixty-question round 11 run used the
+same model through the local HTTP service: 83.3% judged accuracy against
+round 10's 71.7%, a paired gain of 11.7 points (95% interval 1.7 to 21.7).
+The gain is mainly multi-session retrieval. The agent is 8.3 points behind
+`dense-wide-reason` on judged accuracy (interval -20.0 to +3.3), and reaches
+93.3% with abstentions read fairly. Embedding took 16.7 seconds per history;
+there were no answer errors. Results: `sessions-round11-embeddings-full/`.
+An HTTP embedding call made inside Tokio no longer starts a nested blocking
+runtime; a regression test covers it. All 522 Rust tests and six Pi tests pass.
 
 Next: matching by meaning for forgetting and stale notes, on the same
 embedder; have a plain client's sessions recorded (round 6); then **23**,
