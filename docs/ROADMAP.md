@@ -555,8 +555,40 @@ note, the agent answered from the stale note in 30 of 30 runs without the
 embedder and from the statement in 27 of 30 with it, correcting the note
 each time. The three misses are one pair whose nearness is 0.43.
 
-Next: have a plain client's sessions recorded (round 6); then **24**, the
-release and a client we did not write.
+**24. A plain client's sessions, and the lock** *(done; the main result
+is negative)*.
+
+- The lock on a memory directory can be taken again by the thread that
+  holds it; new code had twice waited on itself.
+- `transcript_append` needs only the text, and the server's instructions
+  ask a client to record each message. **Round 13** (criterion first):
+  round 6 for the plain client again. The model recorded nothing: none of
+  eighty facts was in a transcript. 28 of 80 were answered, from notes,
+  against 4 in round 6; the criterion (80% in each kind) fails. Asking a
+  model to record is not a way to have a session recorded.
+- `memst mcp record` records one message from outside the conversation,
+  for a client that can run a command on each message. Tested as a
+  command; not tried with such a client.
+
+**25. Release 1.2.0.** The workspace, the Python module and the command
+line report 1.2.0; `dev` is merged into `main` and tagged `v1.2.0`, which
+runs the release workflow for the first time. Version 1.1.0 was written up
+in sprint 11 and never tagged; 1.2.0 includes it.
+
+## Future work
+
+- **A second client.** Every result on memory in use comes from Pi with
+  the extension or from a plain MCP client we wrote ourselves. A client
+  written by someone else has not been tried; Claude Code over MCP is the
+  obvious one. That is also where recording through a client's hooks
+  (`memst mcp record`, finding 111) would be tested, since asking a model
+  to record what is said does not work.
+- The ten or so points still between an agent with the memory tools and
+  the harness's best read path on LongMemEval-S.
+- Deleting from the history of the session store; the cascade to memory
+  items that do not say where they came from; merging within a note.
+- Memory operations are linear in the number of notes, and the native
+  search index is loaded afresh for each operation.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost

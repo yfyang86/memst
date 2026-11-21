@@ -121,3 +121,31 @@ fn the_owner_can_see_what_changed_and_go_back() {
     assert!(run(&store, &["show", &id, "--at", &good]).contains("has since been forgotten"));
     assert_eq!(run(&store, &["notes"]).trim(), "No notes.");
 }
+
+#[test]
+fn what_is_said_can_be_recorded_from_outside_the_conversation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store");
+    // As a client's hook would: the text as an argument, or on standard input.
+    let out = memst(&store, &["mcp", "--owner", "alice", "record", "--session", "monday", "What time is 4pm Pacific for me? I work from Lisbon."]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "Recorded as entry 1 of session monday.");
+    let mut child = memst(&store, &["mcp", "--owner", "alice", "record", "--session", "monday", "--role", "assistant"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(b"That is midnight in Lisbon.\n").unwrap();
+    assert!(String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).contains("entry 2"));
+
+    // A later server finds it.
+    let mut child = memst(&store, &["mcp", "--owner", "alice", "serve"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_read","arguments":{"query":"which city do I work from","scope":"all"}}}"#)
+        .unwrap();
+    let reply = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).to_string();
+    assert!(reply.contains("I work from Lisbon"), "{reply}");
+
+    // A session name that could leave the transcripts folder is refused.
+    let out = memst(&store, &["mcp", "--owner", "alice", "record", "--session", "../x", "hello"]).output().unwrap();
+    assert!(!out.status.success());
+}

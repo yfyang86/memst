@@ -193,6 +193,21 @@ enum McpCommand {
         /// A revision id (or its first characters) from `history`
         revision: String,
     },
+    /// Record one thing that was said, from outside the conversation: for a
+    /// client's hook or a script. A model asked to record what the user
+    /// says mostly does not (it recorded none of eighty facts in a test);
+    /// a hook that runs on every message does. The text is the argument,
+    /// or standard input.
+    Record {
+        /// What was said. Read from standard input when left out
+        text: Option<String>,
+        /// Who said it: user, assistant, tool or system
+        #[arg(long, default_value = "user")]
+        role: String,
+        /// The session it belongs to (letters, digits, '-', '_', '.')
+        #[arg(long)]
+        session: String,
+    },
     /// How near two texts are in meaning, as the embedder sees them: the
     /// figure search and the stale-note check compare with their limits
     /// (0.45 to be listed by a search, 0.6 to be shown beside a note).
@@ -1310,6 +1325,18 @@ fn main() -> Result<()> {
                     if skipped > 0 {
                         println!("{skipped} note(s) that were forgotten since then were not brought back.");
                     }
+                }
+                McpCommand::Record { text, role, session } => {
+                    let text = match text {
+                        Some(text) => text.clone(),
+                        None => {
+                            let mut said = String::new();
+                            std::io::Read::read_to_string(&mut std::io::stdin(), &mut said)?;
+                            said
+                        }
+                    };
+                    let number = mine()?.record(session, role, &text).map_err(refused)?;
+                    println!("Recorded as entry {number} of session {session}.");
                 }
                 McpCommand::Nearness { a, b } => {
                     use memst_core::embed::Embedder;

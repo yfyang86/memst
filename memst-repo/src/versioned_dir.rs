@@ -67,9 +67,45 @@ pub enum Past {
 pub struct VersionedDir {
     root: PathBuf,
     tracked: Vec<String>,
-    // Held for as long as this value lives, so that two processes cannot
-    // interleave a read-modify-commit. Open one per operation.
-    _lock: File,
+    // The directory's lock is held for as long as this value lives, so
+    // that two processes, or two threads, cannot interleave a
+    // read-modify-commit. Open one per operation. The key names the lock
+    // in [`HELD`].
+    lock_key: PathBuf,
+}
+
+/// The locks this process holds, by lock file.
+///
+/// The lock on a directory can be taken again by the thread that holds it.
+/// An operation that has the directory open may call something that opens
+/// it too; with a plain file lock that second open waited on the first for
+/// ever, in the same thread (this happened twice while memory search was
+/// being extended). Another thread, and another process, wait their turn
+/// as before.
+struct Held {
+    thread: std::thread::ThreadId,
+    depth: usize,
+    // Dropping the file releases the lock for other processes.
+    _file: File,
+}
+
+fn held() -> &'static (std::sync::Mutex<std::collections::HashMap<PathBuf, Held>>, std::sync::Condvar) {
+    static HELD: std::sync::OnceLock<(std::sync::Mutex<std::collections::HashMap<PathBuf, Held>>, std::sync::Condvar)> = std::sync::OnceLock::new();
+    HELD.get_or_init(Default::default)
+}
+
+impl Drop for VersionedDir {
+    fn drop(&mut self) {
+        let (locks, freed) = held();
+        let mut locks = locks.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(lock) = locks.get_mut(&self.lock_key) {
+            lock.depth -= 1;
+            if lock.depth == 0 {
+                locks.remove(&self.lock_key);
+                freed.notify_all();
+            }
+        }
+    }
 }
 
 impl VersionedDir {
@@ -81,9 +117,40 @@ impl VersionedDir {
         for dir in tracked {
             fs::create_dir_all(root.join(dir))?;
         }
-        let lock = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(root.join(HISTORY).join("lock"))?;
-        lock.lock_exclusive()?;
-        Ok(Self { root: root.to_path_buf(), tracked: tracked.iter().map(|d| d.to_string()).collect(), _lock: lock })
+        let lock_path = root.join(HISTORY).join("lock");
+        let file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&lock_path)?;
+        let lock_key = fs::canonicalize(&lock_path).unwrap_or(lock_path);
+        let me = std::thread::current().id();
+        let (locks, freed) = held();
+        let mut file = Some(file);
+        let mut locks = locks.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            match locks.get_mut(&lock_key) {
+                // This thread has it already: once more.
+                Some(lock) if lock.thread == me => {
+                    lock.depth += 1;
+                    break;
+                }
+                // Another thread of this process has it: wait for it to finish.
+                Some(_) => locks = freed.wait(locks).unwrap_or_else(|e| e.into_inner()),
+                // Nobody here has it. Another process may; try, and wait a
+                // moment if so, without keeping this process's other
+                // directories waiting meanwhile.
+                None => {
+                    let candidate = file.take().expect("the lock file is opened once and taken once");
+                    if candidate.try_lock_exclusive().is_ok() {
+                        locks.insert(lock_key.clone(), Held { thread: me, depth: 1, _file: candidate });
+                        break;
+                    }
+                    file = Some(candidate);
+                    drop(locks);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    locks = held().0.lock().unwrap_or_else(|e| e.into_inner());
+                }
+            }
+        }
+        drop(locks);
+        Ok(Self { root: root.to_path_buf(), tracked: tracked.iter().map(|d| d.to_string()).collect(), lock_key })
     }
 
     /// The directory holding the working files.
@@ -514,6 +581,40 @@ mod tests {
         // What was forgotten since is not readable in the earlier state either.
         assert_eq!(files.get("notes/b.md"), Some(&Past::Forgotten));
         assert_eq!(dir.revision_at(Utc::now()).unwrap().unwrap().message, "forget b");
+    }
+
+    #[test]
+    fn the_lock_can_be_taken_again_by_the_thread_that_holds_it_and_by_no_other() {
+        let temp = tempfile::tempdir().unwrap();
+        let outer = open(temp.path());
+        outer.write_file("notes/a.md", "one").unwrap();
+        // Opening again from the same thread used to wait for ever.
+        {
+            let inner = open(temp.path());
+            inner.write_file("notes/b.md", "two").unwrap();
+            inner.commit("t", "from inside").unwrap();
+        }
+        assert_eq!(outer.log(0).unwrap().len(), 1);
+
+        // Another thread waits until the last handle here is gone.
+        let path = temp.path().to_path_buf();
+        let (started, finished) = (std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let (s, f) = (started.clone(), finished.clone());
+        let other = std::thread::spawn(move || {
+            s.store(true, std::sync::atomic::Ordering::SeqCst);
+            let dir = VersionedDir::open(&path, &["notes", "pages"]).unwrap();
+            f.store(true, std::sync::atomic::Ordering::SeqCst);
+            dir.write_file("notes/c.md", "three").unwrap();
+            dir.commit("t", "from another thread").unwrap();
+        });
+        while !started.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(!finished.load(std::sync::atomic::Ordering::SeqCst), "another thread got in while the directory was held");
+        drop(outer);
+        other.join().unwrap();
+        assert_eq!(open(temp.path()).log(0).unwrap().len(), 2);
     }
 
     #[test]

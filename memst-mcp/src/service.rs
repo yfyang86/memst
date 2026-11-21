@@ -191,6 +191,9 @@ pub struct MemoryService {
     forgotten_subjects: Mutex<Vec<Vec<String>>>,
     /// With an embedder, search is by meaning as well as by word.
     vectors: Option<crate::vectors::Vectors>,
+    /// A name for the session this service is serving, for a client that
+    /// records what is said without naming a session of its own.
+    session: String,
 }
 
 /// What a removed transcript entry is replaced with.
@@ -214,6 +217,7 @@ impl MemoryService {
             forgotten: Mutex::new(Vec::new()),
             forgotten_subjects: Mutex::new(Vec::new()),
             vectors: None,
+            session: format!("{}-{}", Utc::now().format("%Y%m%dT%H%M%S"), &Uuid::new_v4().simple().to_string()[..6]),
         };
         if !service.scope.read_only {
             fs::create_dir_all(service.root.join("transcripts")).map_err(store_error)?;
@@ -286,6 +290,12 @@ impl MemoryService {
             vectors.prune(&group, &turns.iter().filter(|t| t.text != REMOVED).map(|t| t.text.as_str()).collect::<Vec<_>>());
         }
         Ok(())
+    }
+
+    /// The session this service records under when a client names none:
+    /// one per run of the server, named by when it started.
+    pub fn session_id(&self) -> &str {
+        &self.session
     }
 
     /// The scope this service was opened with.
