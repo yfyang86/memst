@@ -40,7 +40,12 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 22 | Search by meaning in the memory tools | Done: 71.7% to 83.3% on sixty LongMemEval-S questions (+11.7 points, interval +1.7 to +21.7) |
 | 23 | Matching by meaning for stale notes and forgetting | Done: 0 of 30 without the embedder, 27 of 30 with it, on notes changed since in other words |
 | 24 | A plain client's sessions, and the lock | Done; negative: a model asked to record what is said recorded none of eighty facts. A `record` command for clients' hooks was added |
-| 25 | Release and a client we did not write | Planned |
+| 25 | Release 1.2.0 | Done: `dev` merged into `main` and tagged `v1.2.0` (see "The release") |
+
+Future work, not scheduled: **a second client**. Everything was tested with
+Pi and with a plain MCP client we wrote. A client written by someone else
+(Claude Code over MCP) has not been tried, and it is where recording
+through hooks with `memst mcp record` would be tested.
 
 Candidates ahead of 21, by size of the known gap: give `memory_read` the
 harness's read path (finding 98); record a plain client's sessions
@@ -156,7 +161,7 @@ What to expect to go wrong: the model download needs network access to
 Hugging Face; a run interrupted part-way keeps nothing (the runner writes
 its answers at the end), so run it where it will not be put to sleep.
 
-## Sprint 16: done, except the release
+## Sprint 16
 
 Updated 2026-11-20, after sprint 16.
 
@@ -169,19 +174,26 @@ Updated 2026-11-20, after sprint 16.
 - **A client we did not write** (Claude Code over MCP) was not tried; it
   needs an account or key.
 
-### The release (yours to do)
+### The release
 
-`.github/workflows/release.yml` has never run: it runs from a tag or from
-the default branch, and the work is on `dev`. To release:
+Version 1.2.0. The commands that made it, for the next one:
 
-1. Merge `dev` into the default branch (`main`).
-2. Move the "Unreleased" items in `Release Note.md` under a version. They
-   were added after 1.1.0 was written up, so either fold them into 1.1.0
-   or bump the workspace version in `Cargo.toml` (and `memst-py`,
-   `pyproject.toml`) to 1.2.0.
-3. Tag and push: `git tag v1.1.0 && git push origin v1.1.0`. The workflow
-   builds `memst` for Linux x86-64 and macOS arm64 and attaches the
-   archives to a GitHub release. Expect to fix something on its first run.
+```bash
+# 1. Set the version in three places, and the lock file
+#    Cargo.toml ([workspace.package]), memst-py/Cargo.toml, pyproject.toml
+cargo update --workspace
+
+# 2. Put the release's section at the top of "Release Note.md"
+
+# 3. dev into main (it was a fast-forward), then tag main and push the tag
+git checkout main && git merge --ff-only dev && git push origin main
+git tag -a v1.2.0 -m "MemSt 1.2.0" && git push origin v1.2.0
+```
+
+The tag starts `.github/workflows/release.yml`, which builds `memst` for
+Linux x86-64 and macOS arm64 and attaches the archives to a GitHub release
+of that name. `memst --version` and `memst.__version__` report the
+workspace version.
 
 ## Runs that were yours
 

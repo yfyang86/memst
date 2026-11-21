@@ -3135,7 +3135,7 @@ dependencies = [
 
 [[package]]
 name = "memst-cli"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3156,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "memst-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3182,7 +3182,7 @@ dependencies = [
 
 [[package]]
 name = "memst-embed"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "dirs 5.0.1",
  "fastembed",
@@ -3217,7 +3217,7 @@ dependencies = [
 
 [[package]]
 name = "memst-graph-helix"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chrono",
  "fs2",
@@ -3231,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "memst-lib"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "memst-core",
  "pyo3",
@@ -3239,7 +3239,7 @@ dependencies = [
 
 [[package]]
 name = "memst-mcp"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "bincode",
@@ -3257,7 +3257,7 @@ dependencies = [
 
 [[package]]
 name = "memst-py"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3275,7 +3275,7 @@ dependencies = [
 
 [[package]]
 name = "memst-repo"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3298,7 +3298,7 @@ dependencies = [
 
 [[package]]
 name = "memst-sleep"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",

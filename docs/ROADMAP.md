@@ -570,8 +570,25 @@ is negative)*.
   for a client that can run a command on each message. Tested as a
   command; not tried with such a client.
 
-Next: **25**, the release and a client we did not write, which is also
-where recording through a client's hooks would be tried.
+**25. Release 1.2.0.** The workspace, the Python module and the command
+line report 1.2.0; `dev` is merged into `main` and tagged `v1.2.0`, which
+runs the release workflow for the first time. Version 1.1.0 was written up
+in sprint 11 and never tagged; 1.2.0 includes it.
+
+## Future work
+
+- **A second client.** Every result on memory in use comes from Pi with
+  the extension or from a plain MCP client we wrote ourselves. A client
+  written by someone else has not been tried; Claude Code over MCP is the
+  obvious one. That is also where recording through a client's hooks
+  (`memst mcp record`, finding 111) would be tested, since asking a model
+  to record what is said does not work.
+- The ten or so points still between an agent with the memory tools and
+  the harness's best read path on LongMemEval-S.
+- Deleting from the history of the session store; the cascade to memory
+  items that do not say where they came from; merging within a note.
+- Memory operations are linear in the number of notes, and the native
+  search index is loaded afresh for each operation.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost

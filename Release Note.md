@@ -1,25 +1,88 @@
 # MemSt Release Notes
 
-## Unreleased
+## v1.2.0 - Memory that is read well, searched by meaning, and can forget
 
-- Notes are shown with what the user said on their subject since they were
-  written; forgetting lists related transcript entries and can remove them
-  singly.
-- Memory operations read each note once: at 5,000 notes a write takes about
-  130 ms and a search about 50 ms.
-- `memst message delete` removes one message, its search entry and the
-  knowledge-graph facts taken from it; `memst session delete` now removes
-  the session's facts from the graph too. `memst message list` shows ids.
-- Deleting from the tantivy search index now removes the text from disk,
-  not only from results.
-- The store is locked per operation: a long-running process no longer
-  blocks others.
-- `memory_as_of` reads the notes as they stood at an earlier time.
-- A note says whom it is about, and search uses it.
-- Deleting a message removes the memory items and summaries made from it.
-- The native search index journals additions; it used to be rewritten on
-  every use.
-- `memst mcp merge` joins two copies of an owner's memory.
+*Release Date: 2026-11-21*
+
+The first tagged release since 1.0.0. Version 1.1.0 below was written up
+and never tagged; everything in it is in this release.
+
+### Reading and searching
+
+- **`memory_read` with scope `all`** returns up to forty transcript entries
+  that bear on a question, in the order they were said and with their
+  dates, and says how to work through them. On sixty LongMemEval-S
+  questions an agent went from 61.7% to 71.7% with it.
+- **Search by meaning.** `--embedder local` (the BGE-M3 model on your
+  machine, 2.2 GB, downloaded on first use), `http` or `auto`; or set
+  `MEMST_EMBEDDER`. Search then joins the keyword order with nearness of
+  meaning: 71.7% to 83.3% on the same questions. `memst mcp embed` makes
+  the vectors up front; `memst mcp nearness` prints how near two texts
+  are. Vectors are removed when their text is forgotten. The default is
+  still keyword only.
+- **A note says whom it is about**, and search uses it: a question about
+  "our" something ranks the user's own notes above look-alikes about other
+  teams.
+- **`memory_as_of`** reads the notes as they stood at an earlier time.
+
+### Keeping notes right
+
+- **A note is shown with what the user said on its subject since it was
+  written**, and marked in the index; the later statement holds. With an
+  embedder this is by meaning as well as by shared words.
+- **The offline pass works on a large memory.** It was shown every note; it
+  is shown at most 80, chosen for each thing the user said.
+- **`memst mcp merge`** joins two copies of an owner's memory. Changes on
+  one side are kept, conflicting changes are both kept, and what either
+  copy forgot stays forgotten.
+
+### Forgetting and deleting
+
+- **Forgetting reaches what was said**, not only the note: by words, by
+  single transcript entry, and, with an embedder, what says it in other
+  words is offered for removal.
+- **`memst message delete`** removes one message, its search entry, the
+  knowledge-graph facts taken from it, and the memory items and summaries
+  made from it. `memst session delete` removes the session's facts from
+  the graph too. `memst message list` shows ids.
+- **Deleting from the search index removes the text from disk.** With
+  tantivy a deleted document was only marked, and its text stayed in the
+  index file.
+
+### Running it
+
+- **The store is locked per operation.** A long-running process no longer
+  blocks every other one. The memory directory's lock can be taken again
+  by the thread that holds it.
+- **Memory operations read each note once**: at 5,000 notes a write takes
+  about 130 ms and a search about 50 ms.
+- **The native search index journals additions**; it used to be rewritten
+  on every use.
+- **`memst mcp record`** records one message from outside the
+  conversation, for a client that can run a command on each message.
+
+### What we found
+
+- Tested over sessions, with criteria fixed before each run
+  (`benchmarks/sessions/README.md`, thirteen rounds): recall, updates,
+  stale notes, forgetting, planted instructions and abstention hold with
+  the Pi extension, at 5,000 notes and over long histories of things said
+  in passing.
+- **A client without the Pi extension records no sessions**, so its memory
+  holds only the notes its model chose to write. Asking the model to
+  record does not work: it recorded none of eighty facts.
+- An agent with these tools is still about eight points below the best
+  one-shot read path of the evaluation harness on LongMemEval-S questions.
+
+### Future work
+
+- **A second client.** Everything here was tested with Pi and with a plain
+  MCP client we wrote. A client written by someone else (Claude Code over
+  MCP is the obvious one) has not been tried; that is also where recording
+  through a client's hooks with `memst mcp record` would be tested.
+- Deleting from the history of the session store; merging within a note;
+  the cost of memory operations, which is still linear in the number of
+  notes.
 
 ---
 
