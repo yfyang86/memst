@@ -19,6 +19,7 @@ const MEANINGS: &[&[&str]] = &[
     &["doctor", "physician", "clinic", "appointment", "gp"],
     &["holiday", "vacation", "trip", "travel", "beach"],
     &["passport", "xk-4471"],
+    &["deploy", "ship to production", "release day"],
 ];
 
 impl Embedder for Meanings {
@@ -34,7 +35,12 @@ impl Embedder for Meanings {
             .map(|text| {
                 let lowered = text.to_lowercase();
                 let mut vector: Vec<f32> = MEANINGS.iter().map(|words| if words.iter().any(|w| lowered.contains(w)) { 1.0 } else { 0.0 }).collect();
-                vector.push(0.05); // never a zero vector
+                // Each text also has something of its own, so that two texts
+                // with none of the meanings are not thereby alike.
+                let own = lowered.bytes().fold(7usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)) % 64;
+                let mut rest = vec![0.0; 64];
+                rest[own] = 0.3;
+                vector.extend(rest);
                 vector
             })
             .collect())
@@ -139,4 +145,38 @@ fn a_vector_does_not_outlive_its_text() {
     plain.forget_said(&["lunch".to_string()]).unwrap();
     assert!(vector_files(dir.path()).is_empty());
     assert_eq!(open(dir.path(), &model).embed_all().unwrap().1, 0);
+}
+
+#[test]
+fn a_later_statement_in_other_words_is_shown_beside_the_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(Meanings { calls: AtomicUsize::new(0), texts: AtomicUsize::new(0) });
+    let memory = open(dir.path(), &model);
+    let deploys = memory.write("Our team's deploys go out on Thursdays.", "semantic", &[]).unwrap().id;
+    let office = memory.write("The office is on the fourth floor.", "semantic", &[]).unwrap().id;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    // Not a content word in common with the note.
+    memory.record("s1", "user", "We ship to production on Mondays now.").unwrap();
+    memory.record("s1", "user", "The printer is out of toner.").unwrap();
+
+    let said = memory.said().unwrap();
+    let shown = said.render_note(&memory.get(deploys).unwrap());
+    assert!(shown.contains("We ship to production on Mondays now."), "{shown}");
+    assert!(!shown.contains("toner"));
+    assert!(!said.render_note(&memory.get(office).unwrap()).contains("said later"));
+    assert!(memory.index().unwrap().contains("spoken about this since"));
+
+    // By words alone it is not found: this is what the embedder adds.
+    let plain = MemoryService::open(dir.path(), Scope::new("alice", false).unwrap(), WritePolicy::default()).unwrap();
+    assert!(!plain.said().unwrap().render_note(&plain.get(deploys).unwrap()).contains("said later"));
+
+    // After a forget, what still says it in other words is offered too.
+    let left = memory.related_said("Our team's deploys go out on Thursdays.", 5).unwrap();
+    assert_eq!(left.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), ["We ship to production on Mondays now."]);
+    assert!(plain.related_said("Our team's deploys go out on Thursdays.", 5).unwrap().is_empty());
+
+    // A write goes through with the embedder on (the index is rebuilt
+    // while the directory is held; this used to wait on its own lock).
+    memory.write("The user likes green tea.", "semantic", &[]).unwrap();
+    memory.forget(office).unwrap();
 }
