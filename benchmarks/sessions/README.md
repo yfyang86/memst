@@ -901,6 +901,38 @@ left is most likely retrieval by keyword where the harness retrieves by
 embedding, and an agent that stops reading when it thinks it has enough;
 this run does not separate the two.
 
+## Round 11 (sprint 22): search by meaning in the memory tools
+
+With an embedder, memory search ranks by keyword and by nearness of
+meaning and joins the two orders. Round 11 asks whether that closes any
+of the distance left after round 10. Written before the first run.
+
+```bash
+python -m benchmarks.sessions.lme --per-type 8 --embedder local \
+    --compare benchmarks/results/sessions-round10-read-path/answers.jsonl \
+    --out benchmarks/results/sessions-round11-embeddings ...
+```
+
+Round 10's setting with one change: the server is started with the local
+BGE-M3 model, and each history is embedded before its question. **Sixteen
+questions**, the first eight of each type in round 7's sample, because
+embedding one history of 500 turns takes five and a half minutes on the
+four cores this was run on; sixty would take as many hours. The sixteen
+are compared with round 10's answers to the same sixteen.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| E1 | Search by meaning does not make the agent worse | judged accuracy not below round 10's on the same sixteen questions |
+
+Reported: the same against `dense-wide-reason`, and the time to embed.
+
+Expected beforehand. Sixteen questions can show only a large effect: one
+question is six points. Round 10 was already right on most
+`knowledge-update` questions, so any gain would be on `multi-session`
+ones, of which there are few here. We expect no difference we could
+defend, and the purpose of the run is as much to see that the path works
+end to end with the real model, and what it costs, as to measure a gain.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
