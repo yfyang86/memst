@@ -16,6 +16,7 @@ pub mod page;
 pub mod policy;
 pub mod server;
 pub mod service;
+pub mod vectors;
 
 pub use adapter::{McpAdapter, McpContent, McpManifest, McpResource, McpTool, McpToolCall, McpToolResult};
 pub use policy::{Scope, Screening, WritePolicy};

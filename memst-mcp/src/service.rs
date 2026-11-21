@@ -189,6 +189,8 @@ pub struct MemoryService {
     /// not recorded for the rest of the session: its confirmation tends to
     /// restate what it has just removed.
     forgotten_subjects: Mutex<Vec<Vec<String>>>,
+    /// With an embedder, search is by meaning as well as by word.
+    vectors: Option<crate::vectors::Vectors>,
 }
 
 /// What a removed transcript entry is replaced with.
@@ -211,6 +213,7 @@ impl MemoryService {
             rate: Mutex::new(RateWindow::default()),
             forgotten: Mutex::new(Vec::new()),
             forgotten_subjects: Mutex::new(Vec::new()),
+            vectors: None,
         };
         if !service.scope.read_only {
             fs::create_dir_all(service.root.join("transcripts")).map_err(store_error)?;
@@ -220,6 +223,69 @@ impl MemoryService {
             service.write_index(&dir)?;
         }
         Ok(service)
+    }
+
+    /// Search by meaning as well as by word, with this model. The vectors
+    /// are kept under the owner's memory and made as they are needed.
+    pub fn with_embedder(mut self, embedder: std::sync::Arc<dyn memst_core::embed::Embedder>) -> Self {
+        self.vectors = Some(crate::vectors::Vectors::new(&self.root, embedder));
+        self
+    }
+
+    /// Make the vectors that are missing, for every note and transcript
+    /// entry. Search makes a few at a time as it goes; this makes them all,
+    /// which for a long history takes minutes on a CPU. Returns how many
+    /// texts now have a vector, and how many still do not.
+    pub fn embed_all(&self) -> Result<(usize, usize), Refusal> {
+        let Some(vectors) = &self.vectors else {
+            return Err(Refusal::Invalid("no embedder was chosen".to_string()));
+        };
+        if self.scope.read_only {
+            return Err(Refusal::ReadOnly);
+        }
+        // The directory is opened once, here: opening it again from inside
+        // would wait on its own lock.
+        let dir = self.dir()?;
+        let (mut have, mut lack) = (0, 0);
+        let notes: Vec<Note> = self.notes_in(&dir)?.into_iter().filter(|n| n.status == Status::Active).collect();
+        let bodies: Vec<&str> = notes.iter().map(|n| n.body.as_str()).collect();
+        let (made, left, _) = vectors.for_texts(crate::vectors::NOTES, &bodies, usize::MAX, true);
+        have += made.iter().flatten().count();
+        lack += left;
+        for session in self.sessions()? {
+            let turns = self.transcript(&session)?;
+            let texts: Vec<&str> = turns.iter().filter(|t| t.text != REMOVED).map(|t| t.text.as_str()).collect();
+            let (made, left, _) = vectors.for_texts(&crate::vectors::session_group(&session), &texts, usize::MAX, true);
+            have += made.iter().flatten().count();
+            lack += left;
+        }
+        self.audit("embed_all", Ok(None), Some(format!("{have} with a vector, {lack} without")));
+        Ok((have, lack))
+    }
+
+    /// Drop the vectors of anything that is no longer in memory. Called
+    /// after every forgetting, so that a vector does not outlive its text.
+    fn prune_vectors(&self, dir: &VersionedDir) -> Result<(), Refusal> {
+        let Some(vectors) = &self.vectors else {
+            // Vectors made under another run with an embedder are still on
+            // disk; without the model's name we cannot find its directory,
+            // so drop them all. They are a cache and will be made again.
+            let _ = fs::remove_dir_all(self.root.join("vectors"));
+            return Ok(());
+        };
+        let notes = self.notes_in(dir)?;
+        vectors.prune(crate::vectors::NOTES, &notes.iter().map(|n| n.body.as_str()).collect::<Vec<_>>());
+        let sessions = self.sessions()?;
+        for group in vectors.groups() {
+            let Some(session) = group.strip_prefix("s-") else { continue };
+            if !sessions.iter().any(|s| s == session) {
+                vectors.drop_group(&group);
+                continue;
+            }
+            let turns = self.transcript(session)?;
+            vectors.prune(&group, &turns.iter().filter(|t| t.text != REMOVED).map(|t| t.text.as_str()).collect::<Vec<_>>());
+        }
+        Ok(())
     }
 
     /// The scope this service was opened with.
@@ -358,9 +424,77 @@ impl MemoryService {
                 candidates.push((Found::Turn(turn), text));
             }
         }
-        let mut hits = rank(query, candidates);
+        let mut hits = match &self.vectors {
+            Some(vectors) => self.rank_with_vectors(vectors, query, candidates),
+            None => rank(query, candidates),
+        };
         prefer_subject(query, &mut hits);
         Ok(hits.into_iter().take(limit.clamp(1, 100)).collect())
+    }
+
+    /// Rank by keyword and by meaning, and join the two orders.
+    ///
+    /// Each candidate gets a place in the keyword order (if it shares a
+    /// word with the question) and a place in the order of nearness to the
+    /// question's vector (the nearest hundred); its score is the sum of
+    /// 1/(60 + place) over the orders it is in. A candidate found by both
+    /// comes first; one found by meaning alone still comes, which keyword
+    /// search could not do. Pages have no vectors and are ranked by word.
+    fn rank_with_vectors(&self, vectors: &crate::vectors::Vectors, query: &str, candidates: Vec<(Found, String)>) -> Vec<Hit> {
+        use crate::vectors::{cosine, session_group, NOTES};
+        let Some(asked) = vectors.of_query(query) else { return rank(query, candidates) };
+        let write = !self.scope.read_only;
+        // Vectors group by group: the notes, and each session.
+        let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, (found, _)) in candidates.iter().enumerate() {
+            match found {
+                Found::Note(_) => groups.entry(NOTES.to_string()).or_default().push(index),
+                Found::Turn(turn) if turn.text != REMOVED => groups.entry(session_group(&turn.session)).or_default().push(index),
+                _ => {}
+            }
+        }
+        let mut near: Vec<(usize, f32)> = Vec::new();
+        // A search makes a few missing vectors and no more, so that it
+        // stays quick; `embed_all` makes the rest.
+        let mut allowance = 64usize;
+        let mut group_names: Vec<&String> = groups.keys().collect();
+        group_names.sort();
+        for name in group_names {
+            let members = &groups[name];
+            let texts: Vec<&str> = members
+                .iter()
+                .map(|i| match &candidates[*i].0 {
+                    Found::Note(note) => note.body.as_str(),
+                    _ => candidates[*i].1.as_str(),
+                })
+                .collect();
+            let (made, _left, made_now) = vectors.for_texts(name, &texts, allowance, write);
+            allowance = allowance.saturating_sub(made_now);
+            for (index, vector) in members.iter().zip(made) {
+                if let Some(vector) = vector {
+                    near.push((*index, cosine(&asked, &vector)));
+                }
+            }
+        }
+        // Everything has some nearness to everything. Below this, a text is
+        // not about the question, and listing it would make every search
+        // return the whole of memory. The figure suits BGE-M3, whose
+        // unrelated texts sit around 0.3 to 0.4.
+        near.retain(|(_, nearness)| *nearness >= NEAR_ENOUGH);
+        near.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        let by_word = bm25(query, &candidates.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>());
+        let mut word_order: Vec<(usize, f32)> = by_word.iter().copied().enumerate().filter(|(_, score)| *score > 0.0).collect();
+        word_order.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        let mut fused: HashMap<usize, f32> = HashMap::new();
+        for (place, (index, _)) in word_order.iter().enumerate() {
+            *fused.entry(*index).or_default() += 1.0 / (60.0 + place as f32 + 1.0);
+        }
+        for (place, (index, _)) in near.iter().take(100).enumerate() {
+            *fused.entry(*index).or_default() += 1.0 / (60.0 + place as f32 + 1.0);
+        }
+        let mut hits: Vec<Hit> = candidates.into_iter().enumerate().filter_map(|(index, (found, _))| fused.get(&index).map(|score| Hit { found, score: *score })).collect();
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score).then(when(&b.found).cmp(&when(&a.found))));
+        hits
     }
 
     /// As [`search`](Self::search), keeping only notes about `about` (the
@@ -494,7 +628,8 @@ impl MemoryService {
             // rebuilds the pages from what is left.
             self.purge_pages_citing(&dir, &Source::Note { id }.key())?;
             let _ = fs::remove_file(self.pending_path());
-            self.write_index(&dir)
+            self.write_index(&dir)?;
+            self.prune_vectors(&dir)
         })();
         self.audit("memory_forget", outcome.clone().map(|_| Some(id)), None);
         outcome
@@ -565,6 +700,7 @@ impl MemoryService {
                 }
             }
             self.write_index(&dir)?;
+            self.prune_vectors(&dir)?;
             Ok(removed)
         })();
         self.audit(
@@ -739,6 +875,7 @@ impl MemoryService {
             }
             let _ = fs::remove_file(self.pending_path());
             self.write_index(&dir)?;
+            self.prune_vectors(&dir)?;
             Ok(removed)
         })();
         self.audit("forget_entries", outcome.clone().map(|_| None), outcome.as_ref().ok().map(|n| format!("{n} transcript entries removed")));
@@ -839,7 +976,8 @@ impl MemoryService {
                 let dir = self.dir()?;
                 self.purge_pages_citing(&dir, &format!("session:{session}#"))?;
                 let _ = fs::remove_file(self.pending_path());
-                self.write_index(&dir)
+                self.write_index(&dir)?;
+                self.prune_vectors(&dir)
             })
         } else {
             Err(Refusal::NotFound)
@@ -1218,6 +1356,7 @@ impl MemoryService {
             self.merge_transcripts(&dir, other, &mut merged)?;
             let _ = fs::remove_file(self.pending_path());
             self.write_index(&dir)?;
+            self.prune_vectors(&dir)?;
             Ok(merged)
         })();
         self.audit(
@@ -1616,12 +1755,17 @@ fn stem(word: &str) -> String {
 /// BM25 over the candidates. An owner holds at most tens of thousands of
 /// short notes, so ranking them in memory is fast, and nothing has to be
 /// kept in an index that forgetting would then have to reach.
-fn rank(query: &str, candidates: Vec<(Found, String)>) -> Vec<Hit> {
+/// The least cosine similarity at which a text counts as near a question.
+const NEAR_ENOUGH: f32 = 0.45;
+
+/// The BM25 score of each text for `query`, in the order given; zero for a
+/// text that shares no word with it.
+fn bm25(query: &str, texts: &[&str]) -> Vec<f32> {
     let wanted = terms(query);
-    if wanted.is_empty() || candidates.is_empty() {
-        return Vec::new();
+    if wanted.is_empty() || texts.is_empty() {
+        return vec![0.0; texts.len()];
     }
-    let documents: Vec<Vec<String>> = candidates.iter().map(|(_, text)| terms(text)).collect();
+    let documents: Vec<Vec<String>> = texts.iter().map(|text| terms(text)).collect();
     let count = documents.len() as f32;
     let average = documents.iter().map(Vec::len).sum::<usize>() as f32 / count;
     let mut containing: HashMap<&str, f32> = HashMap::new();
@@ -1634,10 +1778,9 @@ fn rank(query: &str, candidates: Vec<(Found, String)>) -> Vec<Hit> {
         }
     }
     let (k1, b) = (1.2, 0.75);
-    let mut hits: Vec<Hit> = candidates
-        .into_iter()
-        .zip(&documents)
-        .filter_map(|((found, _), document)| {
+    documents
+        .iter()
+        .map(|document| {
             let mut score = 0.0;
             for term in &wanted {
                 let frequency = document.iter().filter(|t| *t == term).count() as f32;
@@ -1648,9 +1791,14 @@ fn rank(query: &str, candidates: Vec<(Found, String)>) -> Vec<Hit> {
                 let idf = ((count - df + 0.5) / (df + 0.5) + 1.0).ln();
                 score += idf * frequency * (k1 + 1.0) / (frequency + k1 * (1.0 - b + b * document.len() as f32 / average.max(1.0)));
             }
-            (score > 0.0).then_some(Hit { found, score })
+            score
         })
-        .collect();
+        .collect()
+}
+
+fn rank(query: &str, candidates: Vec<(Found, String)>) -> Vec<Hit> {
+    let scores = bm25(query, &candidates.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>());
+    let mut hits: Vec<Hit> = candidates.into_iter().zip(scores).filter(|(_, score)| *score > 0.0).map(|((found, _), score)| Hit { found, score }).collect();
     hits.sort_by(|a, b| b.score.total_cmp(&a.score).then(when(&b.found).cmp(&when(&a.found))));
     hits
 }

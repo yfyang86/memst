@@ -61,6 +61,14 @@ def ask(args, conversation, judge_client) -> dict:
     try:
         sessions = write_history(store, "tester", conversation.turns)
         passes, pass_seconds, built = 0, 0.0, {}
+        embed_seconds = 0.0
+        if args.embedder != "none":
+            # Make every vector before the question, as `memst mcp embed`
+            # does for a memory that already exists. The server the agent
+            # talks to takes the embedder from the environment.
+            started = time.time()
+            subprocess.run([args.memst, "--store", str(store), "mcp", "--owner", "tester", "--embedder", args.embedder, "embed"], capture_output=True, text=True, timeout=3600)
+            embed_seconds = round(time.time() - started, 1)
         if args.with_pass:
             # The offline pass reads the whole history, a part at a time,
             # and writes notes and pages from it.
@@ -96,7 +104,7 @@ def ask(args, conversation, judge_client) -> dict:
         row = {
             "question_id": question.id, "category": question.category, "question": question.text, "gold": gold, "prediction": prediction,
             "f1": f1, "judged_correct": correct, "abstained": abstained,
-            "sessions": sessions, "turns": len(conversation.turns), "passes": passes, "pass_seconds": pass_seconds, **({"built": built} if built else {}), **{k: v for k, v in reply.items() if k != "answer"},
+            "sessions": sessions, "turns": len(conversation.turns), "passes": passes, "pass_seconds": pass_seconds, "embed_seconds": embed_seconds, **({"built": built} if built else {}), **{k: v for k, v in reply.items() if k != "answer"},
         }
         print(f"  {question.id} {question.category:16} {'ok  ' if row['judged_correct'] else 'FAIL'} {prediction[:70]!r}", flush=True)
         return row
@@ -191,6 +199,7 @@ def main():
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--embedder", default="none", help="none, or the embedder the memory server searches by meaning with (local, http, auto)")
     parser.add_argument("--with-pass", action="store_true", help="run the offline pass over the whole history before asking, so that memory holds notes and pages as well as transcripts")
     parser.add_argument("--pass-chars", type=int, default=120_000, help="transcript text read by one pass")
     parser.add_argument("--passes-max", type=int, default=12)
@@ -201,6 +210,7 @@ def main():
     parser.add_argument("--out", default="benchmarks/results/sessions-round7-longmemeval")
     args = parser.parse_args()
     args.memst = str(Path(args.memst).resolve())
+    os.environ["MEMST_EMBEDDER"] = args.embedder
     types = args.types.split(",")
     conversations = load_longmemeval(Path(args.data), per_type=args.per_type, types=types)
     out = Path(args.out)
@@ -226,6 +236,8 @@ def main():
             "by_category": {c: [sum(r["judged_correct"] for r in shared if r["category"] == c), sum(other[r["question_id"]]["judged_correct"] for r in shared if r["category"] == c), sum(1 for r in shared if r["category"] == c)] for c in sorted({r["category"] for r in shared})},
             "other_prompt_tokens": round(sum(other[r["question_id"]].get("prompt_tokens", 0) for r in shared) / len(shared)),
         }
+    if args.embedder != "none":
+        summary["embedding"] = {"embedder": args.embedder, "seconds_mean": round(sum(r["embed_seconds"] for r in rows) / len(rows), 1)}
     if args.with_pass:
         summary["pass"] = {"passes_mean": round(sum(r["passes"] for r in rows) / len(rows), 1), "seconds_mean": round(sum(r["pass_seconds"] for r in rows) / len(rows), 1), "notes_mean": round(sum(r.get("built", {}).get("notes", 0) for r in rows) / len(rows), 1), "pages_mean": round(sum(r.get("built", {}).get("pages", 0) for r in rows) / len(rows), 1)}
     (out / "summary.json").write_text(json.dumps({"settings": settings, **summary}, indent=2))
@@ -233,6 +245,8 @@ def main():
     if "pass" in summary:
         p = summary["pass"]
         report += f"\nBefore the question, the offline pass read the history in {p['passes_mean']} passes on average ({p['seconds_mean']} s) and left {p['notes_mean']} notes and {p['pages_mean']} pages.\n"
+    if "embedding" in summary:
+        report += f"\nBefore the question, every entry of the history was embedded with `{summary['embedding']['embedder']}`: {summary['embedding']['seconds_mean']} s a history on average.\n"
     if "against_compared_run" in summary:
         c = summary["against_compared_run"]
         report += f"\nAgainst the compared run on the same {c['n']} questions: {c['this']}% here, {c['other']}% there; {c['difference']:+} points ({c['low']:+} to {c['high']:+}). Reading abstentions fairly: {c['this_fair']}% here, {c['other_fair']}% there. By type (correct here, there, of): {c['by_category']}. Prompt tokens per question: {c['this_prompt_tokens']:,} here, {c['other_prompt_tokens']:,} there.\n"
