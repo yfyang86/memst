@@ -218,3 +218,32 @@ def build_round8() -> List[Scenario]:
         scenarios.append(Scenario("others-own", i, sessions, fact.question + SHORT, expect=[fact.answer], forbid=[answer], first_wins=True))
         scenarios.append(Scenario("others-named", i, sessions, question + SHORT, expect=[answer], forbid=[fact.answer], first_wins=True))
     return scenarios
+
+
+# Round 12. The change to each fact, said in words that share none of the
+# note's content words, and a pattern for the new value.
+PARAPHRASED = [
+    ("We ship to production on Mondays these days.", r"monday"),
+    ("The pre-production box was replaced by one called wombat.", r"wombat"),
+    ("Tobias Renner now carries the pager for billing and card processing.", r"renner"),
+    ("The read-only database copy now accepts connections at 7654.", r"7654"),
+    ("End-to-end checks are kicked off through `just itest-full` nowadays.", r"itest-full"),
+    ("I changed the colour scheme in my IDE to Gruvbox Ember.", r"gruvbox ember"),
+    ("I relocated; Tallinn is my base these days.", r"tallinn"),
+    ("When we cut a version now, it starts with rel/, for example rel/v41.", r"rel/"),
+    ("The throttle for external callers was lifted to 520 calls every sixty seconds for each token.", r"\b520\b"),
+    ("I got my pet's name wrong before: she is Marzipan.", r"marzipan"),
+]
+
+
+def build_round12() -> List[Scenario]:
+    """Round 12 (sprint 23): a wrong note, and a later statement by the user
+    that changes the fact in words the note does not use. No offline pass."""
+    scenarios = []
+    for i, fact in enumerate(FACTS):
+        said, pattern = PARAPHRASED[i]
+        scenarios.append(Scenario(
+            "stale-paraphrase", i, [], fact.question + SHORT, expect=[pattern], forbid=[fact.answer], first_wins=True,
+            seed_note=fact.tell, seed_said=[said], corrected=pattern,
+        ))
+    return scenarios

@@ -990,6 +990,39 @@ embedder. That was fixed before this run, with a regression test in
 before the full run. This is one full run on the same questions and model, not
 an independent replication or the optional 5,000-note size test.
 
+## Round 12 (sprint 23): a note changed since, in other words
+
+Since sprint 12 a note is shown with what the user said on its subject
+afterwards, matched by shared words; a later statement in other words was
+missed (findings 80 and 103). With an embedder the match is also by
+meaning. Written before the first run.
+
+```bash
+MEMST_EMBEDDER=none  python -m benchmarks.sessions.run --round 12 --repeat 3 ...
+MEMST_EMBEDDER=local python -m benchmarks.sessions.run --round 12 --repeat 3 ...
+```
+
+The `stale` scenario of round 2 with one difference: the user's later
+statement shares no content word with the note. The note says "Our team's
+deploys go out on Thursdays"; the user later said "We ship to production
+on Mondays these days". Ten facts, three times each, thirty runs to a
+condition, with Pi and no offline pass. The two conditions differ only in
+whether the memory server has the embedder.
+
+The limit of nearness at which a statement is shown beside a note (0.52)
+was set beforehand from sixteen other pairs of sentences, not from these.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| M1 | With the embedder, a change said in other words is not missed | at least 24 of 30 answer from the later statement |
+| M2 | That is the embedder's doing | more than without it, on the same thirty |
+
+Expected beforehand. Without the embedder, few: the note is not marked,
+and a keyword search for the question's words does not find the statement
+either. Not none, because an agent sometimes reads the transcripts anyway.
+With it, most; where it fails we expect the nearness of a particular pair
+to fall under the limit.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

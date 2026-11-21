@@ -2052,7 +2052,13 @@ pub struct Said {
 /// note's subject. Higher than [`NEAR_ENOUGH`]: a search may list what is
 /// loosely related, but this puts a statement beside a note as something
 /// that may have replaced it.
-pub const SAME_SUBJECT: f32 = 0.6;
+///
+/// Set from sixteen pairs of sentences measured with BGE-M3, none of them
+/// from a test scenario: eight where the second sentence changes the fact
+/// in the first, in other words (0.56 to 0.72), and eight unrelated (0.36
+/// to 0.48). The figure is half-way between the two groups. It belongs to
+/// that model; `memst mcp nearness` prints the figure for any two texts.
+pub const SAME_SUBJECT: f32 = 0.52;
 
 impl Said {
     /// At most the latest 5,000 statements are considered.
