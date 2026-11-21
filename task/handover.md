@@ -75,10 +75,12 @@ model: a 551-turn history embedded in 332 s on four CPU cores, a read in
 
 - The whole workspace's tests were not run after this change here (the
   machine was busy embedding); only the memory crate's. CI runs them.
-- **No measurement of whether it helps.** A 16-question run (round 11) was
-  started on the build machine and had not finished when this was written;
-  if its results are in `benchmarks/results/sessions-round11-embeddings`,
-  they are that run. Sixteen questions can show only a large effect.
+- **Whether it helps is not established.** A 16-question run (round 11,
+  `benchmarks/results/sessions-round11-embeddings`) finished after this
+  was first written: 14 of 16 with embeddings against 12 of 16 by keyword
+  on the same questions, the two gained both `multi-session`. Two
+  questions, with an interval that starts at zero. The full sixty are
+  task 1 below.
 - Matching by meaning for forgetting and for stale notes (finding 103) is
   not built. The embedder it waited on is now there.
 

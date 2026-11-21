@@ -933,6 +933,27 @@ ones, of which there are few here. We expect no difference we could
 defend, and the purpose of the run is as much to see that the path works
 end to end with the real model, and what it costs, as to measure a gain.
 
+### Round 11 results (sixteen questions)
+
+One run, nothing changed afterwards (`sessions-round11-embeddings`).
+
+| | All 16 | knowledge-update (8) | multi-session (8) |
+|---|---|---|---|
+| Round 10, by keyword | 12 (75.0%) | 7 | 5 |
+| Round 11, by keyword and meaning | 14 (87.5%) | 7 | 7 |
+| `dense-wide-reason` | 15 (93.8%) | 8 | 7 |
+
+**E1 passes.** Two more `multi-session` questions were answered, and none
+fewer: 12.5 points, with an interval from 0.0 to +31.2. That is two
+questions. It is in the direction hoped for and on the type of question
+where a gain was expected, and it is not enough to say that search by
+meaning helps; the full sixty are needed for that (`task/handover.md`).
+
+Embedding a history took 291 s on average on four cores. The questions
+themselves cost the same as in round 10 (about 11,200 prompt tokens) and
+took 6.6 s against 3.0 s, the difference being the model loading for each
+question's server.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
