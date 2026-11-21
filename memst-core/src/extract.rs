@@ -544,6 +544,7 @@ impl MemoryExtractor for LlmExtractor {
                 last_decay_at: chrono::Utc::now(),
                 is_deprecated: false,
                 deprecation_reason: None,
+                seen_in: Vec::new(),
             };
             entities.push(entity.clone());
             entity_map.insert(name, entity.id);
@@ -585,6 +586,11 @@ impl MemoryExtractor for LlmExtractor {
                     half_life_days: 30.0,
                     is_stable: false,
                     last_decay_at: chrono::Utc::now(),
+                    valid_from: None,
+                    valid_to: None,
+                    superseded_by: None,
+                    valid_precision: None,
+                    stated_at: None,
                 });
             }
         }
@@ -722,6 +728,7 @@ impl MemoryExtractor for RuleBasedExtractor {
                     last_decay_at: chrono::Utc::now(),
                     is_deprecated: false,
                     deprecation_reason: None,
+                    seen_in: Vec::new(),
                 };
                 entities.push(entity.clone());
 
@@ -739,6 +746,11 @@ impl MemoryExtractor for RuleBasedExtractor {
                         half_life_days: 30.0,
                         is_stable: false,
                         last_decay_at: chrono::Utc::now(),
+                        valid_from: None,
+                        valid_to: None,
+                        superseded_by: None,
+                        valid_precision: None,
+                        stated_at: None,
                     });
                 }
                 prev_entity = Some(entity);

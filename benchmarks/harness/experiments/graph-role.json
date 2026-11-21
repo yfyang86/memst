@@ -1,0 +1,20 @@
+[
+  {"name": "sources-only-reason", "description": "The graph as an index only: the source messages of the facts found plus raw turns, with no fact lines.",
+   "stages": [{"stage": "facts", "method": "hybrid", "k": 30}, {"stage": "fact_sources", "max": 8}, {"stage": "turns", "method": "hybrid", "k": 12}],
+   "context": {"max_facts": 0, "max_turns": 20}, "reader": {"mode": "reason"}},
+  {"name": "default-reason", "description": "The default graph pipeline, with a reasoning reader.",
+   "stages": [{"stage": "facts", "method": "hybrid", "k": 30}, {"stage": "fact_sources", "max": 8}, {"stage": "turns", "method": "hybrid", "k": 12}],
+   "context": {"max_facts": 30, "max_turns": 20}, "reader": {"mode": "reason"}},
+  {"name": "wide+facts-reason", "description": "The best raw pipeline (40 turns by embedding, reasoning reader) with the graph's facts added as lines.",
+   "stages": [{"stage": "turns", "method": "dense", "k": 40}, {"stage": "facts", "method": "hybrid", "k": 30}],
+   "context": {"max_facts": 30}, "reader": {"mode": "reason"}},
+  {"name": "wide+timeline-reason", "description": "The best raw pipeline with the graph's facts added as a dated timeline that marks which value is the latest.",
+   "stages": [{"stage": "turns", "method": "dense", "k": 40}, {"stage": "facts", "method": "hybrid", "k": 30}],
+   "context": {"max_facts": 30, "facts_as": "timeline"}, "reader": {"mode": "reason"}},
+  {"name": "wide+sources-reason", "description": "The best raw pipeline with the source messages of the graph's facts added, and no fact lines.",
+   "stages": [{"stage": "turns", "method": "dense", "k": 40}, {"stage": "facts", "method": "hybrid", "k": 30}, {"stage": "fact_sources", "max": 10}],
+   "context": {"max_facts": 0}, "reader": {"mode": "reason"}},
+  {"name": "timeline-only-reason", "description": "The graph alone as a dated timeline, with its source messages.",
+   "stages": [{"stage": "facts", "method": "hybrid", "k": 40}, {"stage": "fact_sources", "max": 12}],
+   "context": {"max_facts": 40, "facts_as": "timeline"}, "reader": {"mode": "reason"}}
+]

@@ -212,3 +212,103 @@ async fn test_storage_search() {
     assert!(!results.is_empty(), "Should find OpenAI entity");
     assert_eq!(results[0].name, "OpenAI");
 }
+
+// ===== Extraction with a model =====
+
+/// An LLM that returns one canned answer and records the prompt it was given.
+struct CannedLlm {
+    answer: String,
+    prompts: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl memst_core::llm::LlmProvider for CannedLlm {
+    async fn chat(
+        &self,
+        request: memst_core::llm::LlmRequest,
+    ) -> memst_core::error::Result<memst_core::llm::LlmResponse> {
+        self.prompts
+            .lock()
+            .unwrap()
+            .push(request.messages.iter().map(|m| m.content.clone()).collect::<Vec<_>>().join("\n"));
+        Ok(memst_core::llm::LlmResponse {
+            id: None,
+            object: None,
+            created: None,
+            model: Some("canned".to_string()),
+            choices: vec![memst_core::llm::providers::LlmChoice {
+                index: 0,
+                message: Some(memst_core::llm::Message::assistant(self.answer.clone())),
+                delta: None,
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        })
+    }
+
+    fn model(&self) -> &str {
+        "canned"
+    }
+
+    fn provider_name(&self) -> &str {
+        "canned"
+    }
+}
+
+const MODEL_ANSWER: &str = r#"{
+  "entities": {
+    "机构": [{"id": "E001", "name": "Anthropic"}],
+    "模型": [{"id": "E002", "name": "Claude"}]
+  },
+  "relations": [{"subject": "E001", "predicate": "产品发布", "object": "E002"}],
+  "arguments": {},
+  "confidence": 0.85
+}"#;
+
+#[tokio::test]
+async fn test_extraction_uses_the_model_when_one_is_configured() {
+    let llm = std::sync::Arc::new(CannedLlm {
+        answer: MODEL_ANSWER.to_string(),
+        prompts: std::sync::Mutex::new(Vec::new()),
+    });
+    let service = setup_service().await.with_llm(llm.clone());
+    assert!(service.has_llm());
+    let text = "Anthropic released Claude.";
+
+    // The common extraction result, ready for the knowledge graph.
+    let extraction = service.extract_graph(text, "test-ontology").await.unwrap();
+    let names: Vec<&str> = extraction.entities.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"Anthropic") && names.contains(&"Claude"));
+    assert_eq!(extraction.relationships.len(), 1);
+    assert_eq!(
+        (extraction.relationships[0].subject.as_str(), extraction.relationships[0].object.as_str()),
+        ("Anthropic", "Claude"),
+        "relation endpoints are resolved from the model's ids to names"
+    );
+    assert_eq!(extraction.confidence, 0.85);
+
+    // The model was given the ontology prompt with the text in it.
+    let prompts = llm.prompts.lock().unwrap().clone();
+    assert_eq!(prompts.len(), 1);
+    assert!(prompts[0].contains(text));
+
+    // extract_entities stores what the model found, not the keyword demo's
+    // fixed list (neither name is on it).
+    let job = service.extract_entities("test-doc-001", text, "test-ontology").await.unwrap();
+    assert_eq!((job.entity_count, job.llm_calls), (2, 1));
+
+    assert!(service.extract_graph(text, "no-such-ontology").await.is_err());
+}
+
+#[tokio::test]
+async fn test_extraction_without_a_model_is_the_keyword_demo() {
+    let service = setup_service().await;
+    assert!(!service.has_llm());
+    assert!(service.extract_graph("Anthropic released Claude.", "test-ontology").await.is_err());
+    // Not on the demo's list: nothing found, and no model call is reported.
+    let job = service
+        .extract_entities("test-doc-001", "Anthropic released Claude.", "test-ontology")
+        .await
+        .unwrap();
+    assert_eq!((job.entity_count, job.llm_calls), (0, 0));
+}

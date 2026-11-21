@@ -13,6 +13,7 @@ pub mod jobs;
 pub mod kg_decay;
 pub mod kg_evolve;
 pub mod kg_extract;
+pub mod kg_ingest;
 
 pub use error::{KgError, Result};
 

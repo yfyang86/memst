@@ -12,6 +12,7 @@ Date: 2025
 
 1. [Overview](#overview)
 2. [Installation](#installation)
+   - [Mac Build](#mac-build)
 3. [Core Concepts](#core-concepts)
 4. [Sessions](#sessions)
 5. [Messages](#messages)
@@ -78,6 +79,67 @@ cd memst-py
 maturin build --release
 pip install target/wheels/memst-*.whl
 ```
+
+### Mac Build
+
+The verified macOS build uses Rust 1.95 and an isolated Python 3.13
+environment. The current pinned HelixDB sources do not compile with Rust 1.93,
+and PyO3 0.22 does not support Python 3.14. `RUSTUP_TOOLCHAIN` must be exported
+so that Cargo subprocesses started by `maturin` also use Rust 1.95.
+
+These steps build the Rust workspace and only the Python extension required by
+the benchmark harness. They do not build the frontend, desktop shell, or
+FastAPI application in `apps/`.
+
+```bash
+# Run from the repository root. The proxy covers GitHub downloads made by
+# Cargo, maturin, and the ONNX Runtime build.
+rustup toolchain install 1.95
+export RUSTUP_TOOLCHAIN=1.95
+export https_proxy="http://127.0.0.1:7897"
+export HTTPS_PROXY="$https_proxy"
+
+uv venv --python 3.13 .venv
+uv pip install --python .venv/bin/python maturin pytest
+export VIRTUAL_ENV="$PWD/.venv"
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+export PYO3_PYTHON="$VIRTUAL_ENV/bin/python"
+unset CONDA_PREFIX
+
+cargo build --release --workspace
+(cd memst-py && maturin develop --release)
+```
+
+Avoid accidentally using an older global installation. The build products and
+harness interpreter are local to this checkout:
+
+```bash
+./target/release/memst --version
+.venv/bin/python -c "import memst; print(memst.Graph, memst.Embedder)"
+.venv/bin/python -m pytest benchmarks/harness/test_harness.py -v
+cargo test --release -p memst-lib -p memst-graph-helix -p memst-embed
+```
+
+To run the benchmark with a locally served BGE-M3 model (1,024 dimensions),
+configure the HTTP embedder. This avoids the optional 2.2 GB local ONNX model
+download. The reader, judge, and extraction model is a separate requirement.
+
+```bash
+export MEMST_EMBEDDING_API_URL="http://127.0.0.1:1378/v1"
+export MEMST_EMBEDDING_MODEL="text-embedding-bge_m3"
+export EMBEDDER=http
+export HELIX_TELEMETRY_LEVEL=off
+
+# Reuse the existing zsh variable; do not store the key in repository files.
+export MEMST_EVAL_API_KEY="$DEEPSEEK_API_KEY"
+export MEMST_EVAL_API_URL="https://api.deepseek.com"
+export MEMST_EVAL_MODEL="deepseek-flash"
+benchmarks/harness/run_all.sh
+```
+
+`benchmarks/harness/run_all.sh` downloads missing datasets, runs all built-in
+pipelines, and resumes from its caches after an interruption. See
+`benchmarks/harness/RUNNING.md` for sampling and cost controls.
 
 ---
 
@@ -1240,7 +1302,7 @@ The new KG extraction service provides multi-backend storage and LLM-powered ext
 
 | Feature | Description |
 |---------|-------------|
-| **Multi-backend** | SQLite (default) or DuckDB for production |
+| **Storage** | SQLite |
 | **Feature flags** | Choose backend at compile time |
 | **Ontology support** | 80+ intelligence domains |
 | **LLM extraction** | Chain-of-thought entity/relationship extraction |
@@ -1253,8 +1315,6 @@ The new KG extraction service provides multi-backend storage and LLM-powered ext
 [dependencies]
 memst-extract-v2 = { path = "../memst-extract-v2" }
 
-# DuckDB backend (for production analytics)
-memst-extract-v2 = { path = "../memst-extract-v2", default-features = false, features = ["duckdb"] }
 ```
 
 #### Basic Usage
@@ -1661,7 +1721,7 @@ memst mcp manifest
 
 ## 20. API Reference
 
-See [memst-server-api.md](memst-server-api.md) for detailed REST API documentation.
+See [apps/memst-server-api.md](apps/memst-server-api.md) for detailed REST API documentation.
 
 ### Quick Reference
 

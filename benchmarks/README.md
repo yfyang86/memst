@@ -18,7 +18,7 @@ This directory contains the evaluation framework for benchmarking MemSt on the L
 ### 1. Start MemSt Server
 
 ```bash
-cd ../memst-server
+cd ../apps
 ./server.sh --start
 ```
 

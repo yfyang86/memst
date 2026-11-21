@@ -2,11 +2,12 @@
 .idea
 .vscode
 
-## Frontend (memst-ui)
-memst-ui/node_modules/
-memst-ui/dist/
-memst-ui/.env
-memst-ui/.env.local
+## Frontend (apps/memst-ui)
+apps/memst-ui/node_modules/
+apps/memst-ui/dist/
+apps/memst-ui/.env
+apps/memst-ui/.env.local
+apps/memst-ui/src-tauri/target/
 # Note: config.local.ts is deprecated, use .env.local instead
 
 ## Core latex/pdflatex auxiliary files:
@@ -82,19 +83,19 @@ trunc
 trunc/*
 
 # Third Party Nanobot
-third/nanobot
-third/nanobot/*
+apps/third/nanobot
+apps/third/nanobot/*
 
 # Third Party Locomo
 third/locomo
 third/locomo/*
 
 # database/static data
-memst-server/data/
-memst-server/data/*
+apps/memst-server/data/
+apps/memst-server/data/*
 
 # Temp PID
-memst-server/server.pid
+apps/memst-server/server.pid
 
 *.log
 
@@ -106,3 +107,8 @@ PRD*/*
 manuscript/arXiv-2504.19413v1
 manuscript/arXiv-2504.19413v1/*
 
+benchmarks/.harness-work/
+
+## Evaluation datasets and work
+third/longmemeval
+benchmarks/.harness-work

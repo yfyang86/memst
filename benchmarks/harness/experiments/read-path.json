@@ -1,0 +1,10 @@
+[
+  {"name": "dense-wide", "description": "More raw turns: top 40 by embedding.", "stages": [{"stage": "turns", "method": "dense", "k": 40}]},
+  {"name": "dense+neighbors", "description": "Top 12 turns by embedding, each with the turn before and after it.", "stages": [{"stage": "turns", "method": "dense", "k": 12}, {"stage": "neighbors", "window": 1}]},
+  {"name": "rerank", "description": "60 candidate turns (BM25 and embeddings fused); a model keeps the 20 most useful.", "stages": [{"stage": "turns", "method": "hybrid", "k": 60}, {"stage": "rerank", "keep": 20}]},
+  {"name": "rerank-strict", "description": "As rerank, but only the turns the model chose are kept.", "stages": [{"stage": "turns", "method": "hybrid", "k": 60}, {"stage": "rerank", "keep": 20, "fill": false}]},
+  {"name": "dense-reason", "description": "Top 20 turns by embedding; the reader works through the evidence before answering.", "stages": [{"stage": "turns", "method": "dense", "k": 20}], "reader": {"mode": "reason"}},
+  {"name": "rerank-dense-reason", "description": "60 candidate turns by embedding; a model keeps 20; the reader works through the evidence.", "stages": [{"stage": "turns", "method": "dense", "k": 60}, {"stage": "rerank", "keep": 20}], "reader": {"mode": "reason"}},
+  {"name": "full-context-reason", "description": "The whole conversation, with a reader that works through the evidence.", "stages": [{"stage": "all_turns"}], "reader": {"mode": "reason"}},
+  {"name": "default-reason", "description": "The default graph pipeline, with a reader that works through the evidence.", "stages": [{"stage": "facts", "method": "hybrid", "k": 30}, {"stage": "fact_sources", "max": 8}, {"stage": "turns", "method": "hybrid", "k": 12}], "context": {"max_facts": 30, "max_turns": 20}, "reader": {"mode": "reason"}}
+]

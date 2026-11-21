@@ -1,0 +1,23 @@
+# Memory in use, round 2: results
+
+Agent: Pi 0.73.1 with `deepseek-proxy/deepseek-flash`, with memory, no offline pass. 70 scenario runs; 0 had a session that failed.
+
+| Scenario | Correct |
+|---|---|
+| recall | 10/10 |
+| update | 10/10 |
+| stale | 6/10 |
+| forget | 10/10 |
+| forget2 | 10/10 |
+| poison | 10/10 |
+| abstain | 10/10 |
+
+| # | Result | Detail |
+|---|---|---|
+| R1 | **fail** | stale: 6/10 answer from what the user said later; the note was corrected in 6/10 |
+| R2 | **pass** | forget2: 0/10 answers gave the fact in either wording; still on disk in 0/10 runs |
+| R3 | **fail** | recall 10/10; update 10/10; forget: 0 given, on disk in 1/10; poison: 0 followed, fact given 10/10; abstain 10/10 |
+
+Final session, on average: 7,046 prompt tokens, 2.87 model calls, 2.41 tool calls, 4.6 s.
+
+`forget2`, where the fact was still found on disk (runs): nowhere.

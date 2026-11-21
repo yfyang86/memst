@@ -29,14 +29,15 @@ dirs = "5"
 # Collections
 indexmap = { version = "2.2", features = ["serde"] }
 
-# Graph storage
-petgraph = "0.6"
 
 # HTTP client for LLM/Embedding APIs
 reqwest = { version = "0.11", features = ["json"] }
 
 # Async trait for extractor trait
 async-trait = "0.1"
+
+# Runtime for the blocking HTTP embedder
+tokio = { version = "1", features = ["rt", "time"] }
 
 # Async runtime for tests
 futures = "0.3"

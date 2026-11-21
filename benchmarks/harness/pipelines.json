@@ -1,0 +1,138 @@
+[
+  {
+    "name": "default",
+    "description": "Search the graph by relationship, bring the messages those facts were stated in, and add raw-turn retrieval.",
+    "stages": [
+      {
+        "stage": "facts",
+        "method": "hybrid",
+        "k": 30
+      },
+      {
+        "stage": "fact_sources",
+        "max": 8
+      },
+      {
+        "stage": "turns",
+        "method": "hybrid",
+        "k": 12
+      }
+    ],
+    "context": {
+      "max_facts": 30,
+      "max_turns": 20
+    }
+  },
+  {
+    "name": "graph-facts",
+    "description": "The graph only, searched by relationship, with the source messages of the facts found.",
+    "stages": [
+      {
+        "stage": "facts",
+        "method": "hybrid",
+        "k": 30
+      },
+      {
+        "stage": "fact_sources",
+        "max": 12
+      }
+    ],
+    "context": {
+      "max_facts": 30,
+      "max_turns": 12
+    }
+  },
+  {
+    "name": "graph-entities",
+    "description": "The graph only, searched by entity, with the facts around each hit and their source messages.",
+    "stages": [
+      {
+        "stage": "entities",
+        "k": 8,
+        "expand": true
+      },
+      {
+        "stage": "fact_sources",
+        "max": 12
+      }
+    ],
+    "context": {
+      "max_facts": 60,
+      "max_turns": 12
+    }
+  },
+  {
+    "name": "rerank-reason",
+    "description": "No memory construction: 60 candidate turns (BM25 and embeddings fused), a model keeps the 20 most useful, and the reader works through the evidence before answering.",
+    "stages": [
+      {
+        "stage": "turns",
+        "method": "hybrid",
+        "k": 60
+      },
+      {
+        "stage": "rerank",
+        "keep": 20
+      }
+    ],
+    "reader": {
+      "mode": "reason"
+    }
+  },
+  {
+    "name": "dense-wide-reason",
+    "description": "No memory construction: top 40 turns by embedding, and a reader that works through the evidence before answering.",
+    "stages": [
+      {
+        "stage": "turns",
+        "method": "dense",
+        "k": 40
+      }
+    ],
+    "reader": {
+      "mode": "reason"
+    }
+  },
+  {
+    "name": "raw-hybrid",
+    "description": "No memory construction: BM25 and embeddings over the raw turns, fused.",
+    "stages": [
+      {
+        "stage": "turns",
+        "method": "hybrid",
+        "k": 20
+      }
+    ]
+  },
+  {
+    "name": "raw-dense",
+    "description": "No memory construction: embeddings over the raw turns.",
+    "stages": [
+      {
+        "stage": "turns",
+        "method": "dense",
+        "k": 20
+      }
+    ]
+  },
+  {
+    "name": "raw-bm25",
+    "description": "No memory construction: BM25 over the raw turns.",
+    "stages": [
+      {
+        "stage": "turns",
+        "method": "bm25",
+        "k": 20
+      }
+    ]
+  },
+  {
+    "name": "full-context",
+    "description": "The whole conversation.",
+    "stages": [
+      {
+        "stage": "all_turns"
+      }
+    ]
+  }
+]

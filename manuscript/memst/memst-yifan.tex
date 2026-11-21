@@ -29,6 +29,7 @@
 \usepackage{colortbl}
 \usepackage{xcolor}
 \usepackage{enumitem}
+\usepackage{tabularx}
 \setlist[itemize]{leftmargin=*,noitemsep,topsep=3pt}
 \setlist[enumerate]{leftmargin=*,noitemsep,topsep=3pt}
 
@@ -63,16 +64,21 @@
 \newcommand{\Fone}{\textsc{F1}}
 \newcommand{\Bone}{\textsc{BLEU-1}}
 
-\title{\centering \textbf{\memst}: Adaptive Semantic Memory for Production AI Agents}
-\author{\centering Yifan Yang\\
+\title{\textbf{\memst}: A Versioned Memory Store for LLM Agents,\\ and a Like-for-Like Test of Its Knowledge Graph}
+\author{Yifan Yang\\
 \vspace{0.5em}
 \hspace{0.6cm} \href{mailto:yfyang.86@hotmail.com}{\texttt{yfyang.86@hotmail.com}}}
 
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[C]{\textit{\fontsize{9}{11}\selectfont \memst: Adaptive Semantic Memory for Production AI Agents}}
+\fancyhead[C]{\textit{\fontsize{9}{11}\selectfont \memst: A Versioned Memory Store for LLM Agents}}
 \fancyfoot[C]{\thepage}
 \addtolength{\headheight}{12pt}
+
+% Every number in the evaluation is generated from the result files by
+% make_tables.py, as tables/*.tex and the \num... commands in numbers.tex.
+\input{tables/numbers}
+\newcommand{\pipe}[1]{\texttt{#1}}
 
 \begin{document}
 
@@ -82,353 +88,362 @@
 \begin{abstract}
 \vspace{0.3cm}
 
-Persistent memory remains a core limitation of large language model agents. While humans naturally recall facts, timelines, and relationships across long time horizons, most agent memory systems apply a single retrieval mechanism to every query, regardless of its structure. We introduce \memst, a semantic memory architecture that treats retrieval as a \textit{query-dependent optimization problem} rather than a uniform lookup operation.
+\memst\ is an open-source memory store for LLM agents: a content-addressed, versioned record of conversations, a time-aware knowledge graph extracted from them, and a server that exposes one user's memory to agents through the Model Context Protocol. This paper describes the system and reports what happened when its retrieval was evaluated like for like: every retrieval method read by the same model under the same prompt, against two baselines that build no memory at all (reading the whole history, and plain retrieval over the raw turns), with paired tests on the same questions and a second, stricter judge.
 
-The central insight behind \memst\ is that factual lookup, temporal reasoning, and relational traversal require different memory organizations. Instead of forcing all questions through one retrieval pipeline, \memst\ routes each query to a specialized strategy: Cascade filtering for direct factual retrieval, MultiHopKG for relational chains, TemporalKG for time-aware reasoning, and Hierarchical Summary for open-domain questions. A lightweight rule-based classifier selects among these strategies at inference time.
+The results do not support the claim an earlier version of this paper made. On all \numLocomoQuestions\ questions of LoCoMo, the knowledge graph combined with raw turns is \numLocomoDefaultVsDense\ points of judged accuracy \emph{behind} embedding retrieval over raw turns (95\% interval \numLocomoDefaultVsDenseLow\ to \numLocomoDefaultVsDenseHigh), at about \numLocomoGraphCalls\ additional model calls per conversation; on \numLmeQuestions\ questions of LongMemEval-S the two are level. Routing questions to different retrieval methods by their kind, the idea the earlier version was built on, recovers none of the gap to an oracle router. A narrower test, fixed in advance, asked only whether the graph helps on questions about dates and changed facts when added to the best raw-turn method: it does not, by either judge.
 
-We evaluate \memst\ on the LOCOMO benchmark, using 1,540 answerable questions from 10 extended conversations after excluding 446 adversarial questions following prior work. \memst\ achieves \textbf{49.2\% F1}, improving over the strongest published managed-memory baseline by \textbf{41\%} and over standard retrieval-augmented generation by \textbf{118\%}. The gain does not come from routing alone. Even under fixed-strategy comparisons, \memst's architectural choices---tiered storage, token-budget-aware context assembly, and importance-guided retrieval---yield \textbf{46\% higher F1} than equivalent RAG configurations. The system remains efficient: hierarchical retrieval requires only 85 milliseconds median search latency, 3.3 times faster than comparable RAG pipelines, while end-to-end latency remains low.
+What does help is on the reading side. Letting the reader work through forty retrieved turns instead of reading twenty directly raises judged accuracy from \numFullReadRawDenseJudged\% to \numFullReadDenseWideReasonJudged\% on all \numFullReadQuestions\ LoCoMo questions, and from \numFullLmeRawDenseJudged\% to \numFullLmeDenseWideReasonJudged\% on all \numFullLmeQuestions\ LongMemEval-S questions. Reranking with the same reader reaches \numFullReadRerankReasonJudged\% and \numFullLmeRerankReasonJudged\%, respectively. On LoCoMo both reasoning pipelines beat reading the entire history, at \numFullReadWideReasonTokenShare--\numFullReadRerankReasonTokenShare\% of its prompt tokens. We also report a data-model fault that the evaluation exposed and that we believe is common: dating a fact by when it was \emph{said} instead of when it became \emph{true}.
 
-Our analysis shows why adaptive retrieval matters. Multi-hop questions routed through single-hop retrieval lose 65\% of their attainable performance, and temporal questions answered through generic retrieval lose much of the benefit of explicit timeline structure. These findings suggest that next-generation agent memory should be adaptive not only in what it stores, but also in how it is accessed.
+We conclude that, on these benchmarks, a memory system's value does not lie in a structured index that answers questions better than the raw record does. We argue that it lies in what the record supports: versioning, provenance, correction and deletion, and control over what an agent may write into its own future context.
 
 \vspace{2mm}
-\noindent\textbf{Code}: \href{https://github.com/yfyang86/memst}{https://github.com/yfyang86/memst}
+\noindent\textbf{Code and results}: \href{https://github.com/yfyang86/memst}{https://github.com/yfyang86/memst}
 \end{abstract}
 
 %==============================================================================
 \section{Introduction}
 \label{sec:intro}
 
-Human memory is selective rather than uniform. When asked ``When did Alice move to San Francisco?'', we retrieve temporal information; when asked ``Who is Alice's manager's spouse?'', we follow a chain of relationships; when asked ``Tell me about Alice'', we synthesize episodes into a coherent summary. Cognitive science has long suggested that memory is not a single mechanism, but a family of systems adapted to different forms of recall \citep{tulving2002episodic, atkinson1968human}. What matters is not only what is stored, but how it is accessed.
+An agent that works with someone over weeks needs to remember what was said. The context window does not solve this: histories outgrow it, and even where they fit, reading everything for every question is slow and expensive \citep{bulatov2022recurrent}. The common answer is an external memory: store the conversation, build some structure over it (summaries, extracted facts, a knowledge graph), and retrieve from that structure when a question arrives \citep{packer2023memgpt, zhong2024memorybank, chhikara2025mem0, rasmussen2025zep, xu2025mem}.
 
-Contemporary AI agents lack this flexibility. Large language models operate within finite context windows, and even very large windows do not solve the broader problem of persistent memory across repeated interactions \citep{bulatov2022recurrent, liu2023think}. External memory systems address this limitation by storing information beyond the prompt, but most still apply the same retrieval strategy to every query. In practice, a direct factual lookup, a temporal comparison, and a multi-hop relational question often receive the same treatment, typically some variant of vector search or flat hybrid retrieval.
+\memst\ began as such a system, with a particular thesis: that different kinds of question need different retrieval structures, and that routing each question to a specialised strategy would beat any single one. An earlier version of this paper reported that this worked, with 49.2\% F1 on LoCoMo for the adaptive router against 41.7\% for the best fixed strategy.
 
-This uniformity is costly. Consider a question such as ``Why did Alice leave her previous company?'' A flat retrieval system may surface passages mentioning Alice, the company, or departure events, yet still fail to connect them with a separate statement such as ``Alice disliked the remote work policy.'' The facts may all be present, but the retrieval structure is mismatched to the question. As a result, the system retrieves evidence without recovering the relation that makes the answer possible.
+That evaluation had three weaknesses, which are also the ones the field has since identified in much of its own work \citep{bao2026naiverag, zhou2026explicit}. It compared \memst\ with retrieval pipelines of our own construction, not with retrieval over the untouched history under the same reader. It reported token F1, which rewards matching the reference's wording. And it left out the simplest baseline: its own result files contain a full-context run at 80.7\% F1, well above every strategy it reported. LoCoMo conversations are about 26,000 tokens; they fit in the context window of any current model.
 
-\subsection{The Query-Adaptivity Hypothesis}
+This paper replaces that evaluation with one designed to answer a plainer question: \emph{does the memory \memst\ builds answer questions better than the record it was built from?} We built a harness in which retrieval is a configurable pipeline, every pipeline is read by the same model under the same prompt, and each question leaves a trace of what every stage retrieved. We ran it on all of LoCoMo \citep{maharana2024evaluating} and on LongMemEval-S \citep{wu2024longmemeval}, whose histories are about 127,000 tokens.
 
-We hypothesize that memory retrieval should be \textit{query-dependent}: the best strategy for locating a specific fact is not the best strategy for traversing relationships, constructing a timeline, or summarizing broad context. If this hypothesis is correct, an effective agent memory system should not merely store more data or retrieve more text. It should select retrieval structures that match the informational demands of the query.
+The answer is no, and we report it as such. The contributions of this paper are:
 
-Realizing this idea requires more than adding a router on top of an existing memory stack. It requires specialized retrieval strategies whose inductive biases align with different question types, a routing mechanism accurate enough to exploit those differences, and a systems design efficient enough that adaptivity does not cancel its own gains through overhead. Query-adaptive memory is therefore useful only if it is both algorithmically justified and operationally practical.
+\begin{itemize}
+\item \textbf{A like-for-like evaluation of graph memory against raw-history baselines} (\cref{sec:method,sec:results}). The knowledge graph does not beat retrieval over raw turns, alone or combined with them, with a direct reader or a reasoning one, on general questions or on the temporal questions where a time-aware graph should help most. Per-question routing realises none of its oracle headroom. We give paired differences with intervals and repeat the key comparisons with a stricter judge.
+\item \textbf{Evidence that the reader, not retrieval, is the bottleneck on long histories} (\cref{sec:readpath}). On all \numFullLmeQuestions\ LongMemEval-S questions, plain retrieval places a turn containing the answer in the context for \numFullLmeEvidenceDense\% of questions and the reader still answers only \numFullLmeRawDenseJudged\% correctly. A reader that works through the evidence first is the largest single improvement we found.
+\item \textbf{A fault in how extracted facts are dated, and its fix} (\cref{sec:dates}). Storing the time a fact was stated as the time it became true made the graph's facts misleading on temporal questions. Separating the two raised the graph pipeline by 12 points there.
+\item \textbf{The system itself} (\cref{sec:system}): a versioned store, a bi-temporal knowledge graph on an embedded graph, vector and full-text database, and a Model Context Protocol server with write gating against memory poisoning (\cref{sec:security}).
+\end{itemize}
 
-\subsection{Contributions}
-
-This paper introduces \memst, a semantic memory architecture built around query-adaptive retrieval. The system is designed from the premise that persistent memory should be treated as an active computational substrate rather than a passive store of embedded text. Its contributions span retrieval design, storage architecture, and empirical analysis.
-
-\textbf{Specialized retrieval strategies.} We develop four retrieval strategies tailored to distinct query types. Cascade retrieval applies progressive filtering for high-precision factual lookup. MultiHopKG constructs entity-relation graphs for compositional traversal. TemporalKG extracts and normalizes time expressions for chronological reasoning. Hierarchical Summary organizes memory at multiple granularities for open-domain questions.
-
-\textbf{Lightweight query classification.} We implement a rule-based classifier achieving 80\% accuracy on LOCOMO question types. Although simple, it delivers a substantial gain in aggregate performance: adaptive routing improves over the best fixed strategy by 7.5 F1 points. Temporal questions are easiest to classify (91.7\% accuracy), while open-domain questions are the most ambiguous (77.1\%).
-
-\textbf{Production-oriented memory infrastructure.} \memst\ combines content-addressable storage with Blake3 hashing, write-ahead logging, and a four-tier memory hierarchy. This design supports deduplication, integrity verification, bounded prompt construction, and lifecycle management while remaining efficient in practice.
-
-\textbf{Comprehensive evaluation.} On LOCOMO, using 1,540 evaluated questions from 1,986 total after excluding 446 adversarial questions, \memst\ reaches 49.2\% F1. This substantially exceeds standard RAG and published memory baselines. Under matched fixed-strategy settings, \memst\ also outperforms equivalent RAG configurations, showing that the gains arise not only from routing but from the underlying organization of memory itself.
+We withdraw the figures of the earlier version. They were produced by a different pipeline, with a different mapping of question categories, without the baselines above, and we have not reproduced them under the present protocol.
 
 %==============================================================================
 \section{Background and Related Work}
 \label{sec:background}
 
-The problem of long-horizon memory in LLM agents has attracted growing attention because context-window scaling alone has not solved the practical demands of persistent interaction. Existing approaches can be grouped into several broad families, each capturing an important insight while leaving a complementary gap.
+\textbf{Memory systems for agents.} Work on agent memory has grown from paging between tiers \citep{packer2023memgpt} and forgetting curves \citep{zhong2024memorybank} to extracted-fact stores \citep{chhikara2025mem0}, temporal knowledge graphs \citep{rasmussen2025zep} and self-organising note networks \citep{xu2025mem}. Recent surveys describe memory by its form, its function and the operations performed on it, with governance, audit and rollback now counted among those operations \citep{hu2025memoryage}.
 
-Architectural approaches attempt to internalize longer memory directly within the model. Systems such as Recurrent Memory Transformer \citep{bulatov2022recurrent} and related long-context mechanisms extend the effective receptive field through recurrence, compression, or sparse attention. These methods are elegant because they preserve end-to-end differentiability and avoid explicit external storage. Yet they remain bounded by model capacity, context management overhead, and inference cost. In practice, they improve how much a model can \emph{hold} at once, but not necessarily how selectively it can \emph{retrieve} from months of accumulated interaction.
+\textbf{What the benchmarks measure.} LoCoMo \citep{maharana2024evaluating} is the most reported benchmark and the most criticised. Its conversations fit in a context window, so a model that simply reads them is a strong baseline; an independent audit found 6.4\% of its reference answers wrong and showed that a commonly used LLM judge accepts most wrong answers that are on topic \citep{locomoaudit}. LongMemEval \citep{wu2024longmemeval} uses histories of over 100,000 tokens and adds questions about updated facts and abstention. Several 2026 studies compare engineered memory with retrieval over the raw history under controlled conditions and find no consistent advantage for the former \citep{bao2026naiverag, zhou2026explicit}. A study of memory substrates finds that choosing a substrate per query leaves most of the oracle headroom unrealised \citep{huang2026harness}. Our results agree with all three, on a system we built to show the opposite.
 
-A second line of work externalizes memory into vector databases and retrieval systems. Platforms such as Chroma, Pinecone, and Milvus provide scalable semantic search and have become the default memory substrate for many agent frameworks. Their appeal lies in simplicity: embeddings are easy to produce, approximate nearest-neighbor search is efficient, and the interface is general-purpose. At the same time, this generality is also their main limitation. A flat vector store treats all memories as interchangeable retrieval units, even though conversational memory is structurally heterogeneous. A user preference, a temporal sequence of events, and a social relationship graph are not merely different embeddings of the same object; they are different informational structures that often require different access patterns.
+\textbf{Versioned memory.} Treating memory as a versioned artefact is no longer unusual. Letta's Context Repositories keep an agent's memory in git, with worktrees for subagents and ordinary merges \citep{lettacontextrepos}. ChronoMem studies rollback, asking whether an agent can answer as if later updates had not happened \citep{su2026chronomem}; Kumiho gives belief-revision semantics to a versioned graph \citep{park2026kumiho}; Mem++ keeps every version of every item and retrieves as of a reference time \citep{yehia2026mempp}. GitOfThoughts reports a result we now share: version control buys auditability and merging, not retrieval accuracy \citep{shekar2026gitofthoughts}.
 
-Hierarchical memory systems take a more cognitively and systems-inspired view. MemGPT \citep{packer2023memgpt} proposed operating-system-style paging across memory tiers, while MemoryBank \citep{zhong2024memorybank} introduced reinforcement and forgetting mechanisms. These systems correctly emphasize that memory is not just about retrieval, but also about allocation, compression, and lifecycle management. Their central intuition is that durable intelligence requires structure over time. However, they largely assume that once memory is organized hierarchically, retrieval itself can remain uniform. Our results suggest that this assumption is incomplete: hierarchy helps, but hierarchy alone does not resolve the mismatch between question type and retrieval strategy.
+\textbf{Time in knowledge graphs.} Bi-temporal modelling, in which the time a fact held is kept apart from the time it was recorded and superseded facts are invalidated instead of deleted, is the reference design for temporal graph memory \citep{rasmussen2025zep}. \Cref{sec:dates} adds a third time that conversational sources make necessary.
 
-Knowledge-graph-based systems, including Zep \citep{rasmussen2025zep} and A-MEM \citep{xu2025mem}, address a different weakness of flat retrieval by introducing explicit relational structure. These systems are particularly effective when answers depend on compositional reasoning across entities, relations, and events. Their contribution is to show that some memories are better represented as graphs than as text chunks. At the same time, generic graph memory can become overly rigid if used indiscriminately. Not every question benefits from traversal; in many cases, direct lexical retrieval or hierarchical summarization is both cheaper and more accurate.
-
-Managed memory services such as \memzero~\citep{chhikara2025mem0} demonstrate that persistent memory can be exposed as a practical API and can materially improve downstream agent quality. Their importance is infrastructural as much as empirical: they show that memory is becoming a first-class systems component. However, managed services typically optimize for ease of integration and stable abstractions, which can limit visibility into retrieval behavior, provenance, and memory evolution.
-
-Taken together, the literature reveals a consistent pattern. Most prior systems optimize \emph{one axis} of memory design at a time: larger internal context, better vector retrieval, hierarchical organization, or explicit graph structure. \memst\ is motivated by the observation that real conversational recall draws on all of these ideas, but not in the same way for every question. The key intuition behind our approach is therefore simple: \emph{memory should be adaptive not only in what it stores, but in how it is accessed}. A factual question benefits from precision-oriented filtering; a relational question benefits from graph traversal; a temporal question benefits from normalized timelines; and an open-ended question benefits from coarse-to-fine summarization.
-
-Our contribution is not to claim novelty for content-addressable storage, hierarchical memory, or graph extraction in isolation. Rather, the innovation of \memst\ lies in showing that these components become substantially more effective when coupled through query-adaptive routing. In this sense, \memst\ advances the literature from static memory architectures to \emph{retrieval-conditioned memory systems}: systems whose organization is not merely persistent, but dynamically aligned with the informational form of the question being asked.
+\textbf{Security.} Persistent memory is an attack surface: text that reaches memory is read back in later conversations and acted on. Injection through ordinary interaction has been demonstrated \citep{dong2025minja}, and a survey of the area names provenance, write gating, access checks at retrieval and rollback as the recurring defences \citep{lin2026memsecurity}.
 
 %==============================================================================
-\section{The \memst~Architecture}
-\label{sec:architecture}
+\section{The \memst~System}
+\label{sec:system}
 
-At a high level, \memst\ separates the memory problem into three questions: how information should be stored, how it should be organized over time, and how it should be retrieved for a given query. Much prior work emphasizes only one of these dimensions. Our design treats them as inseparable. Storage determines what provenance and durability are available; organization determines what remains salient, compressed, or archived; and retrieval determines whether the appropriate structure is exposed at inference time. The architecture is therefore not a collection of independent modules, but a coordinated memory pipeline in which each component reinforces the value of the others.
+\memst\ is written in Rust, with Python bindings and a command-line interface. It has four parts that the evaluation and the rest of the paper refer to.
 
-\memst\ comprises three interconnected subsystems: (1) a \textbf{versioned storage layer} for content-addressable persistence; (2) \textbf{specialized retrieval strategies} optimized for distinct query types; and (3) a \textbf{rule-based classifier} that routes queries to appropriate strategies.
-
-\subsection{Versioned Storage Layer}
+\subsection{The store}
 \label{sec:storage}
 
-Our storage design draws inspiration from Git's content-addressable model, although the analogy is partial rather than literal.
+A store is a directory. Each session holds its messages in an append-only file with an offset index, an operations log of tool calls, and memory items in working, short-term and long-term tiers with promotion between them. The tiers and the sleep-time jobs that consolidate them are part of the system but are not evaluated in this paper.
 
-\textbf{Content-addressable objects.} We implement three object types using Blake3 addressing. \emph{Blobs} store message content and embeddings, addressed by $\text{Blake3}(\text{content})$. \emph{Trees} map conversation identifiers to blob hashes, enabling hierarchical organization. \emph{Commits} capture memory snapshots with parent references, timestamps, and metadata, forming an immutable audit trail.
+Beneath the sessions is a versioned repository modelled on git. Objects are content-addressed by their Blake3 hash; trees and commits record memory states with parent links; every mutation passes through a write-ahead log with periodic checkpoints. Worktrees give an agent an isolated branch over a shared object store. Merging is limited: fast-forward merges are performed, and conflicts between memory items (duplicates, and statements that contradict each other) are detected, but a three-way merge that reconciles two diverged histories is not implemented.
 
-This design naturally provides deduplication and integrity verification. Identical content is stored once regardless of repetition, reducing storage by 12--18\% in our conversational workloads. More importantly, the commit structure preserves provenance: any memory state can be reconstructed from the commit graph, enabling debugging, rollback, and auditability in production settings.
+\subsection{The knowledge graph}
+\label{sec:graph}
 
-\textbf{Write-ahead logging.} All mutations pass through a write-ahead log (WAL). Each operation is serialized with a checksum, durably persisted via \texttt{fsync}, then applied to in-memory state. Periodic checkpoints flush state to the object store. On recovery, the system replays WAL entries from the most recent checkpoint. This provides crash consistency without requiring a heavyweight database layer.
+Each store has one knowledge graph, kept in an embedded HelixDB database that provides graph traversal, vector search and BM25 full-text search over the same data \citep{helixdb}. Entities and relationships are partitioned by owner, so several users can share a store without one seeing another's graph.
 
-\textbf{Branching and isolation.} \memst\ supports worktrees: isolated working directories backed by a shared object store. This allows multiple agents or sessions to operate on distinct branches without copying the full memory substrate. Three-way merge for conflicting branches remains future work; at present, conflicts must be resolved manually or with application-specific logic.
+\textbf{Ingestion.} Messages are sent to a language model in batches, each message under a short label. The model returns entities and subject--predicate--object relationships and, for each relationship, the label of the message that states it and the date it became true if the text gives one. Entities already present are reused; a relationship seen again is reinforced instead of duplicated.
 
-Although we use Git-style terminology such as \emph{commit}, \emph{branch}, and \emph{checkout}, the semantics are adapted for agent memory. Commits represent session-level memory states rather than per-message history, balancing traceability against overhead.
+\textbf{Time.} A relationship carries three times: when it became true (\texttt{valid\_from}, with a precision of day, month or year), when it stopped (\texttt{valid\_to}), and when it was stated (\texttt{stated\_at}, the time of its source message). For predicates that take one value at a time, such as where someone lives, a new value supersedes the old one: the old relationship receives an end time and a pointer to its replacement and leaves ordinary queries, but it is not deleted and can be queried as of an earlier time. Entity merges are recorded and can be undone.
 
-\subsection{Four-Tier Memory Hierarchy}
-\label{sec:hierarchy}
+\textbf{Search.} Entities are found by BM25 and by embedding similarity inside the database, fused by reciprocal rank \citep{cormack2009rrf}; relationships are found by BM25 over their text. If the database's indexes are unavailable, search falls back to substring matching and brute-force cosine similarity. Embeddings are computed locally with BGE-M3 \citep{chen2024bge} or by a configured endpoint.
 
-\memst\ organizes memory into four tiers reflecting access frequency, importance, and retrieval cost.
+\subsection{The MCP server}
 
-Working memory contains the active conversational context under a strict token budget (default 2,048 tokens). When the budget is exceeded, content is promoted or demoted based on recency and salience. Short-term memory retains recent facts under a time-to-live policy (default 7 days), while Long-term memory stores information deemed persistently important. Archival memory holds rarely accessed historical data in compressed form, potentially on slower storage, while preserving semantic indexing.
+\texttt{memst mcp serve} exposes one owner's memory to any client of the Model Context Protocol \citep{mcpspec} over standard input and output, with tools to search, read within a token budget, write and forget. \Cref{sec:security} describes how it limits what a client can do.
 
-Promotion into Long-term memory is governed by an importance score:
-\begin{equation}
-I(m) = 0.4 \cdot \text{access\_freq}(m) + 0.3 \cdot \text{user\_rating}(m) + 0.3 \cdot \text{entity\_density}(m),
-\end{equation}
-where access frequency measures normalized retrieval count over a 30-day window, user rating captures explicit feedback when available, and entity density measures named entities per token. These weights were chosen by grid search on a validation subset of LOCOMO. Performance remains stable within approximately $\pm 1\%$ across nearby settings.
+Behind the tools, an owner's memory is a directory of four layers: an append-only transcript of each session; notes, one Markdown file each, with every change kept as a revision that can be read and restored; pages that gather facts on a topic, each fact with the quotation it rests on; and a short index, built by the server, that is placed in the agent's prompt at the start of a session. An offline pass, run between sessions, reads the transcripts since its last run and proposes corrections to notes, new notes and pages. Every proposal must quote its source and the quotation is checked against the source before anything is written; a note the owner approved is never rewritten; and a pass lands as one revision that one command undoes. An extension for the Pi coding agent gives a session its index, records the session, and offers the tools.
 
-\textbf{Token-budget-aware context assembly.} A distinctive feature of \memst\ is that prompt construction is treated as a constrained optimization problem rather than a fixed top-\(k\) retrieval step:
-\begin{align}
-\text{maximize} \quad & \sum_{m \in S} R(m, q) \cdot I(m) \\
-\text{subject to} \quad & \sum_{m \in S} \text{tokens}(m) \leq B_{\text{context}}, \quad |S| \leq 20.
-\end{align}
-Here \(R(m,q)\) denotes relevance and \(I(m)\) denotes memory importance. We use a greedy approximation that sorts candidates by \(R(m,q)\cdot I(m)\) and fills the budget until exhausted. On sampled subsets, this strategy performs within 2.8\% of an exact integer-linear-programming solution while reducing computation time by roughly two orders of magnitude.
+\subsection{The evaluation harness}
 
-\subsection{Hybrid Search Architecture}
-\label{sec:hybrid}
-
-\memst\ combines lexical and semantic retrieval signals through reciprocal rank fusion (RRF):
-\begin{equation}
-\text{RRF}(d)=\frac{w_{\text{BM25}}}{k+\text{rank}_{\text{BM25}}(d)}+\frac{w_{\text{vec}}}{k+\text{rank}_{\text{vec}}(d)},
-\end{equation}
-with \(k=20\) and category-specific weights. Single-hop questions favor BM25 because exact lexical matches are often decisive, whereas temporal and open-domain queries rely more heavily on semantic similarity.
-
-Our native Rust BM25 implementation uses \(k_1 = 0.5\) and \(b = 0.75\), with the lower \(k_1\) reducing term-frequency saturation on short conversational turns. Dense retrieval uses HNSW approximate nearest-neighbor search with float16 vector storage, reducing memory use while maintaining fast lookup.
+Retrieval in the harness is a pipeline: a list of stages, each adding facts from the graph or turns of the conversation to what the reader will see. Pipelines are defined in JSON. The stages are: raw turns ranked by BM25, by embedding or by both fused; facts found by relationship search, by embedding or both; entities with the facts around them; the source messages of the facts selected so far; the turns adjacent to those selected; and a rerank, in which the model reads the candidates and keeps the most useful. A pipeline may also set the reader to answer directly or to work through the evidence first. For every question the harness records what each stage returned, how long it took, and whether it reached a turn that the dataset marks as containing the answer.
 
 %==============================================================================
-\section{Specialized Retrieval Strategies}
-\label{sec:strategies}
+\section{Evaluation Method}
+\label{sec:method}
 
-The central architectural claim of \memst\ is that memory retrieval should not be uniform. Different queries induce different retrieval problems, and those differences justify different retrieval structures.
+\textbf{Datasets.} LoCoMo \citep{maharana2024evaluating}: 10 conversations averaging \numLocomoHistoryTokens\ tokens, \numLocomoQuestions\ questions in five categories. We keep the 446 adversarial questions, which have no answer in the conversation, and score them on whether the system says so; we also report the \numLocomoAnswerable\ answerable questions separately, since most published figures use that subset. LongMemEval-S \citep{wu2024longmemeval}: 500 questions, each with its own history of about 50 sessions (\numLmeHistoryTokens\ tokens on average in the original sample). The main graph comparison uses a stratified sample of \numLmeQuestions\ questions, ten of each of the six types, because every history must be extracted separately. The raw-pipeline comparison needs no extraction and uses all \numFullLmeQuestions\ questions, although every history is still embedded separately.
 
-\subsection{Cascade Retrieval: Single-Hop Optimization}
-\label{sec:cascade}
-
-Single-hop questions demand precise factual lookup. A query such as ``What is Alice's job?'' typically has a localized answer and benefits from progressive filtering rather than graph traversal or broad summarization.
-
-Cascade retrieval addresses this through three stages. First, BM25 selects 50 candidate memories from the full corpus, prioritizing recall. Second, vector similarity reranks the candidates down to the top 10, improving semantic precision. Third, a lightweight heuristic reranker scores the final candidates using token overlap, match position, and length normalization.
-
-This staged design allocates expensive computation only where it is useful. Cascade achieves 55.2\% F1 on single-hop questions. Under a matched three-stage comparison, \memst-Cascade reaches 39.8\% overall F1 versus 27.3\% for RAG-Cascade, indicating that the gains arise not only from using a cascade pattern, but from the surrounding memory architecture.
-
-\subsection{MultiHopKG: Relationship Traversal}
-\label{sec:multihop}
-
-Queries such as ``Who is Alice's manager's spouse?'' require composition across multiple facts. Flat retrieval often retrieves relevant fragments without connecting them. MultiHopKG addresses this by constructing a knowledge graph through entity-relation extraction and performing bounded traversal over the resulting structure.
-
-For multi-hop questions, the system conducts breadth-first search up to two hops from the query entity. This supports retrieval over relational paths that are difficult to reconstruct from isolated text chunks. MultiHopKG achieves 52.8\% F1 on multi-hop questions, compared with 34.7\% overall F1 when forced to answer all question types uniformly. The gap is instructive: graph traversal is powerful when the query demands it, but it should not be applied indiscriminately.
-
-\subsection{TemporalKG: Time-Aware Reasoning}
-\label{sec:temporal}
-
-Temporal questions require more than text retrieval. They depend on explicit normalization and ordering of events. A query such as ``When did Alice move to San Francisco?'' or ``Did Alice start before Bob's promotion?'' cannot be handled reliably if temporal expressions are treated as ordinary tokens.
-
-TemporalKG extracts absolute dates, relative times, and implicit temporal references, then normalizes them against the conversation timeline. Events are organized into per-entity chronological sequences, enabling retrieval that respects temporal structure rather than surface similarity alone. TemporalKG achieves 54.0\% F1 on temporal questions, compared with 29.0\% overall F1 across all question types and 24.5\% for the RAG baseline on temporal questions.
-
-\subsection{Hierarchical Summary: Open-Domain Context}
-\label{sec:hierarchical}
-
-Open-domain questions such as ``Tell me about Alice'' require synthesis rather than pinpoint retrieval. Hierarchical Summary mirrors this need by organizing memory at multiple granularities.
-
-Level 1 stores session summaries capturing high-level context. Level 2 stores key turns preserving salient facts and commitments. Level 3 retains the full underlying context for on-demand access. Budget allocation across these levels varies with query type, allowing the system to emphasize broad summaries for open-ended prompts while preserving the ability to drill down into details. This strategy achieves 49.5\% F1 on open-domain questions and 41.7\% overall F1 when used as a uniform fixed strategy.
-
-%==============================================================================
-\section{Question Classification and Adaptive Routing}
-\label{sec:routing}
-
-Specialized strategies are useful only if queries are routed well. Misrouting can waste computation or, in the worst case, remove the representational machinery needed to answer the question at all.
-
-\subsection{Classification Approach}
-
-We use a rule-based classifier that maps surface patterns to one of four categories: single-hop, multi-hop, temporal, or open-domain. Temporal questions are identified through expressions such as ``when,'' ``what time,'' or ``how long.'' Multi-hop questions are signaled by relational patterns such as ``manager,'' ``friend,'' or event dependencies spanning multiple facts. Single-hop questions often begin with formulations such as ``what is'' or ``who is.'' Remaining queries default to open-domain.
-
-When confidence is low, the system falls back to Hierarchical Summary, which is the strongest fixed strategy overall. This choice favors graceful degradation over aggressive but brittle routing.
-
-\subsection{Classifier Performance}
-
-Table~\ref{tab:classifier_performance} reports classifier performance on the 1,540 evaluated LOCOMO questions.
+\textbf{Pipelines.} \Cref{tab:pipelines} lists the seven pipelines of the main runs. Two build no memory: \pipe{full-context} gives the reader the whole history, and the \pipe{raw-*} pipelines retrieve twenty turns from it. Three use the graph: by entity, by relationship, and \pipe{default}, which combines facts found by relationship search, the messages those facts were stated in, and raw turns.
 
 \begin{table}[ht]
 \centering
-\caption{Question classification performance on LOCOMO (1,540 evaluated questions).}
-\label{tab:classifier_performance}
-\begin{tabular}{@{}lccc@{}}
+\caption{Pipelines of the main runs.}
+\label{tab:pipelines}
+\small
+\begin{tabularx}{\textwidth}{@{}lX@{}}
 \toprule
-\textbf{Category} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+Pipeline & Context given to the reader \\
 \midrule
-Single-hop & 82.3\% & 85.1\% & 83.7 \\
-Multi-hop & 76.5\% & 72.8\% & 74.6 \\
-Temporal & 89.2\% & 91.7\% & 90.4 \\
-Open-domain & 75.8\% & 78.4\% & 77.1 \\
-\midrule
-\textbf{Overall} & \textbf{79.8\%} & \textbf{80.2\%} & \textbf{80.0} \\
+\pipe{full-context} & The whole history \\
+\pipe{raw-bm25}, \pipe{raw-dense}, \pipe{raw-hybrid} & Top 20 turns by BM25, by embedding similarity, or by both fused \\
+\pipe{graph-entities} & Entities found by graph search, the facts around them, and up to 12 source messages of those facts \\
+\pipe{graph-facts} & 30 facts found by relationship search and embedding, and up to 12 of their source messages \\
+\pipe{default} & 30 facts as above, up to 8 of their source messages, and the top 12 raw turns \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-Temporal questions are easiest to classify because they contain distinctive lexical cues. Open-domain questions are the hardest, reflecting their broader linguistic variability. Although the classifier is simple, its 80\% accuracy is sufficient to unlock a large fraction of the gains from adaptive retrieval.
+\textbf{Models.} One model, DeepSeek's \texttt{deepseek-flash} with its built-in reasoning turned off, is the reader and the extractor in every run, so that no pipeline is read by a stronger reader than another. Embeddings are BGE-M3. Extraction batches are 6,000 characters for LoCoMo and 12,000 for LongMemEval-S.
 
-\subsection{Routing Impact Analysis}
+\textbf{Scoring.} We report token F1 against the reference, and the share of answers a judge model marks correct. The judge in the main runs is the reader's own model; \cref{sec:judge} repeats the grading with a stronger model with reasoning on. For LongMemEval-S the judge applies that benchmark's rules for temporal, knowledge-update and preference questions. Intervals are 95\% bootstrap intervals over questions. Because two pipelines answer the same questions, we compare them by the mean difference per question with its own interval; this is far tighter than comparing two separate intervals, and we call a difference reliable only when that interval excludes zero.
 
-Table~\ref{tab:routing} quantifies the effect of adaptive routing.
+\textbf{Costs.} For each pipeline we report the prompt tokens per question as counted by the API, including those of any stage that calls a model, and the number of extraction calls needed to build its memory.
+
+%==============================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{The graph against the raw record}
 
 \begin{table}[ht]
 \centering
-\caption{Routing strategy comparison on LOCOMO.}
-\label{tab:routing}
-\begin{tabular}{@{}lc@{}}
-\toprule
-\textbf{Routing Strategy} & \textbf{Overall F1 (\%)} \\
-\midrule
-Fixed: Hierarchical only & 41.7 \\
-Fixed: Cascade only & 39.8 \\
-Random strategy selection & 36.2 \\
-Rule-based classifier (80\% accuracy) & 49.2 \\
-\midrule
-Oracle (perfect routing) & 54.8 \\
-\bottomrule
-\end{tabular}
+\caption{LoCoMo, all \numLocomoQuestions\ questions. F1 and judged accuracy with 95\% intervals; judged accuracy on the \numLocomoAnswerable\ answerable questions; share of questions for which a turn containing the answer was in the context; prompt tokens per question; extraction calls per conversation.}
+\label{tab:locomo}
+\small
+\input{tables/full-locomo}
 \end{table}
-
-Adaptive routing improves over the best fixed strategy by 7.5 F1 points. The remaining 5.6-point gap to oracle routing indicates substantial headroom for better classification. Importantly, not all mistakes are equally costly. Routing a single-hop query through a more elaborate strategy may be inefficient but often remains workable; routing a multi-hop query through single-hop retrieval is structurally damaging because it removes the relational representation needed to connect evidence.
-
-%==============================================================================
-\section{Experimental Evaluation}
-\label{sec:evaluation}
-
-We evaluate \memst\ on the LOCOMO benchmark \citep{maharana2024evaluating}, a demanding long-conversation setting designed to test factual recall, compositional reasoning, temporal understanding, and broad contextual summarization. The benchmark contains 10 extended conversations averaging roughly 600 turns and 26,000 tokens each. Of the 1,986 annotated questions, we evaluate 1,540 across single-hop, multi-hop, temporal, and open-domain categories, excluding 446 adversarial questions following prior work \citep{chhikara2025mem0}. This protocol focuses the evaluation on answerable recall and reasoning while keeping comparisons consistent with prior baselines.
-
-\subsection{Evaluation Metrics}
-
-We report token-level F1 with Porter stemming as the primary metric, supplemented by BLEU-1 and LLM-as-a-Judge using GPT-4o-mini. Efficiency metrics include end-to-end latency, token consumption, and throughput.
-
-\subsection{Overall Performance}
-
-We begin with a systems-level view of performance before turning to category-specific behavior and efficiency tradeoffs. The visual comparisons are particularly informative here because they show not only which method performs best, but how clearly the adaptive design separates from fixed retrieval baselines across multiple dimensions.
-
-\begin{figure}[ht]
-\centering
-\includegraphics[width=0.95\columnwidth]{../../benchmarks/results/figures/figure1_overall_performance.png}
-\caption{Overall performance comparison across memory systems. \memst-Adaptive achieves 49.2\% F1, substantially exceeding both managed-memory services and RAG baselines.}
-\label{fig:overall}
-\end{figure}
-
-\memst-Adaptive achieves \textbf{49.2\% F1}, improving over \memzero\ (34.8\%) by 41\% and over standard RAG (22.6\%) by 118\%. The strongest fixed strategy, Hierarchical Summary, reaches 41.7\% F1 with only 85 milliseconds median search latency, 3.3 times faster than the corresponding RAG pipeline despite higher accuracy.
-
-\subsection{Fair Comparison Analysis}
-
-To isolate the effect of routing from the broader architectural advantages of \memst, we compare matched fixed strategies.
 
 \begin{table}[ht]
 \centering
-\caption{Fair comparison between equivalent strategy configurations.}
-\label{tab:fair_comparison}
-\begin{tabular}{@{}lcc@{}}
-\toprule
-\textbf{Strategy} & \textbf{RAG} & \textbf{MemSt} \\
-\midrule
-Hierarchical & 25.8\% & 41.7\% (+62\%) \\
-Cascade (3-stage) & 27.3\% & 39.8\% (+46\%) \\
-Base (vector only) & 22.6\% & 28.5\% (+26\%) \\
-\bottomrule
-\end{tabular}
+\caption{LongMemEval-S, \numLmeQuestions\ questions. Columns as in \cref{tab:locomo}; calls are per history.}
+\label{tab:lme}
+\small
+\input{tables/full-longmemeval}
 \end{table}
 
-Even under equivalent high-level strategies, \memst\ substantially outperforms RAG. This result shows that the gains cannot be attributed to routing alone. Tiered storage, importance-aware selection, and token-budget-aware assembly all contribute meaningfully to performance.
-
-\subsection{Category-Specific Performance}
-
-\begin{figure}[ht]
+\begin{table}[ht]
 \centering
-\includegraphics[width=0.95\columnwidth]{../../benchmarks/results/figures/figure2_category_heatmap.png}
-\caption{Performance heatmap showing F1 scores by strategy and question category. Each strategy is strongest in its target domain.}
-\label{fig:heatmap}
-\end{figure}
+\caption{Difference from \pipe{raw-dense} on the same questions, in points, with 95\% intervals. Bold marks intervals that exclude zero.}
+\label{tab:paired}
+\small
+\input{tables/paired-full}
+\end{table}
 
-A clear specialization pattern emerges. Cascade is strongest for single-hop factual lookup (55.2\%), MultiHopKG is strongest for multi-hop reasoning (52.8\%), TemporalKG is strongest for temporal questions (54.0\%), and Hierarchical Summary is strongest for open-domain queries (49.5\%). These are \textbf{category-specific} results, whereas each strategy's \textbf{overall} F1 is lower because it degrades when applied outside its natural domain. For example, MultiHopKG reaches 52.8\% on multi-hop questions but only 34.7\% when forced to answer all question types uniformly.
+\Cref{tab:locomo,tab:lme,tab:paired} give the main result.
 
-This pattern is the empirical core of our argument. The strategies are not redundant variants of the same mechanism; they encode genuinely different retrieval biases. Adaptive routing succeeds because it recovers these local optima at the system level, achieving 60.0\% on single-hop, 57.5\% on multi-hop, 62.5\% on temporal, and 55.0\% on open-domain questions.
+\textbf{The graph does not beat retrieval over raw turns.} On LoCoMo, \pipe{default} is judged correct on \numLocomoDefaultJudged\% of questions and \pipe{raw-dense} on \numLocomoRawDenseJudged\%; on the same questions the graph pipeline is \numLocomoDefaultVsDense\ points behind, and the interval (\numLocomoDefaultVsDenseLow\ to \numLocomoDefaultVsDenseHigh) excludes zero. It costs about \numLocomoGraphCalls\ extraction calls per conversation that \pipe{raw-dense} does not need. The graph on its own is far behind: \numLocomoGraphFactsJudged\% searched by relationship, \numLocomoGraphEntitiesJudged\% by entity. On LongMemEval-S, where each history costs about \numLmeGraphCalls\ extraction calls, \pipe{default} (\numLmeDefaultJudged\%) is level with the raw pipelines (\numLmeRawDenseJudged--\numLmeRawHybridJudged\%), and the graph alone is again well behind.
 
-\subsection{Latency-Accuracy Tradeoffs}
+\textbf{Adding facts makes the reader slightly worse.} When a turn containing the answer is in the context, \pipe{raw-dense} answers correctly \numLocomoWithEvidenceDense\% of the time on LoCoMo and \pipe{default} \numLocomoWithEvidenceDefault\%. The two reach the answer about equally often (\cref{tab:locomo}); the extracted facts placed in front of the turns are what differs.
 
-All latency measurements in this subsection report end-to-end time, including both retrieval and LLM inference.
+\textbf{An apparent advantage on temporal questions is an artefact of the metric.} On LoCoMo's temporal questions \pipe{default} leads \pipe{raw-dense} on F1, \numLocomoTemporalDefaultFone\ to \numLocomoTemporalDenseFone, but not on judged accuracy, \numLocomoTemporalDefaultJudged\% to \numLocomoTemporalDenseJudged\% (\cref{tab:categories}). The pipeline shows the reader dates written the way the references write them, and the reader copies the format. Token F1 rewards this; the judge does not.
 
-\begin{figure}[ht]
+\textbf{Direct retrieval may beat reading everything once histories are long, though the sample cannot yet establish it.} In the seven-pipeline main LoCoMo run, full context is the strongest pipeline, at about 27 times the tokens of a retrieval pipeline; \cref{sec:readpath} shows that reasoning read paths later surpass it. On LongMemEval-S full context is the weakest of the non-graph pipelines (\numLmeFullContextJudged\% against \numLmeRawDenseJudged--\numLmeRawHybridJudged\%) at \numLmeTokenRatio\ times the tokens; with \numLmeQuestions\ questions the interval of the difference still includes zero (\cref{tab:paired}). The 500-question raw run does not change this comparison because it omits full context.
+
+\begin{table}[ht]
 \centering
-\includegraphics[width=0.95\columnwidth]{../../benchmarks/results/figures/figure3_latency_accuracy.png}
-\caption{Latency-accuracy tradeoff. \memst\ strategies occupy the efficient frontier, combining stronger accuracy with lower latency than RAG baselines.}
-\label{fig:latency}
-\end{figure}
+\caption{LoCoMo: judged accuracy by category (number of questions in brackets). Adversarial questions are scored on abstention.}
+\label{tab:categories}
+\small
+\resizebox{\textwidth}{!}{\input{tables/locomo-categories}}
+\end{table}
 
-\memst\ strategies occupy the efficient frontier of the latency-accuracy tradeoff. Hierarchical Summary provides the strongest accuracy among low-latency methods, while the adaptive system preserves a favorable balance between quality and speed. These gains reflect both efficient implementation and better memory organization: less irrelevant context is retrieved, so less downstream generation effort is wasted.
+\subsection{Routing}
 
-\begin{figure}[ht]
+The earlier version of \memst\ routed each question to one retrieval strategy according to its kind. An oracle that picks, for every question, whichever retrieval pipeline answered it best reaches \numLocomoOracleJudged\% judged accuracy on LoCoMo, against \numLocomoBestSingleJudged\% for the best single pipeline: the pipelines are complementary, and the headroom looks large. To measure how much of it a real router gets, we fitted the simplest one (the best pipeline for each kind of question: when, how many, who, where, why, yes or no, what) on four fifths of the questions and scored it on the rest, five times over. It reaches \numLocomoRoutedJudged\%, no better than always using \pipe{raw-dense}. On LongMemEval-S it reaches \numLmeRoutedJudged\% against \numLmeBestSingleJudged\%. Which pipeline happens to answer a question is not predictable from the question's wording. A learned router with richer features might do better, but the headroom an oracle shows is not evidence that it can be reached, a point also made by \citet{huang2026harness}.
+
+\numLocomoNobodyRight\ of the LoCoMo questions, about 12\%, are answered wrong by every pipeline including full context. Some of this is the benchmark: the audit cited above puts 6.4\% of reference answers in error \citep{locomoaudit}.
+
+\subsection{Is the judge trustworthy?}
+\label{sec:judge}
+
+Grading with the reader's own model risks a lenient judge. We graded three sets of answers again with a stronger model from the same provider, \texttt{deepseek-v4-pro}, with reasoning on. On LongMemEval-S the two judges agree on 98.3\% of the 420 answers of the main run and on all 180 of the read-path experiment below. On LoCoMo they agree on 92.0\% of 1,932 answers, and nearly all the disagreement runs one way: 154 answers pass only the original judge and one passes only the stricter one. Every pipeline loses 6 to 10 points; the order of pipelines is unchanged and differences between them shrink by about a third. We therefore report the stricter judge alongside the original wherever a conclusion rests on a pilot. The second judge shares a provider with the first, so this bounds leniency; it is not an independent judge, and we have not regraded the full LoCoMo run.
+
+\subsection{The read path}
+\label{sec:readpath}
+
+On all \numFullLmeQuestions\ LongMemEval-S questions, \pipe{raw-dense} has a turn containing the answer in its context for \numFullLmeEvidenceDense\% of questions and is judged correct on \numFullLmeRawDenseJudged\%. Retrieval is not what fails there. We therefore varied what the reader is given and how it answers, first on a pilot of \numReadQuestions\ LoCoMo questions (three conversations) and \numReadLmeQuestions\ LongMemEval-S questions. We then ran the two promising raw read paths, their direct-retrieval baseline, and the graph baseline on all \numFullReadQuestions\ LoCoMo questions, and all five raw pipelines on all \numFullLmeQuestions\ LongMemEval-S questions (\cref{tab:readpathfull,tab:lmerawfull}).
+
+\begin{table}[ht]
 \centering
-\includegraphics[width=0.95\columnwidth]{../../benchmarks/results/figures/figure4_category_comparison.png}
-\caption{Category-specific performance comparison. Adaptive routing maintains strong performance across all question types.}
-\label{fig:category}
-\end{figure}
+\caption{Full-scale LoCoMo read-path comparison, \numFullReadQuestions\ questions. F1 and judged accuracy have 95\% intervals. The last accuracy column is the paired difference from \pipe{raw-dense}, with its own 95\% interval; tokens are the mean reader and retrieval-stage prompt size.}
+\label{tab:readpathfull}
+\small
+\resizebox{\textwidth}{!}{\input{tables/read-path-full}}
+\end{table}
 
-\subsection{Token Efficiency}
-
-\begin{figure}[ht]
+\begin{table}[ht]
 \centering
-\includegraphics[width=0.95\columnwidth]{../../benchmarks/results/figures/figure5_token_efficiency.png}
-\caption{Token efficiency comparison measured as F1 per 1,000 retrieved tokens. Higher values indicate better information density.}
-\label{fig:efficiency}
-\end{figure}
+\caption{All \numFullLmeQuestions\ LongMemEval-S questions for the pipelines that build no graph. Columns are as in \cref{tab:readpathfull}. The full-context pipeline was omitted to avoid 500 prompts of about 112,000 tokens each.}
+\label{tab:lmerawfull}
+\small
+\resizebox{\textwidth}{!}{\input{tables/longmemeval-raw-full}}
+\end{table}
 
-\memst-Adaptive achieves 31.1 F1 per 1,000 tokens, 41\% better than RAG (22.1) and 7.6 times better than full-context prompting (4.1). This suggests that the gains are not merely the result of retrieving more text, but of retrieving more \emph{useful} text per token.
+The remaining exploratory variants, and the strict-judge cross-check on the original pilots, are in \cref{tab:readpath}.
 
-\subsection{Multi-Dimensional Comparison}
-
-\begin{figure}[ht]
+\begin{table}[ht]
 \centering
-\includegraphics[width=0.95\columnwidth]{../../benchmarks/results/figures/figure6_radar_chart.png}
-\caption{Radar chart showing multi-dimensional performance profiles. Adaptive routing offers the most balanced profile across quality and efficiency.}
-\label{fig:radar}
-\end{figure}
+\caption{Exploratory read-path pilots. Left: LoCoMo pilot, \numReadQuestions\ questions, judged accuracy by the original and the stricter judge, the paired difference from \pipe{raw-dense} under the stricter judge, and prompt tokens. Right: LongMemEval-S, \numReadLmeQuestions\ questions (both judges agree). \pipe{-reason} pipelines use a reader that works through the evidence before answering.}
+\label{tab:readpath}
+\small
+\resizebox{\textwidth}{!}{\input{tables/read-path}}
+\end{table}
 
-The radar comparison emphasizes that adaptive routing is not only the strongest configuration on average, but also the most balanced. Some fixed strategies excel on individual axes, but the adaptive system best combines accuracy, efficiency, and robustness across query types.
+\textbf{Reasoning read paths are the largest gain.} In the reasoning mode the prompt asks the reader to list the relevant statements with their dates, do any counting or date arithmetic step by step, and then give its answer. On all \numFullLmeQuestions\ LongMemEval-S questions, forty turns with this reader (\pipe{dense-wide-reason}) score \numFullLmeDenseWideReasonJudged\%, against \numFullLmeRawDenseJudged\% for direct reading of twenty turns: a \numFullLmeDenseWideReasonVsDense-point gain (95\% interval \numFullLmeDenseWideReasonVsDenseLow\ to \numFullLmeDenseWideReasonVsDenseHigh). Reranking with the reasoning reader scores \numFullLmeRerankReasonJudged\%, a \numFullLmeRerankReasonVsDense-point gain (interval \numFullLmeRerankReasonVsDenseLow\ to \numFullLmeRerankReasonVsDenseHigh). On all \numFullReadQuestions\ LoCoMo questions the corresponding scores are \numFullReadDenseWideReasonJudged\% and \numFullReadRerankReasonJudged\%, against \numFullReadRawDenseJudged\%: gains of \numFullReadDenseWideReasonVsDense\ (interval \numFullReadDenseWideReasonVsDenseLow\ to \numFullReadDenseWideReasonVsDenseHigh) and \numFullReadRerankReasonVsDense\ points (interval \numFullReadRerankReasonVsDenseLow\ to \numFullReadRerankReasonVsDenseHigh). The separate \pipe{dense-reason} pilot and the \numRoleQuestions-question temporal test (\cref{sec:role}) isolate the reader's contribution. A reasoning reader remains more willing to guess on unanswerable questions.
+
+{\sloppy\textbf{On LoCoMo, retrieval with a reasoning reader beats reading everything.} Forty turns and sixty candidates reranked to twenty reach \numFullReadDenseWideReasonJudged\% and \numFullReadRerankReasonJudged\%, against \numLocomoFullContextJudged\% for the previously reported full-context run on the same questions. The paired gains are \numFullReadWideReasonVsFull\ points (interval \numFullReadWideReasonVsFullLow\ to \numFullReadWideReasonVsFullHigh) and \numFullReadRerankReasonVsFull\ points (interval \numFullReadRerankReasonVsFullLow\ to \numFullReadRerankReasonVsFullHigh), using \numFullReadWideReasonTokenShare\% and \numFullReadRerankReasonTokenShare\% of full context's prompt tokens. Reranking gains a further \numFullReadRerankReasonVsWide\ points over forty-turn retrieval (interval \numFullReadRerankReasonVsWideLow\ to \numFullReadRerankReasonVsWideHigh).\par}
+
+\textbf{Reranking is not consistently worth its extra call.} On LongMemEval-S it is only \numFullLmeRerankReasonVsWide\ points ahead of \pipe{dense-wide-reason}, with an interval from \numFullLmeRerankReasonVsWideLow\ to \numFullLmeRerankReasonVsWideHigh; the cheaper wide-dense pipeline is sufficient there. On LoCoMo its smaller gain is reliable, but requires another model call and more prompt tokens. Reranking without the reasoning reader, trusting the reranker to shrink the context, and adding neighbouring turns remain exploratory pilot results, not full-scale findings.
+
+The full runs use the original judge. The strict-judge cross-check remains the \numReadQuestions-question LoCoMo pilot in \cref{tab:readpath}, where the direction is consistent but some intervals include zero; it is not a substitute for regrading these full runs.
+
+\subsection{A narrower job for the graph}
+\label{sec:role}
+
+A graph that is not a better general retriever might still earn its cost where it has structure the raw turns lack: dates and facts that changed. Before running it we fixed the test: the graph passes if adding it to the best raw pipeline, with the same reasoning reader, gives a reliable gain in judged accuracy on the same questions. We ran it on all \numRoleQuestions\ temporal questions of LoCoMo, with graphs extracted after the fix of \cref{sec:dates}, and on \numRoleLmeQuestions\ knowledge-update and temporal questions of LongMemEval-S (\cref{tab:role}).
+
+\begin{table}[ht]
+\centering
+\caption{The narrower test. LoCoMo, \numRoleQuestions\ temporal questions: judged accuracy and paired difference from \pipe{dense-wide-reason} under each judge. Last column: judged accuracy on \numRoleLmeQuestions\ LongMemEval-S questions.}
+\label{tab:role}
+\small
+\resizebox{\textwidth}{!}{\input{tables/graph-role}}
+\end{table}
+
+\textbf{The test is not passed.} No use of the graph gives a reliable gain. The best uses the graph only as an index, adding the messages its facts were stated in to the forty raw turns: 2.5 points ahead with an interval that includes zero, the same as reranking, which needs no extraction. Showing the reader the extracted facts, as lines or as a timeline that marks the latest of several values, does not help. The graph without raw retrieval is 12 points behind. On LongMemEval-S the raw pipeline answers all \numRoleLmeQuestions\ questions correctly, so there is nothing for the graph to add; that sample turned out to be easy once the reader reasons, and it can only fail to show an advantage.
+
+\subsection{When a fact was said and when it became true}
+\label{sec:dates}
+
+The traces of an early run of this test showed why the graph's facts hurt on temporal questions. A message sent on 9 September saying ``we went to the park two weeks ago'' produced the fact \emph{visited park}, dated 9 September. Ingestion took the date a fact became true from the text when the model supplied one, and otherwise used the date of the message, and the graph then presented both as ``true since''. Most facts had no stated date, so most were dated by when they were said.
+
+Bi-temporal designs separate the time a fact held from the time the system recorded it. Conversational sources need a third: the time the fact was \emph{stated}. It differs from valid time whenever people talk about the past, and from recording time whenever a conversation is ingested later, as every benchmark history is. \memst\ now stores all three, sets the valid time only when the text gives one, and keeps its precision, so that ``in 2022'' is not stored as 1 January 2022. Of 2,551 facts extracted from LoCoMo afterwards, 24\% carry the date of the event, 39\% only the date they were stated, and 37\% no time.
+
+On the same \numRoleQuestions\ questions, the fix raised the graph pipeline with a direct reader from \numRoleDefaultDirectOld\% to \numRoleDefaultDirectNew\% judged accuracy, and the timeline presentation stopped hurting. It did not change the verdict of \cref{sec:role}. Extraction is not deterministic, so the two runs differ in more than their dates; the direction and size of the change on the pipeline that depends most on fact dates are nonetheless clear.
+
+\subsection{The cost of building the graph}
+
+Extraction is the graph's whole write-path cost: about \numLocomoGraphCalls\ model calls for a LoCoMo conversation and \numLmeGraphCalls\ for a LongMemEval-S history, some minutes each. It cannot simply be cut by sending more text per call. With batches of 6,000, 12,000 and 24,000 characters, three conversations took 46, 24 and 13 calls and yielded 650, 438 and 321 relationships: the model returns a roughly fixed amount per call. The graph alone then falls from 62\% to 57\% to 49\% judged accuracy, while pipelines that also retrieve raw turns do not move.
 
 %==============================================================================
-\section{Error Analysis}
-\label{sec:error_analysis}
+\section{Security and Deletion}
+\label{sec:security}
 
-Understanding failure modes is important both for system improvement and for interpreting the limits of adaptive memory.
+An agent that can write to its own memory can be made to write an instruction for its future self, by any text it reads. The MCP server limits this at the tool boundary. A server is bound to one owner when it starts; no tool takes an owner, a session or a path, and an argument a tool does not define is refused. A note that reads like an instruction (it tells the reader to change its behaviour, imitates a system or tool message, asks for something to be hidden or sent elsewhere, or contains invisible characters) is set aside and not returned until the store's owner approves it from the command line; the agent has no tool with which to approve it. Tags that state who owns a note or how far it is trusted are set by the server only. What is read back is fenced, labelled with its source and whether it was approved, and introduced as records, not instructions. Writes are limited in size, rate and number, every write and deletion is logged without its content, and a read-only mode removes the writing tools. Ten attacks, each with the defence that stops it, form a test suite in the repository.
 
-\textbf{Classification errors.} The most damaging errors arise when multi-hop questions are misclassified as single-hop. In these cases, performance drops from 52.8\% to 18.3\% F1, accounting for 3.2 points of the gap to oracle routing. This confirms that some routing mistakes are structurally far more harmful than others.
+The limits should be stated plainly. Screening catches instructions phrased as instructions; a false statement written as a fact passes, which is why notes written by an agent are marked unverified until a person approves them. Owners are separated by the server, not by the file system. The command line and the Python module bypass these checks.
 
-\textbf{Knowledge graph extraction.} Manual analysis shows extraction precision of 87\% and estimated recall of 78\%. Entity mislinking is especially damaging because it sends traversal toward irrelevant evidence. Temporal normalization errors have a similar effect in TemporalKG, where an incorrectly grounded time expression can distort the entire retrieval path.
+Deletion is harder in a store built to keep history. We distinguish hiding an item, removing it from the current state and every index derived from it, removing it from history, and removing it from places the store cannot reach, such as backups and a model provider's logs. Notes written through the server are removed with every earlier version of them, and a test searches every byte of the store for the deleted text. A note is not the only place a fact is kept, as \cref{sec:inuse} found: forgetting now also removes the transcript entries that contain the words, which is matching by words and so misses a paraphrase. A single message of the session store can be deleted: its file and index are rewritten without it, a tombstone keeps its identifier and nothing else, its search entry is removed, and the facts the graph extracted from it go with it, together with the entities nothing else refers to. Testing this by searching the store's bytes found a fault in what had been thought fixed: the search index marked a deleted document and left its text in the index file until a compaction that might never come. Deletion now forces the compaction. What a deleted message still does not reach are the memory items and summaries made from it, which keep no record of their sources, and a fact that a later message restated, since the graph records one source per fact. For the versioned history of the session store the repository contains a design (per-item encryption with deletion of the key) and no implementation.
 
-\textbf{Token budget limitations.} Roughly 10\% of observed errors arise when the relevant evidence cannot fit comfortably within the 2,048-token working budget. These failures are most common for broad temporal aggregation or questions that require synthesis across many dispersed events.
+%==============================================================================
+\section{Memory in Use}
+\label{sec:inuse}
+
+The benchmarks above ask about a fixed transcript. They do not test an agent that is told something in one session and needs it in a later one while its memory changes in between. We wrote a small test of that, and fixed its pass criteria in the repository before the first run.
+
+Sixty scenarios, ten for each of six kinds, were run under three conditions: the Pi agent without memory, with memory, and with memory and the offline pass applied before the last session. Each session is a separate process, the agent has no file or shell tools, and the facts are invented so that the model cannot know them otherwise. The agent's model is the reader used elsewhere in this paper. Answers are checked by pattern.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Scenario (correct final answers of 10) & No memory & Memory & Memory and pass \\
+\midrule
+Recall a fact told two sessions earlier & 0 & 10 & 10 \\
+Give the new value after an update (strict check) & 0 & 6 & 5 \\
+Answer from what the user said, against a wrong note & 0 & 0 & 10 \\
+Do not give a fact the user asked to forget & 10 & 10 & 9 \\
+Give a pasted page's fact, ignore its instruction & 0 & 10 & 10 \\
+Say so when never told & 7 & 10 & 10 \\
+\bottomrule
+\end{tabular}
+\caption{Memory in use: 180 scenario runs. Criteria were fixed beforehand; five of seven passed.}
+\label{tab:inuse}
+\end{table}
+
+Five of the seven criteria passed (\cref{tab:inuse}). Recall across sessions, abstention, and resistance to an instruction planted in pasted text all held in every run. The offline pass did what it is for: given a wrong note and a transcript in which the user says otherwise, the agent answered from the note in ten runs of ten, and from what the user said in ten of ten once the pass had corrected the note. The first half of that result is a fault as much as the second is a success: at read time nothing tells the agent that a note has been contradicted since.
+
+Two criteria failed. The update criterion failed on the check as written: all nine failing answers give the new value and name the old one as history (``Tallinn, having relocated from Lisbon''), which the check counts as wrong. We report it as failed because the check was fixed in advance. The forgetting criterion failed in substance. Forgetting deleted the note and every earlier version of it, and left what the user had said in the transcripts, in twenty runs of twenty; in one, the agent found the fact there by searching and gave it. The tool now also takes the words to be forgotten and removes every transcript entry that contains them. On a second run of those scenarios no answer gave the fact and no file held it; being a rerun after a change prompted by the first, it does not alter the first result.
+
+A final session with memory used about 5,200 prompt tokens against 560 without, and took about one second longer. The test is small and written by the authors, the memory in it is nearly empty, and one agent and one model were tried in this round; it shows that the operations work and where one did not, and says nothing about recall from a memory of thousands of notes.
+
+\subsection{Three further rounds}
+
+Each failure above became the subject of a further round, with criteria again fixed before its first run. In every round we report the first run as the outcome, and a second run after any fix separately, since the second is made on the scenarios the fix was written against. A cell is ten runs, and an unchanged repeat of one cell gave nine of ten where the first run gave six; differences of one or two in ten are not findings.
+
+\textbf{A note the user has since contradicted.} A note is the agent's summary and what the user said is the source. When a note is read, the server now shows beside it what the user said on the same subject after the note was last written, with the rule that the later statement holds. Matching is by shared words. Without the offline pass, the agent then answered from the user's later statement in six runs of ten on the first run, and in ten of ten after the match was loosened for notes of two or three content words; in every run where the statement was shown, the agent also corrected the note. Forgetting a fact that had been said twice in different words passed on the first run (no answer gave it and no file held it, in ten of ten), because the reply to a forget now lists what else was said on the subject.
+
+\textbf{Memory at size.} The same scenarios were run with 500 and with 5,000 other notes in memory, a fifth of them close in wording to the tested facts and about something else. Recall held (ten and nine of ten), as did updates and abstention; keyword search retrieved the needed note in every case we examined, so no embedding search over notes was added. The stale-note criterion failed at 5,000 notes (six of ten). One cause was in our harness. The other was in the system: among thousands of statements, the most recent ones sharing a frequent word took the place of the one that corrected the note, and matches are now ranked with rare words counting for more. A second run passed every criterion. The failures that remain gather on one fact, for which the filler holds many notes of the same shape about other teams: the agent reports a conflict, or gives another team's value, once for a fact it was never told. A session over a large memory used two to three times the prompt tokens of one over a nearly empty memory.
+
+\textbf{What versioning is worth.} The notes are versioned, and one tool reads them as they stood at a given time. We asked what the notes had said at a moment before a fact changed, under three conditions that differ in what the final session may read (\cref{tab:asof}), and wrote down beforehand that we expected the transcripts to do as well as the versioned read. On accuracy they did. They did so by searching, at four times the prompt tokens and five to six times the time; the versioned read answered in one call. With the current notes alone, after the owner had edited a note by hand, the agent was wrong ten times in ten and mostly reported the present text as what the notes had said then. For recalling past values, then, versioning is not more accurate than keeping transcripts; it is cheaper, and it is the only source for the earlier text of a note that was never said aloud. What transcripts do not give at all is undoing a change, the record of who made it, and the merging of two copies of a memory; the last is implemented as a three-way merge in which whatever either copy forgot stays forgotten, and is tested without a model.
+
+\textbf{A second client and a second model.} Every result above is one agent with our extension and one model. We ran the second round's seventy scenarios twice more: with a plain MCP client that has a one-sentence generic prompt, the server's own instructions and the tools, and neither the index of memory in its prompt nor a record of the session; and with the same agent on a larger model of the same provider. Both passed every criterion, seventy of seventy. We had written beforehand that we doubted a model would write notes with nothing telling it to; it did, each time, so the extension's prompt is not what makes recall work on these scenarios. A final session cost 3,400 prompt tokens with the plain client, 7,800 with the extension, and 35,000 with the larger model, which made seven tool calls where the smaller made three. These remain one provider's models and scenarios in which a fact is handed over as something to keep.
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lccc}
+\toprule
+ & Current notes & Notes and transcripts & Notes and versioned read \\
+\midrule
+The change was said in a session (correct of 10) & 8 & 10 & 10 \\
+The note was edited by hand (correct of 10) & 0 & 9 & 10 \\
+Prompt tokens of the final session & 9,486 & 13,363 & 3,342 \\
+Tool calls & 5.2 & 6.7 & 1.05 \\
+Seconds & 11.7 & 18.6 & 3.3 \\
+\bottomrule
+\end{tabular}}
+\caption{What did the notes say at an earlier moment? Sixty scenario runs; nothing was changed after this run.}
+\label{tab:asof}
+\end{table}
 
 %==============================================================================
 \section{Discussion}
 \label{sec:discussion}
 
-\subsection{Insights}
+\subsection{What the results mean}
 
-Several broader lessons emerge from the results. First, query-adaptivity is not a cosmetic refinement to retrieval, but a genuine source of accuracy gains. The fact that different strategies dominate different question categories shows that conversational memory is structurally heterogeneous: factual lookup, temporal reasoning, and relational traversal are not interchangeable retrieval problems. Second, routing quality matters asymmetrically. Some mistakes are relatively benign, whereas routing a multi-hop question through a single-hop pipeline is structurally catastrophic because the required relational composition is absent. Third, architectural improvements compound. Even before adaptive routing is introduced, \memst\ substantially outperforms equivalent RAG configurations, indicating that versioned storage, tiered organization, and token-budget-aware assembly contribute independent value. The broader implication is that memory quality emerges from the interaction of representation, organization, and access strategy rather than from any single retrieval primitive alone.
+We built a knowledge graph to answer questions better than the conversation it was extracted from, and it does not. The finding is robust to the ways we tried to rescue it: searching by relationship instead of by entity, combining the graph with raw turns, using a reasoning reader, correcting the dates, restricting the test to the questions a temporal graph is for, and regrading with a stricter judge. It agrees with independent comparisons published this year \citep{bao2026naiverag, zhou2026explicit}.
+
+The reason is visible in the traces. Extraction is lossy: the graph's facts lead to a turn containing the answer for about half of LoCoMo's questions, while embedding retrieval over the turns themselves does so for three quarters. What extraction adds is a restatement of some of the same content, and a restatement placed before the original makes the reader slightly worse. The raw record is the better index of itself.
+
+The improvements we did find are in how the record is read. This suggests that for histories of the sizes tested here, effort is better spent on the reader's use of retrieved evidence than on structures built at write time.
+
+None of this says a time-aware graph of a user's world is without value. It says that question answering over a static transcript is not where that value shows. A structured, dated, correctable view of what an agent believes is what a person needs in order to inspect that belief, correct it, see what it was last month, and remove part of it; and a versioned record is what makes those operations safe. These are the operations the field now names when it describes memory \citep{hu2025memoryage}, and current benchmarks do not measure them.
 
 \subsection{Limitations}
 
-This work has several limitations. First, evaluation is confined to LOCOMO, which, although demanding, covers only English, two-party, synchronous conversations. Generalization to multilingual, asynchronous, or multi-party settings remains to be tested. Second, the rule-based classifier achieves 80\% accuracy, leaving a 5.6-point gap to oracle routing. Third, branch merging remains incomplete: worktree isolation is implemented, but conflict-aware three-way merge is not. Fourth, knowledge graph extraction at 87\% precision propagates quality limitations to downstream retrieval; entity mislinking and missed relations directly constrain graph-based strategy performance. Finally, while we compare against multiple RAG baselines, a more aggressively tuned RAG system might narrow part of the observed gap.
+\textbf{One reader.} All results use one model with reasoning off as reader and extractor. A stronger extractor would build a better graph, and a stronger reader might use it better; it would also read raw turns better.
 
-\subsection{Computational Costs}
+\textbf{Sample sizes.} The main LongMemEval-S graph comparison still uses \numLmeQuestions\ questions, and the exploratory read-path and narrower-graph cross-checks use \numReadLmeQuestions\ and \numRoleLmeQuestions; the five raw pipelines now use all \numFullLmeQuestions. The principal LoCoMo read-path comparison, main run and temporal test use every question, while the remaining read-path variants and their strict-judge comparison use the \numReadQuestions-question pilot.
 
-Ingestion costs per message total approximately 287 milliseconds and \$0.003, including embedding generation, knowledge graph extraction, and summary construction. Query costs range from 85 to 180 milliseconds of search latency depending on strategy, with low overall inference cost. Storage averages roughly 380KB per conversation. These figures suggest that local-first deployment is practical even without large infrastructure.
+\textbf{Judges.} Both judges come from one provider. The stricter one lowers LoCoMo scores by 6 to 10 points without changing the order of pipelines, and we have not applied it to the full LoCoMo main run or either new full-scale read-path run.
+
+\textbf{Scale.} At about 127,000 tokens, LongMemEval-S histories still fit in a large context window and their answer turns are easy to retrieve. Histories of millions of tokens, where retrieval can no longer return everything relevant, are the remaining setting in which a pre-built structure might win; we have not tested it.
+
+\textbf{Benchmarks.} Both benchmarks ask questions about a fixed transcript. Neither tests correction, deletion, rollback or use of memory in action; our own tests of those (\cref{sec:inuse}) are short scenarios that we wrote ourselves, ten runs to a cell. LoCoMo's reference answers contain errors.
+
+\textbf{Not evaluated.} The memory tiers and sleep-time consolidation are described but not measured. What versioning is worth was measured for one thing only, recall of past values (\cref{sec:inuse}); merging is tested for correctness and not for whether two agents' memories are better merged than kept apart.
+
+\textbf{Not implemented.} Deletion from the history of the session store; the cascade from a deleted message to the memory items and summaries made from it; merging within a note (a note changed in both copies is kept twice).
 
 %==============================================================================
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented \memst, a semantic memory architecture founded on query-adaptive retrieval. On LOCOMO, using 1,540 evaluated questions, \memst\ achieves 49.2\% F1 through adaptive routing, a 41\% improvement over the strongest published managed-memory baseline in our comparison. More importantly, the results clarify \emph{why} this improvement arises: conversational questions differ in structure, and memory systems perform best when their retrieval mechanism reflects that structure rather than suppressing it under a uniform interface. We therefore argue for a shift in perspective. As LLM agents evolve from short-lived assistants into durable software systems, memory should be designed as adaptive, versioned, and lifecycle-aware infrastructure rather than as a passive appendage to prompting.
+We set out to show that structured, query-adaptive memory answers questions better than retrieval, and a fair evaluation showed that it does not: on LoCoMo and LongMemEval-S, a knowledge graph extracted from a conversation is at best level with retrieval over the conversation's own turns, routing by kind of question gains nothing, and the largest improvement available is to let the reader reason over what was retrieved. Along the way the evaluation found a modelling fault worth checking for in any system that extracts dated facts from conversation: the time something was said is not the time it happened.
+
+We think the useful direction for systems like \memst\ is the part of memory that benchmarks of recall do not reach: a record that can be versioned, audited, corrected and partly forgotten, and that controls what an agent is allowed to tell its future self. The evaluation harness, every answer and trace behind the tables in this paper, and the system are available in the repository.
 
 \vspace{1em}
-\noindent\textbf{Acknowledgments.} We thank the open-source community for PyO3, FastAPI, and HNSW. Knowledge graph ontologies were adapted from public taxonomies.
+\noindent\textbf{Acknowledgments.} We thank the open-source community for PyO3, HelixDB, fastembed and the datasets used here.
 
 \bibliography{cite}
 
 \end{document}
-

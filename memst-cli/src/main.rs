@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use memst_core::graph::KnowledgeGraph;
+use memst_core::graph::{Direction, EntitySearch, KnowledgeGraph, SearchMethod};
 use memst_core::search::SearchQuery;
 use memst_core::store::SessionStore;
 use memst_core::types::{
@@ -14,7 +14,7 @@ use uuid::Uuid;
 #[derive(Parser, Debug)]
 #[command(name = "memst")]
 #[command(author = "MemSt Team")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "Git-like memory architecture for LLM session management", long_about = None)]
 struct Args {
     #[command(subcommand)]
@@ -85,8 +85,184 @@ enum Command {
 
     #[command(about = "Knowledge graph operations")]
     Graph {
+        /// Storage backend: auto, json or helix.
+        ///
+        /// `auto` uses the store's shared HelixDB graph. A session that still
+        /// has its own graph from an older MemSt keeps using it until
+        /// `graph migrate` has been run.
+        #[arg(long, global = true, default_value = "auto")]
+        backend: String,
+
+        /// Whose graph to use. Owners share the store and never see each
+        /// other's entities.
+        #[arg(long, global = true, default_value = "default")]
+        owner: String,
+
+        /// For query and search: include entities from every session, not
+        /// only the given one.
+        #[arg(long, global = true)]
+        all_sessions: bool,
+
+        /// What computes embeddings: auto, local, http or none.
+        ///
+        /// `auto` uses the embedding API from config.toml or
+        /// MEMST_EMBEDDING_API_URL when one is set, and otherwise the local
+        /// BGE-M3 model (downloaded on first use, about 2.2 GB).
+        #[arg(long, global = true, default_value = "auto")]
+        embedder: String,
+
         #[command(subcommand)]
         command: GraphCommand,
+    },
+
+    #[command(about = "Serve one owner's memory to MCP clients, and review what they wrote")]
+    Mcp {
+        /// Whose memory. Required: a server is always bound to one owner,
+        /// and clients cannot name another.
+        #[arg(long, global = true)]
+        owner: Option<String>,
+
+        /// Search by meaning as well as by word, with this embedder: none,
+        /// local (BGE-M3 on this machine, about 2.2 GB, downloaded on first
+        /// use), http, or auto. Vectors are kept under the owner's memory
+        /// and removed when their text is forgotten.
+        #[arg(long = "embedder", global = true, env = "MEMST_EMBEDDER", default_value = "none")]
+        memory_embedder: String,
+
+        #[command(subcommand)]
+        command: McpCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpCommand {
+    /// Run an MCP server on standard input and output (for Claude Code,
+    /// Cursor and other MCP clients). It opens no network port.
+    Serve {
+        /// Offer only the tools that read. Nothing in the store is changed.
+        #[arg(long)]
+        read_only: bool,
+
+        /// What to do with a note that reads like an instruction to a model:
+        /// quarantine (keep it aside until you approve it), reject or off.
+        #[arg(long, default_value = "quarantine")]
+        screening: String,
+    },
+    /// List the notes set aside for review.
+    Review,
+    /// Release a note from review, or mark any note as approved by you.
+    Approve {
+        /// The note's id
+        id: Uuid,
+    },
+    /// Delete a note.
+    Forget {
+        /// The note's id
+        id: Option<Uuid>,
+        /// Also remove every transcript entry containing these words (may be repeated)
+        #[arg(long = "said")]
+        said: Vec<String>,
+    },
+    /// Show the most recent entries of the audit log.
+    Audit {
+        /// How many entries
+        #[arg(long, default_value_t = 20)]
+        last: usize,
+    },
+    /// Print the index: what every session is given at its start.
+    Index,
+    /// List the notes.
+    Notes,
+    /// Print a note, as it is now or as it was at an earlier revision.
+    Show {
+        /// The note's id
+        id: Uuid,
+        /// A revision id (or its first characters) from `history`
+        #[arg(long)]
+        at: Option<String>,
+    },
+    /// List the changes made to the notes, newest first.
+    History {
+        /// How many changes
+        #[arg(long, default_value_t = 20)]
+        last: usize,
+    },
+    /// Put the notes back as they were at a revision. Nothing is lost: the
+    /// states in between stay in the history.
+    Restore {
+        /// A revision id (or its first characters) from `history`
+        revision: String,
+    },
+    /// Record one thing that was said, from outside the conversation: for a
+    /// client's hook or a script. A model asked to record what the user
+    /// says mostly does not (it recorded none of eighty facts in a test);
+    /// a hook that runs on every message does. The text is the argument,
+    /// or standard input.
+    Record {
+        /// What was said. Read from standard input when left out
+        text: Option<String>,
+        /// Who said it: user, assistant, tool or system
+        #[arg(long, default_value = "user")]
+        role: String,
+        /// The session it belongs to (letters, digits, '-', '_', '.')
+        #[arg(long)]
+        session: String,
+    },
+    /// How near two texts are in meaning, as the embedder sees them: the
+    /// figure search and the stale-note check compare with their limits
+    /// (0.45 to be listed by a search, 0.6 to be shown beside a note).
+    Nearness {
+        /// One text
+        a: String,
+        /// The other
+        b: String,
+    },
+    /// Make the vectors that search by meaning needs, for every note and
+    /// transcript entry that has none. Search makes a few as it goes; this
+    /// makes them all. Needs `--embedder`.
+    Embed,
+    /// Merge another copy of this owner's memory (from another machine or
+    /// another agent) into this one. Changes made in one copy are kept;
+    /// notes changed differently in both are both kept, for you to decide;
+    /// what was forgotten in either stays forgotten. The other copy is
+    /// only read. `restore` undoes the merge, except the forgetting.
+    Merge {
+        /// The other copy's store directory
+        other_store: PathBuf,
+        /// The owner's name in the other store, if it differs
+        #[arg(long)]
+        other_owner: Option<String>,
+    },
+    /// Review memory offline: check the notes against what was said, add
+    /// what was missed, and build pages. Without `--apply` the proposal is
+    /// shown and kept for you to look at; nothing changes.
+    ///
+    /// Uses the model configured in config.toml or MEMST_LLM_API_URL,
+    /// MEMST_LLM_MODEL and MEMST_LLM_API_KEY.
+    Dream {
+        /// Apply the waiting proposal, or draft one and apply it at once.
+        #[arg(long)]
+        apply: bool,
+        /// Throw the waiting proposal away.
+        #[arg(long, conflicts_with = "apply")]
+        discard: bool,
+        /// Extra fields for the model request, as JSON (for example
+        /// '{"thinking":{"type":"disabled"}}').
+        #[arg(long)]
+        llm_extra: Option<String>,
+        /// Most transcript text to read in one pass, in characters.
+        #[arg(long, default_value_t = 60_000)]
+        max_chars: usize,
+    },
+    /// Put an approved note at the top of the index.
+    Pin {
+        /// The note's id
+        id: Uuid,
+    },
+    /// Take a note off the top of the index.
+    Unpin {
+        /// The note's id
+        id: Uuid,
     },
 }
 
@@ -116,10 +292,19 @@ enum SessionCommand {
         id: Uuid,
     },
 
-    #[command(about = "Delete a session")]
+    /// Delete a session: its messages, memories, search entries, and the
+    /// facts the knowledge graph took from it.
     Delete {
         /// Session ID
         id: Uuid,
+
+        /// Graph backend holding the session's facts: auto, json or helix
+        #[arg(long, default_value = "auto")]
+        graph_backend: String,
+
+        /// Whose graph to remove the session's facts from
+        #[arg(long, default_value = "default")]
+        owner: String,
     },
 }
 
@@ -155,6 +340,24 @@ enum MessageCommand {
         /// Skip first N messages
         #[arg(long, default_value = "0")]
         offset: u32,
+    },
+
+    /// Delete one message for good, with its search entry and the facts
+    /// the knowledge graph took from it.
+    Delete {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Message ID (shown by `message list`)
+        message_id: Uuid,
+
+        /// Graph backend holding the session's facts: auto, json or helix
+        #[arg(long, default_value = "auto")]
+        graph_backend: String,
+
+        /// Whose graph to remove the message's facts from
+        #[arg(long, default_value = "default")]
+        owner: String,
     },
 }
 
@@ -251,6 +454,11 @@ enum GraphCommand {
         /// JSON attributes
         #[arg(short, long)]
         attributes: Option<String>,
+
+        /// Always create a new entity, even if one with the same name and
+        /// type already exists
+        #[arg(long)]
+        new: bool,
     },
 
     #[command(about = "Add a relationship")]
@@ -295,6 +503,229 @@ enum GraphCommand {
         /// Session ID
         session_id: Uuid,
     },
+
+    #[command(about = "List entities within N hops of an entity")]
+    Neighbors {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Entity to start from
+        entity: Uuid,
+
+        /// Maximum number of hops
+        #[arg(long, default_value = "2")]
+        hops: usize,
+
+        /// Edges to follow: out, in or both
+        #[arg(long, default_value = "both")]
+        direction: String,
+
+        /// JSON output
+        #[arg(long)]
+        json: bool,
+    },
+
+    #[command(about = "Search entities by keywords (BM25) and, with --semantic, by meaning")]
+    Search {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Search text
+        query: String,
+
+        /// Maximum results
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+
+        /// Also embed the query and search by vector similarity.
+        /// Needs an embedding API (config.toml or MEMST_EMBEDDING_API_URL)
+        /// and entity embeddings (`graph embed`); without them the search
+        /// continues with keywords only.
+        #[arg(long)]
+        semantic: bool,
+
+        /// Include deprecated entities
+        #[arg(long)]
+        include_deprecated: bool,
+
+        /// Search relationships ("alice uses rust") instead of entities
+        #[arg(long)]
+        relationships: bool,
+
+        /// Also print the current relationships around each hit
+        #[arg(long)]
+        expand: bool,
+
+        /// JSON output
+        #[arg(long)]
+        json: bool,
+    },
+
+    #[command(about = "Embed entities that are new or have changed (for --semantic search)")]
+    Embed {
+        /// Session ID
+        session_id: Uuid,
+    },
+
+    #[command(about = "Extract entities and relationships from a session's messages into the graph")]
+    Ingest {
+        /// Session ID
+        session_id: Uuid,
+
+        /// Re-read every message, not only those added since the last ingest
+        #[arg(long)]
+        all: bool,
+
+        /// Characters of conversation sent to the LLM per extraction call
+        #[arg(long, default_value = "6000")]
+        batch_chars: usize,
+    },
+
+    #[command(about = "Copy every per-session graph of this store into the shared graph")]
+    Migrate,
+}
+
+/// The embedder the `--embedder` option selects, or `None` for "none".
+#[cfg(feature = "local-embeddings")]
+fn select_embedder(kind: &str) -> Result<Option<Box<dyn memst_core::embed::Embedder>>> {
+    Ok(memst_embed::select_embedder(kind, |dir| {
+        eprintln!(
+            "note: downloading the BGE-M3 embedding model (about 2.2 GB) to {}; this happens once",
+            dir.display()
+        );
+    })?)
+}
+
+/// The embedder the `--embedder` option selects (built without the local model).
+#[cfg(not(feature = "local-embeddings"))]
+fn select_embedder(kind: &str) -> Result<Option<Box<dyn memst_core::embed::Embedder>>> {
+    use memst_core::embed::HttpEmbedder;
+    match kind {
+        "none" => Ok(None),
+        "http" | "auto" => Ok(Some(Box::new(HttpEmbedder::from_config()?))),
+        "local" => anyhow::bail!("this memst was built without the 'local-embeddings' feature"),
+        other => anyhow::bail!("unknown embedder '{other}' (expected auto, local, http or none)"),
+    }
+}
+
+/// An embedder that loads its model the first time it is asked for a
+/// vector. Loading BGE-M3 takes seconds and two gigabytes of memory, which
+/// a server that is never asked a question should not pay.
+struct LazyEmbedder {
+    kind: String,
+    loaded: std::sync::OnceLock<std::result::Result<Box<dyn memst_core::embed::Embedder>, String>>,
+}
+
+impl LazyEmbedder {
+    fn new(kind: &str) -> Self {
+        Self { kind: kind.to_string(), loaded: std::sync::OnceLock::new() }
+    }
+
+    fn get(&self) -> memst_core::error::Result<&dyn memst_core::embed::Embedder> {
+        let loaded = self.loaded.get_or_init(|| match select_embedder(&self.kind) {
+            Ok(Some(embedder)) => Ok(embedder),
+            Ok(None) => Err("no embedder".to_string()),
+            Err(error) => Err(error.to_string()),
+        });
+        match loaded {
+            Ok(embedder) => Ok(embedder.as_ref()),
+            Err(reason) => Err(memst_core::error::Error::InvalidOperation(format!("the embedder could not be loaded: {reason}"))),
+        }
+    }
+}
+
+impl memst_core::embed::Embedder for LazyEmbedder {
+    fn id(&self) -> String {
+        // Known without loading the model, so that the vectors' directory is too.
+        match self.kind.as_str() {
+            "local" => "local:bge-m3".to_string(),
+            other => self.get().map(|e| e.id()).unwrap_or_else(|_| other.to_string()),
+        }
+    }
+
+    fn embed(&self, texts: &[String]) -> memst_core::error::Result<Vec<Vec<f32>>> {
+        self.get()?.embed(texts)
+    }
+}
+
+/// Plain text of a message, for extraction.
+fn message_text(message: &memst_core::types::Message) -> String {
+    use memst_core::types::{Content, ContentPart};
+    match &message.content {
+        Content::Text(text) => text.clone(),
+        Content::MultiPart(parts) => parts
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+/// Open the knowledge graph a session of this store uses.
+///
+/// With `read_ok`, a graph that another process is writing is opened
+/// read-only instead of failing.
+#[cfg(feature = "helix")]
+fn open_graph(
+    store_dir: &std::path::Path,
+    session_dir: &std::path::Path,
+    backend: &str,
+    owner: &str,
+    read_ok: bool,
+) -> Result<KnowledgeGraph> {
+    use memst_graph_helix::{GraphLocation, StoreGraphOptions};
+
+    let mut options = StoreGraphOptions {
+        choice: backend.parse().map_err(anyhow::Error::msg)?,
+        owner: owner.to_string(),
+        read_only: false,
+    };
+    let (graph, location) = match memst_graph_helix::open_store(store_dir, session_dir, &options) {
+        Err(memst_core::error::Error::LockError(reason)) if read_ok => {
+            eprintln!("note: {reason}");
+            eprintln!("note: reading without the lock; very recent writes may not be visible yet");
+            options.read_only = true;
+            memst_graph_helix::open_store(store_dir, session_dir, &options)?
+        }
+        other => other?,
+    };
+    if location == GraphLocation::LegacySession && backend == "auto" {
+        eprintln!(
+            "note: this session uses its own graph from an older MemSt; run `memst graph migrate` to move it into the shared graph"
+        );
+    }
+    Ok(graph)
+}
+
+/// Open a session's knowledge graph (built without HelixDB: JSON only).
+#[cfg(not(feature = "helix"))]
+fn open_graph(
+    _store_dir: &std::path::Path,
+    session_dir: &std::path::Path,
+    backend: &str,
+    _owner: &str,
+    _read_ok: bool,
+) -> Result<KnowledgeGraph> {
+    match backend {
+        "auto" | "json" => Ok(KnowledgeGraph::new(session_dir)?),
+        other => anyhow::bail!(
+            "graph backend '{other}' is not available: this memst was built without the 'helix' feature"
+        ),
+    }
+}
+
+/// Whether there is a knowledge graph that could hold this session's facts.
+/// Deleting must not create one as a side effect.
+fn graph_exists(store_dir: &std::path::Path, session_dir: &std::path::Path) -> bool {
+    #[cfg(feature = "helix")]
+    if memst_graph_helix::HelixGraphBackend::exists(store_dir) || memst_graph_helix::HelixGraphBackend::exists(session_dir) {
+        return true;
+    }
+    let _ = store_dir;
+    session_dir.join("graph.json").exists()
 }
 
 fn main() -> Result<()> {
@@ -353,7 +784,21 @@ fn main() -> Result<()> {
                     }
                 }
 
-                SessionCommand::Delete { id } => {
+                SessionCommand::Delete { id, graph_backend, owner } => {
+                    if store.get_session(*id)?.is_none() {
+                        anyhow::bail!("Session not found: {id}");
+                    }
+                    // The graph first: a session from an older MemSt keeps
+                    // its graph in its own directory, which is about to go.
+                    let session_path = store.session_path(*id);
+                    if graph_exists(&args.store, &session_path) {
+                        let mut graph = open_graph(&args.store, &session_path, graph_backend, owner, false)?;
+                        let gone = graph.forget_session(*id)?;
+                        println!(
+                            "Removed from the knowledge graph: {} fact(s), {} entit(ies); {} entit(ies) kept because something else refers to them.",
+                            gone.relationships, gone.entities, gone.entities_kept
+                        );
+                    }
                     store.delete_session(*id)?;
                     println!("Deleted session: {}", id);
                 }
@@ -393,6 +838,25 @@ fn main() -> Result<()> {
                 println!("Added message to session {}: {}", session_id, message_id);
             }
 
+            MessageCommand::Delete { session_id, message_id, graph_backend, owner } => {
+                let store = SessionStore::open(&args.store)?;
+                let memories = store.delete_message(*session_id, *message_id)?;
+                println!("Deleted message {message_id}, and its entry in the search index.");
+                if memories > 0 {
+                    println!("Removed {memories} memory item(s) made from it, with their search entries.");
+                }
+                let session_path = store.session_path(*session_id);
+                if graph_exists(&args.store, &session_path) {
+                    let mut graph = open_graph(&args.store, &session_path, graph_backend, owner, false)?;
+                    let gone = graph.forget_message(*message_id)?;
+                    println!(
+                        "Removed from the knowledge graph: {} fact(s), {} entit(ies); {} entit(ies) kept because something else refers to them.",
+                        gone.relationships, gone.entities, gone.entities_kept
+                    );
+                }
+                println!("Not reached: memory items that do not say which message they came from, and the operations log.");
+            }
+
             MessageCommand::List {
                 session_id,
                 limit,
@@ -427,10 +891,11 @@ fn main() -> Result<()> {
                                 .join("\n"),
                         };
                         println!(
-                            "\n{}{} {}:",
+                            "\n{}{} {} (id {}):",
                             role_str,
                             i + *offset as usize,
-                            msg.timestamp.format("%Y-%m-%d %H:%M")
+                            msg.timestamp.format("%Y-%m-%d %H:%M"),
+                            msg.id
                         );
                         println!("{}", content);
                     }
@@ -724,19 +1189,317 @@ fn main() -> Result<()> {
             println!("  Long-term: {}", long_term);
         }
 
-        Command::Graph { command } => {
+        Command::Mcp { owner, memory_embedder, command } => {
+            use memst_mcp::service::MemoryService;
+            use memst_mcp::{McpAdapter, McpServer, Scope, Screening, WritePolicy};
+            use memst_repo::versioned_dir::{Change, Past};
+
+            let Some(owner) = owner else {
+                anyhow::bail!("--owner is required: say whose memory this is (for example --owner alice)");
+            };
+            let open = |read_only: bool, policy: WritePolicy| -> Result<MemoryService> {
+                let scope = Scope::new(owner, read_only).map_err(anyhow::Error::msg)?;
+                let service = MemoryService::open(&args.store, scope, policy).map_err(|e| anyhow::anyhow!("{e}"))?;
+                Ok(match memory_embedder.as_str() {
+                    "none" => service,
+                    // The model is loaded when it is first needed, not when
+                    // the server starts.
+                    kind => service.with_embedder(std::sync::Arc::new(LazyEmbedder::new(kind))),
+                })
+            };
+            let refused = |e: memst_mcp::Refusal| anyhow::anyhow!("{e}");
+            // The owner's own commands: full access, default limits.
+            let mine = || open(false, WritePolicy::default());
+            match command {
+                McpCommand::Serve { read_only, screening } => {
+                    let screening = match screening.as_str() {
+                        "quarantine" => Screening::Quarantine,
+                        "reject" => Screening::Reject,
+                        "off" => Screening::Off,
+                        other => anyhow::bail!("unknown screening '{other}' (expected quarantine, reject or off)"),
+                    };
+                    let service = open(*read_only, WritePolicy { screening, ..WritePolicy::default() })?;
+                    // Standard output carries the protocol and nothing else.
+                    eprintln!(
+                        "memst: serving {} memory for owner '{}' from {} over stdio",
+                        if *read_only { "read-only" } else { "read-write" },
+                        owner,
+                        args.store.display()
+                    );
+                    let server = McpServer::new(McpAdapter::connected(std::sync::Arc::new(service)))?;
+                    server.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
+                }
+                McpCommand::Review => {
+                    let waiting = mine()?.quarantined().map_err(refused)?;
+                    if waiting.is_empty() {
+                        println!("Nothing is waiting for review.");
+                    }
+                    for note in waiting {
+                        println!("{}  written {} by {}", note.id, note.updated.format("%Y-%m-%d %H:%M"), note.source);
+                        for reason in memst_mcp::policy::instruction_like(&note.body) {
+                            println!("  set aside because it {reason}");
+                        }
+                        if !note.tags.is_empty() {
+                            println!("  tags: {}", note.tags.join(", "));
+                        }
+                        // Shown escaped, so hidden characters are visible.
+                        println!("  {}\n", note.body.escape_default());
+                    }
+                }
+                McpCommand::Approve { id } => {
+                    mine()?.approve(*id).map_err(refused)?;
+                    println!("Approved {id}.");
+                }
+                McpCommand::Forget { id, said } => {
+                    if id.is_none() && said.is_empty() {
+                        anyhow::bail!("give a note's id, --said <words>, or both");
+                    }
+                    let service = mine()?;
+                    if !said.is_empty() {
+                        let removed = service.forget_said(said).map_err(refused)?;
+                        println!("Removed {removed} transcript entries containing those words.");
+                    }
+                    if let Some(id) = id {
+                        service.forget(*id).map_err(refused)?;
+                        println!("Forgot {id}, and every earlier version of it.");
+                    }
+                }
+                McpCommand::Audit { last } => {
+                    let log = std::fs::read_to_string(mine()?.audit_path()).unwrap_or_default();
+                    let lines: Vec<&str> = log.lines().collect();
+                    for line in &lines[lines.len().saturating_sub(*last)..] {
+                        println!("{line}");
+                    }
+                }
+                McpCommand::Index => print!("{}", mine()?.index().map_err(refused)?),
+                McpCommand::Notes => {
+                    let memory = mine()?;
+                    let mut notes = memory.search_all().map_err(refused)?;
+                    notes.extend(memory.quarantined().map_err(refused)?);
+                    if notes.is_empty() {
+                        println!("No notes.");
+                    }
+                    for note in notes {
+                        let state = if note.status == memst_mcp::note::Status::Quarantined {
+                            "waiting for review"
+                        } else {
+                            memst_mcp::service::trust_of(&note)
+                        };
+                        println!("{}  {}  {}  {}{}", note.id, note.updated.format("%Y-%m-%d"), state, if note.pinned { "[pinned] " } else { "" }, note.title());
+                    }
+                }
+                McpCommand::Show { id, at } => match at {
+                    None => {
+                        let memory = mine()?;
+                        let mut all = memory.search_all().map_err(refused)?;
+                        all.extend(memory.quarantined().map_err(refused)?);
+                        let note = all.into_iter().find(|n| n.id == *id).ok_or_else(|| anyhow::anyhow!("no note with that id"))?;
+                        print!("{}", note.to_markdown());
+                    }
+                    Some(revision) => match mine()?.note_at(*id, revision).map_err(refused)? {
+                        Past::Content(text) => print!("{text}"),
+                        Past::Absent => println!("The note did not exist at that revision."),
+                        Past::Forgotten => println!("The note existed at that revision; its content has since been forgotten."),
+                    },
+                },
+                McpCommand::History { last } => {
+                    let revisions = mine()?.history(*last).map_err(refused)?;
+                    if revisions.is_empty() {
+                        println!("No changes yet.");
+                    }
+                    for revision in revisions {
+                        println!("{}  {}  {}  {}", &revision.id.to_hex()[..12], revision.at.format("%Y-%m-%d %H:%M"), revision.author, revision.message);
+                        for change in &revision.changes {
+                            let (word, path) = match change {
+                                Change::Added(p) => ("added", p),
+                                Change::Modified(p) => ("changed", p),
+                                Change::Removed(p) => ("removed", p),
+                            };
+                            println!("    {word} {path}");
+                        }
+                    }
+                }
+                McpCommand::Restore { revision } => {
+                    let skipped = mine()?.restore(revision).map_err(refused)?;
+                    println!("The notes are as they were at {revision}.");
+                    if skipped > 0 {
+                        println!("{skipped} note(s) that were forgotten since then were not brought back.");
+                    }
+                }
+                McpCommand::Record { text, role, session } => {
+                    let text = match text {
+                        Some(text) => text.clone(),
+                        None => {
+                            let mut said = String::new();
+                            std::io::Read::read_to_string(&mut std::io::stdin(), &mut said)?;
+                            said
+                        }
+                    };
+                    let number = mine()?.record(session, role, &text).map_err(refused)?;
+                    println!("Recorded as entry {number} of session {session}.");
+                }
+                McpCommand::Nearness { a, b } => {
+                    use memst_core::embed::Embedder;
+                    if memory_embedder == "none" {
+                        anyhow::bail!("choose an embedder: --embedder local (or http, or auto)");
+                    }
+                    let vectors = LazyEmbedder::new(memory_embedder).embed(&[a.clone(), b.clone()])?;
+                    println!("{:.3}", memst_mcp::vectors::cosine(&vectors[0], &vectors[1]));
+                }
+                McpCommand::Embed => {
+                    if memory_embedder == "none" {
+                        anyhow::bail!("choose an embedder: --embedder local (or http, or auto)");
+                    }
+                    let (have, lack) = mine()?.embed_all().map_err(refused)?;
+                    println!("{have} notes and transcript entries have a vector; {lack} do not.");
+                }
+                McpCommand::Merge { other_store, other_owner } => {
+                    let other = other_store.join("memory").join(other_owner.as_deref().unwrap_or(owner));
+                    let done = mine()?.merge_from(&other).map_err(refused)?;
+                    match &done.common_revision {
+                        Some(revision) => println!("The two copies were the same at revision {}.", &revision[..12.min(revision.len())]),
+                        None => println!("The two copies share no history: every note that differs is treated as changed in both."),
+                    }
+                    println!("Notes: {} updated from the other copy, {} added, {} removed.", done.taken, done.added, done.removed);
+                    if done.forgotten + done.kept_forgotten > 0 {
+                        println!("Forgotten: {} note(s) the other copy had forgotten are now forgotten here; {} forgotten here were not brought back.", done.forgotten, done.kept_forgotten);
+                    }
+                    for (ours, theirs) in &done.conflicts {
+                        println!("Changed in both: {ours} is kept as it is here; the other copy's version is the new note {theirs}. Compare them and forget one.");
+                    }
+                    if done.set_aside > 0 {
+                        println!("{} incoming note(s) read like instructions and wait for `review`.", done.set_aside);
+                    }
+                    println!("Transcripts: {} session(s) added, {} extended.", done.sessions_added, done.sessions_extended);
+                    for name in &done.sessions_diverged {
+                        println!("A session differs between the copies; the other copy's part is kept as session {name}.");
+                    }
+                    println!("Everything that came in is unverified. `history` shows the merge; `restore` undoes it.");
+                }
+                McpCommand::Dream { apply, discard, llm_extra, max_chars } => {
+                    use memst_mcp::dream::{self, DreamConfig, Proposal};
+                    let memory = mine()?;
+                    if *discard {
+                        println!("{}", if memory.discard_pending().map_err(refused)? { "The waiting proposal was thrown away." } else { "No proposal was waiting." });
+                        return Ok(());
+                    }
+                    let show = |proposal: &Proposal| {
+                        for c in &proposal.corrections {
+                            println!("correct {}\n    to:      {}\n    because the user said: \"{}\" ({})", c.note, c.text, c.evidence.quote, c.evidence.source.key());
+                        }
+                        for n in &proposal.notes {
+                            println!("add a note ({})\n    {}\n    from: \"{}\" ({})", n.kind, n.text, n.evidence.quote, n.evidence.source.key());
+                        }
+                        for page in &proposal.pages {
+                            println!("write the page \"{}\" with {} fact(s)", page.title, page.facts.len());
+                            for fact in &page.facts {
+                                println!("    - {}  [{}]", fact.statement, fact.source.key());
+                            }
+                        }
+                        for (id, reason) in &proposal.pins {
+                            println!("suggestion: pin {id} ({reason})");
+                        }
+                        for dropped in &proposal.dropped {
+                            println!("dropped: {dropped}");
+                        }
+                    };
+                    let _one_at_a_time = memory.begin_pass().map_err(refused)?;
+                    let proposal = match memory.pending().map_err(refused)? {
+                        Some(waiting) if *apply => waiting,
+                        _ => {
+                            let mut config = DreamConfig { max_transcript_chars: *max_chars, ..DreamConfig::default() };
+                            if let Some(extra) = llm_extra {
+                                config.request_extra = serde_json::from_str(extra).map_err(|e| anyhow::anyhow!("--llm-extra is not a JSON object: {e}"))?;
+                            }
+                            let llm = memst_core::llm::LlmLoader::default_provider()?;
+                            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                            runtime.block_on(dream::propose(&memory, llm, &config)).map_err(refused)?
+                        }
+                    };
+                    show(&proposal);
+                    if proposal.read.entries > 0 {
+                        println!(
+                            "Read {} transcript entries beside {} of {} notes; a prompt of about {} tokens.",
+                            proposal.read.entries,
+                            proposal.read.notes_shown,
+                            proposal.read.notes_held,
+                            proposal.read.prompt_chars / 4
+                        );
+                    }
+                    if proposal.is_empty() {
+                        println!("Nothing to change.");
+                    }
+                    if *apply {
+                        let done = dream::apply(&memory, &proposal).map_err(refused)?;
+                        println!(
+                            "Applied: {} corrected, {} disputed, {} added, {} page(s); {} set aside for review.",
+                            done.corrected, done.disputed, done.added, done.pages, done.quarantined
+                        );
+                        for skipped in &done.skipped {
+                            println!("left out: {skipped}");
+                        }
+                        if let (Some(_), Some(before)) = (&done.revision, &done.before) {
+                            println!("To undo this pass: memst mcp --owner {owner} restore {}", &before[..12]);
+                        }
+                    } else if !proposal.is_empty() {
+                        memory.save_pending(&proposal).map_err(refused)?;
+                        println!("Nothing has changed. Apply with `dream --apply`, or throw it away with `dream --discard`.");
+                    }
+                }
+                McpCommand::Pin { id } => {
+                    mine()?.pin(*id, true).map_err(refused)?;
+                    println!("Pinned {id}.");
+                }
+                McpCommand::Unpin { id } => {
+                    mine()?.pin(*id, false).map_err(refused)?;
+                    println!("Unpinned {id}.");
+                }
+            }
+        }
+
+        Command::Graph { backend, owner, all_sessions, embedder, command } => {
             let store = SessionStore::open(&args.store)?;
             
-            // Extract session_id from the command
+            if let GraphCommand::Migrate = command {
+                #[cfg(feature = "helix")]
+                {
+                    let report = memst_graph_helix::migrate_store(&args.store, owner)?;
+                    if report.sessions == 0 {
+                        println!("Nothing to migrate: no session has a graph of its own left.");
+                    } else {
+                        println!(
+                            "Migrated {} session graph(s): {} entities and {} relationships, into the shared graph for owner '{}'.",
+                            report.sessions, report.entities, report.relationships, owner
+                        );
+                        println!("The per-session graphs were kept as a backup.");
+                    }
+                    return Ok(());
+                }
+                #[cfg(not(feature = "helix"))]
+                anyhow::bail!("this memst was built without the 'helix' feature");
+            }
+
             let session_id = match &command {
                 GraphCommand::AddEntity { session_id, .. } => *session_id,
                 GraphCommand::AddRel { session_id, .. } => *session_id,
                 GraphCommand::Query { session_id, .. } => *session_id,
                 GraphCommand::Stats { session_id } => *session_id,
+                GraphCommand::Neighbors { session_id, .. } => *session_id,
+                GraphCommand::Search { session_id, .. } => *session_id,
+                GraphCommand::Embed { session_id, .. } => *session_id,
+                GraphCommand::Ingest { session_id, .. } => *session_id,
+                GraphCommand::Migrate => unreachable!("handled above"),
             };
-            
+            let reads_only = matches!(
+                command,
+                GraphCommand::Query { .. }
+                    | GraphCommand::Stats { .. }
+                    | GraphCommand::Neighbors { .. }
+                    | GraphCommand::Search { .. }
+            );
+
             let session_path = store.session_path(session_id);
-            let mut graph = KnowledgeGraph::new(&session_path)?;
+            let mut graph = open_graph(&args.store, &session_path, backend, owner, reads_only)?;
 
             match command {
                 GraphCommand::AddEntity {
@@ -744,6 +1507,7 @@ fn main() -> Result<()> {
                     name,
                     entity_type,
                     attributes,
+                    new,
                 } => {
                     let mut entity = Entity::new(name, entity_type, *session_id);
                     if let Some(attrs) = attributes {
@@ -751,8 +1515,21 @@ fn main() -> Result<()> {
                             entity = entity.with_attributes(attrs_map);
                         }
                     }
-                    let added = graph.add_entity(entity)?;
-                    println!("Added entity: {} (type: {})", added.id, added.entity_type);
+                    // The graph is shared across sessions, so the same thing
+                    // mentioned again is the same entity unless --new is given.
+                    let (added, created) = if *new {
+                        (graph.add_entity(entity)?, true)
+                    } else {
+                        graph.resolve_or_add_entity(entity)?
+                    };
+                    if created {
+                        println!("Added entity: {} (type: {})", added.id, added.entity_type);
+                    } else {
+                        println!(
+                            "Known entity: {} (type: {}); now also linked to this session",
+                            added.id, added.entity_type
+                        );
+                    }
                 }
 
                 GraphCommand::AddRel {
@@ -775,6 +1552,11 @@ fn main() -> Result<()> {
                         half_life_days: 30.0,
                         is_stable: false,
                         last_decay_at: chrono::Utc::now(),
+                        valid_from: None,
+                        valid_to: None,
+                        superseded_by: None,
+                        valid_precision: None,
+                        stated_at: None,
                     };
                     let _added = graph.add_relationship(relationship)?;
                     println!(
@@ -784,22 +1566,22 @@ fn main() -> Result<()> {
                 }
 
                 GraphCommand::Query {
-                    session_id: _,
+                    session_id,
                     entity_type,
                     limit,
                     json,
                 } => {
-                    let query = EntityQuery::new().with_limit(*limit);
-                    let entities = graph.find_entities(query);
-
-                    let filtered: Vec<_> = if let Some(et) = entity_type {
-                        entities
-                            .into_iter()
-                            .filter(|e| e.entity_type == *et)
-                            .collect()
-                    } else {
-                        entities
-                    };
+                    // The type filter is part of the query, so the limit
+                    // applies to matching entities (it used to be applied
+                    // before filtering, which could return too few).
+                    let mut query = EntityQuery::new().with_limit(*limit);
+                    if !*all_sessions {
+                        query = query.with_session(*session_id);
+                    }
+                    if let Some(et) = entity_type {
+                        query = query.with_type(et.clone());
+                    }
+                    let filtered = graph.find_entities(query)?;
 
                     if *json {
                         let output: Vec<_> = filtered
@@ -833,14 +1615,270 @@ fn main() -> Result<()> {
                     }
                 }
 
-                GraphCommand::Stats { session_id: _ } => {
-                    let stats = graph.stats();
-                    println!("Graph Statistics for Session");
+                GraphCommand::Stats { session_id } => {
+                    let stats = graph.stats()?;
+                    let in_session = graph
+                        .find_entities(EntityQuery::new().with_session(*session_id))?
+                        .len();
+                    println!("Graph Statistics");
                     println!("==============================");
+                    println!("Backend: {}", graph.backend_kind());
+                    println!("Owner: {}", owner);
+                    println!("Entities in this session: {}", in_session);
                     println!("Total Entities: {}", stats.entity_count);
                     println!("Total Relationships: {}", stats.relationship_count);
                     println!("Entity Types: {}", stats.entity_types.len());
                 }
+
+                GraphCommand::Neighbors {
+                    session_id: _,
+                    entity,
+                    hops,
+                    direction,
+                    json,
+                } => {
+                    let direction = match direction.as_str() {
+                        "out" => Direction::Outgoing,
+                        "in" => Direction::Incoming,
+                        "both" => Direction::Both,
+                        other => anyhow::bail!("unknown direction '{other}' (expected out, in or both)"),
+                    };
+                    let hits = graph.neighborhood(*entity, *hops, direction)?;
+                    if *json {
+                        let output: Vec<_> = hits
+                            .iter()
+                            .map(|(e, distance)| {
+                                json!({
+                                    "id": e.id.to_string(),
+                                    "name": e.name,
+                                    "entity_type": e.entity_type,
+                                    "hops": distance
+                                })
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&output)?);
+                    } else if hits.is_empty() {
+                        println!("No entities within {} hops.", hops);
+                    } else {
+                        for (e, distance) in &hits {
+                            println!("  {} hop(s)  {}  {} [{}]", distance, e.id, e.name, e.entity_type);
+                        }
+                    }
+                }
+
+                GraphCommand::Search {
+                    session_id,
+                    query,
+                    limit,
+                    semantic,
+                    include_deprecated,
+                    relationships,
+                    expand,
+                    json,
+                } => {
+                    if *relationships {
+                        let result = graph.search_relationships(query, *limit)?;
+                        let hits: Vec<_> = result
+                            .hits
+                            .iter()
+                            .filter(|((r, _, _), _)| *all_sessions || r.session_id == *session_id)
+                            .collect();
+                        if *json {
+                            let rows: Vec<_> = hits
+                                .iter()
+                                .map(|((r, s, o), score)| {
+                                    json!({
+                                        "id": r.id.to_string(),
+                                        "subject": s.name,
+                                        "predicate": r.predicate,
+                                        "object": o.name,
+                                        "confidence": r.confidence,
+                                        "score": score
+                                    })
+                                })
+                                .collect();
+                            println!("{}", serde_json::to_string_pretty(&rows)?);
+                        } else {
+                            if let Some(reason) = &result.fallback_reason {
+                                println!("(fallback search: {reason})");
+                            }
+                            if hits.is_empty() {
+                                println!("No relationships found.");
+                            }
+                            for ((r, s, o), score) in hits {
+                                println!("  {:.3}  {} --[{}]--> {}", score, s.name, r.predicate, o.name);
+                            }
+                        }
+                        return Ok(());
+                    }
+
+                    let mut search = EntitySearch::text(query.clone()).with_limit(*limit);
+                    search.include_deprecated = *include_deprecated;
+                    if !*all_sessions {
+                        search.session_id = Some(*session_id);
+                    }
+                    if *semantic {
+                        // A missing or failing embedder must not stop the
+                        // search: carry on with keywords only.
+                        let embedded = select_embedder(embedder).and_then(|chosen| match chosen {
+                            Some(chosen) => Ok(chosen.embed(std::slice::from_ref(query))?.pop()),
+                            None => Ok(None),
+                        });
+                        match embedded {
+                            Ok(vector) => search.embedding = vector,
+                            Err(error) => eprintln!(
+                                "warning: could not embed the query ({error}); searching by keywords only"
+                            ),
+                        }
+                    }
+                    let context = if *expand {
+                        graph.search_with_context(&search)?
+                    } else {
+                        memst_core::graph::SearchContext {
+                            result: graph.search_entities(&search)?,
+                            relationships: Vec::new(),
+                        }
+                    };
+                    let around: Vec<_> = context
+                        .relationships
+                        .iter()
+                        .map(|(r, s, o)| format!("{} --[{}]--> {}", s.name, r.predicate, o.name))
+                        .collect();
+                    let result = context.result;
+                    let method = match result.method {
+                        SearchMethod::Native => graph.backend_kind(),
+                        SearchMethod::Fallback => "fallback",
+                    };
+                    if *json {
+                        let hits: Vec<_> = result
+                            .hits
+                            .iter()
+                            .map(|hit| {
+                                json!({
+                                    "id": hit.entity.id.to_string(),
+                                    "name": hit.entity.name,
+                                    "entity_type": hit.entity.entity_type,
+                                    "score": hit.score
+                                })
+                            })
+                            .collect();
+                        let output = json!({
+                            "method": method,
+                            "fallback_reason": result.fallback_reason,
+                            "hits": hits,
+                            "relationships": around
+                        });
+                        println!("{}", serde_json::to_string_pretty(&output)?);
+                    } else {
+                        if let Some(reason) = &result.fallback_reason {
+                            println!("(fallback search: {reason})");
+                        }
+                        if result.hits.is_empty() {
+                            println!("No entities found.");
+                        }
+                        for hit in &result.hits {
+                            println!(
+                                "  {:.3}  {}  {} [{}]",
+                                hit.score, hit.entity.id, hit.entity.name, hit.entity.entity_type
+                            );
+                        }
+                        if !around.is_empty() {
+                            println!("Around these:");
+                            for line in &around {
+                                println!("  {line}");
+                            }
+                        }
+                    }
+                }
+
+                GraphCommand::Embed { session_id: _ } => {
+                    let Some(chosen) = select_embedder(embedder)? else {
+                        anyhow::bail!("--embedder none: nothing to embed with");
+                    };
+                    let embedded = graph.embed_pending(chosen.as_ref())?;
+                    if embedded == 0 {
+                        println!("Every entity is already embedded with {}.", chosen.id());
+                    } else {
+                        println!("Embedded {} entities with {}.", embedded, chosen.id());
+                    }
+                }
+
+                GraphCommand::Ingest {
+                    session_id,
+                    all,
+                    batch_chars,
+                } => {
+                    use memst_sleep::kg_extract::KgExtractionService;
+                    use memst_sleep::kg_ingest::GraphIngestor;
+
+                    // How many of the session's messages earlier runs covered.
+                    let marker = session_path.join("graph.ingested");
+                    let done: usize = if *all {
+                        0
+                    } else {
+                        std::fs::read_to_string(&marker)
+                            .ok()
+                            .and_then(|text| text.trim().parse().ok())
+                            .unwrap_or(0)
+                    };
+                    let messages = store.get_messages(*session_id)?;
+                    let pending: Vec<memst_sleep::kg_ingest::SourceMessage> = messages
+                        .iter()
+                        .skip(done)
+                        .map(|m| memst_sleep::kg_ingest::SourceMessage {
+                            id: m.id,
+                            text: message_text(m),
+                            timestamp: Some(m.timestamp),
+                        })
+                        .filter(|m| !m.text.trim().is_empty())
+                        .collect();
+                    if pending.is_empty() {
+                        println!("No new messages to ingest ({} already covered).", done.min(messages.len()));
+                        return Ok(());
+                    }
+
+                    let llm = memst_core::llm::LlmLoader::default_provider()?;
+                    // Extraction is the point; a missing embedder only means
+                    // the new entities are not searchable by meaning yet.
+                    let chosen = match select_embedder(embedder) {
+                        Ok(chosen) => chosen,
+                        Err(error) => {
+                            eprintln!("warning: no embedder ({error}); run `memst graph embed` later");
+                            None
+                        }
+                    };
+                    let ingestor = GraphIngestor::new(KgExtractionService::new(llm));
+                    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                    let report = runtime.block_on(ingestor.ingest_dated_messages(
+                        &mut graph,
+                        *session_id,
+                        &pending,
+                        *batch_chars,
+                        chosen.as_deref(),
+                    ))?;
+                    std::fs::write(&marker, messages.len().to_string())?;
+
+                    println!("Ingested {} message(s).", pending.len());
+                    println!(
+                        "Entities: {} new, {} already known.",
+                        report.entities_created, report.entities_reused
+                    );
+                    println!(
+                        "Relationships: {} new, {} seen again, {} skipped (unknown endpoint).",
+                        report.relationships_created,
+                        report.relationships_reinforced,
+                        report.relationships_skipped
+                    );
+                    if report.relationships_superseded > 0 {
+                        println!(
+                            "Updated facts: {} earlier relationship(s) superseded.",
+                            report.relationships_superseded
+                        );
+                    }
+                    println!("Embedded: {}.", report.entities_embedded);
+                }
+
+                GraphCommand::Migrate => unreachable!("handled before the graph is opened"),
             }
         }
     }

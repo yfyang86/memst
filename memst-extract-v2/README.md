@@ -1,5 +1,7 @@
 # MemSt KG Extraction V2
 
+> **Note (November 2026):** this README describes a DuckDB design that was never implemented. Storage is SQLite; the `duckdb` feature was a stub and has been removed. The API names below (`KgDuckDb`) are aliases for the SQLite storage.
+
 Advanced Knowledge Graph extraction system with DuckDB-based distributed storage, supporting 80+ intelligence domains from schema-full.json.
 
 ## Features

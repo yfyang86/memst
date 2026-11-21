@@ -26,6 +26,21 @@ pub enum JobStatus {
     Cancelled,
 }
 
+/// `chrono::Duration` has no serde support in the chrono version this
+/// workspace pins (0.4.31), so idle durations are stored as whole seconds.
+mod duration_seconds {
+    use chrono::Duration;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_i64(duration.num_seconds())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
+        i64::deserialize(deserializer).map(Duration::seconds)
+    }
+}
+
 /// Trigger for consolidation jobs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConsolidationTrigger {
@@ -33,8 +48,8 @@ pub enum ConsolidationTrigger {
     Scheduled(DateTime<Utc>),
     /// Token budget exceeded
     TokenBudgetExceeded,
-    /// Session idle for duration
-    SessionIdle(Duration),
+    /// Session idle for duration (serialized as whole seconds)
+    SessionIdle(#[serde(with = "duration_seconds")] Duration),
     /// Explicit API call
     ExplicitAPI,
 }
@@ -113,7 +128,14 @@ impl ConsolidationJob {
         trigger: ConsolidationTrigger,
     ) -> Self {
         Self {
-            id: format!("job-{}", Utc::now().timestamp_millis()),
+            // Timestamp for ordering, random suffix for uniqueness: two jobs
+            // created in the same millisecond used to share an id, and the
+            // scheduler kept only the second.
+            id: format!(
+                "job-{}-{}",
+                Utc::now().timestamp_millis(),
+                &uuid::Uuid::new_v4().simple().to_string()[..8]
+            ),
             scope,
             source_branch: source_branch.to_string(),
             target_branch: target_branch.to_string(),
@@ -193,7 +215,11 @@ impl JobScheduler {
     /// Schedule a new job
     pub fn schedule(&mut self, job: ConsolidationJob) -> JobId {
         let id = job.id.clone();
-        self.queue.push(id.clone());
+        // Only jobs that still have to run wait in the queue; a job
+        // registered in a finished state is just recorded.
+        if job.status == JobStatus::Queued {
+            self.queue.push(id.clone());
+        }
         self.jobs.insert(id.clone(), job);
         id
     }
@@ -294,7 +320,7 @@ impl JobScheduler {
     pub fn stats(&self) -> SchedulerStats {
         SchedulerStats {
             total_jobs: self.jobs.len(),
-            queued: self.queue.len(),
+            queued: self.list_jobs_by_status(JobStatus::Queued).len(),
             running: self.running.len(),
             completed: self.list_jobs_by_status(JobStatus::Completed).len(),
             failed: self.list_jobs_by_status(JobStatus::Failed).len(),

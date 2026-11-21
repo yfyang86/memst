@@ -199,17 +199,7 @@ impl ConsolidationEngine {
 
     /// Calculate simple similarity between memories
     fn calculate_similarity(&self, a: &MemoryItem, b: &MemoryItem) -> f32 {
-        let a_words: std::collections::HashSet<&str> = a.content.split_whitespace().collect();
-        let b_words: std::collections::HashSet<&str> = b.content.split_whitespace().collect();
-
-        if a_words.is_empty() || b_words.is_empty() {
-            return 0.0;
-        }
-
-        let intersection: std::collections::HashSet<_> = a_words.intersection(&b_words).collect();
-        let union: std::collections::HashSet<_> = a_words.union(&b_words).collect();
-
-        intersection.len() as f32 / union.len() as f32
+        memst_core::text::jaccard(&a.content, &b.content)
     }
 
     /// Infer topic from memory content
@@ -255,7 +245,16 @@ impl ConsolidationEngine {
         Some(MemoryItem {
             id: uuid::Uuid::new_v4(),
             content: summary_content.clone(),
-            source: format!("consolidation:{}", cluster.id),
+            // The summary says what it was made from: the memories of the
+            // cluster, and the messages those say they came from. Deleting
+            // one of those messages then removes the summary too.
+            source: {
+                let memories: Vec<uuid::Uuid> = cluster.memories.iter().map(|m| m.id).collect();
+                let mut messages: Vec<uuid::Uuid> = cluster.memories.iter().flat_map(|m| m.derived_from().0).collect();
+                messages.sort_unstable();
+                messages.dedup();
+                memst_core::types::derivation(&format!("consolidation:{}", cluster.id), &messages, &memories)
+            },
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             access_count: 0,
@@ -382,8 +381,8 @@ mod tests {
         let config = LifecycleConfig::default();
         let engine = ConsolidationEngine::new(config);
 
-        let a = create_test_memory("hello world test", MemoryType::Semantic, 0.5);
-        let b = create_test_memory("hello world example", MemoryType::Semantic, 0.5);
+        let a = create_test_memory("hello world test case", MemoryType::Semantic, 0.5);
+        let b = create_test_memory("hello world test run", MemoryType::Semantic, 0.5);
         let c = create_test_memory("completely different", MemoryType::Semantic, 0.5);
 
         let sim_ab = engine.calculate_similarity(&a, &b);

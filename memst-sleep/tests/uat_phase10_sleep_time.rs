@@ -211,8 +211,12 @@ async fn uat_10_5_memory_summarization() {
 fn uat_10_6_evolution_support() {
     let mut engine = EvolutionEngine::new();
 
-    let existing = create_memory("User likes Rust programming", MemoryType::Semantic, 0.8);
+    // A paraphrase shares almost no words; support between paraphrases is
+    // recognised through embeddings.
+    let mut existing = create_memory("User likes Rust programming", MemoryType::Semantic, 0.8);
     let mut new = create_memory("User really enjoys working with Rust", MemoryType::Semantic, 0.7);
+    existing.embedding = Some(vec![0.9, 0.1, 0.0]);
+    new.embedding = Some(vec![0.85, 0.2, 0.0]);
 
     let original_confidence = new.confidence;
     let original_existing = existing.confidence;
@@ -327,14 +331,8 @@ fn uat_10_10_job_statistics() {
     let mut scheduler = JobScheduler::new(2);
 
     // Create jobs in different states
-    let queued = ConsolidationJob::new(
-        MemoryScope::Session("q".to_string()),
-        "main",
-        "sleep/q",
-        ConsolidationTrigger::ExplicitAPI,
-    );
-    let _qid = scheduler.schedule(queued);
-
+    // The scheduler is first-in-first-out, so the job that should be
+    // running is scheduled (and started) before the one that stays queued.
     let running = ConsolidationJob::new(
         MemoryScope::Session("r".to_string()),
         "main",
@@ -343,6 +341,14 @@ fn uat_10_10_job_statistics() {
     );
     let rid = scheduler.schedule(running.clone());
     scheduler.next_job().unwrap().mark_started();
+
+    let queued = ConsolidationJob::new(
+        MemoryScope::Session("q".to_string()),
+        "main",
+        "sleep/q",
+        ConsolidationTrigger::ExplicitAPI,
+    );
+    let _qid = scheduler.schedule(queued);
 
     let mut completed = ConsolidationJob::new(
         MemoryScope::Session("c".to_string()),

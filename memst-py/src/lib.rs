@@ -23,6 +23,8 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use uuid::Uuid;
 
+mod graph;
+
 /// Helper to convert MemSt error to PyErr with appropriate exception type
 fn memst_err_to_pyerr(e: MemStError) -> PyErr {
     match &e {
@@ -75,13 +77,15 @@ fn lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QueryRouterWrapper>()?;
     m.add_class::<SearchStrategyWrapper>()?;
     // Phase 16: KG Extraction v2
+    m.add_class::<graph::Graph>()?;
+    m.add_class::<graph::Embedder>()?;
     m.add_class::<KgStorageWrapper>()?;
     m.add_class::<Entity>()?;
     m.add_class::<ExtractionJob>()?;
     m.add_class::<ExtractionService>()?;
     m.add_class::<Ontology>()?;
     m.add_class::<OntologyManager>()?;
-    m.add("__version__", "0.1.0")?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
     // Initialize Phase 8/12/16 aliases and __all__
     _init_phase8_aliases(m.py(), m)?;
@@ -999,6 +1003,8 @@ fn _init_module_all(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
             "ExtractionService",
             "Ontology",
             "OntologyManager",
+            "Graph",
+            "Embedder",
             "__version__",
         ],
     );

@@ -21,9 +21,77 @@ pub struct ExtractionService {
     ontology_manager: Arc<OntologyManager>,
     prompt_engine: Arc<PromptEngine>,
     linker: Arc<EntityLinker>,
+    /// The model that does the extraction. Without one, extraction falls
+    /// back to a keyword demo.
+    llm: Option<Arc<dyn memst_core::llm::LlmProvider>>,
 }
 
 impl ExtractionService {
+    /// Use `llm` for extraction. Without this, [`extract_entities`](Self::extract_entities)
+    /// only recognises a short built-in list of names.
+    pub fn with_llm(mut self, llm: Arc<dyn memst_core::llm::LlmProvider>) -> Self {
+        self.llm = Some(llm);
+        self
+    }
+
+    /// Whether a model is configured.
+    pub fn has_llm(&self) -> bool {
+        self.llm.is_some()
+    }
+
+    fn ontology(&self, ontology_id: &str) -> Result<crate::ontology::Ontology> {
+        if let Some(ontology) = self.ontology_manager.get(ontology_id) {
+            return Ok(ontology.clone());
+        }
+        self.storage
+            .get_ontology(ontology_id)?
+            .ok_or_else(|| ExtractError::ontology(format!("Ontology not found: {}", ontology_id)))
+    }
+
+    /// Extract entities and relationships from `text` under an ontology,
+    /// with the configured model, as MemSt's common extraction result. Write
+    /// it into the knowledge graph with `memst_sleep::kg_ingest`.
+    ///
+    /// Fails if no model is configured, the ontology is unknown, the call
+    /// fails, or the answer is not the JSON the prompt asks for.
+    pub async fn extract_graph(
+        &self,
+        text: &str,
+        ontology_id: &str,
+    ) -> Result<memst_core::types::KgExtractionResult> {
+        use memst_core::llm::{LlmRequest, Message};
+
+        let llm = self
+            .llm
+            .as_ref()
+            .ok_or_else(|| ExtractError::extraction("no LLM is configured for extraction"))?;
+        let ontology = self.ontology(ontology_id)?;
+        if !self.prompt_engine.has_ontology(ontology_id) {
+            self.prompt_engine.register_ontology(&ontology)?;
+        }
+        let prompt = self.prompt_engine.build_extraction_prompt(
+            ontology_id,
+            text,
+            ExtractionStage::EntityDetection,
+        )?;
+        let request = LlmRequest::new(llm.model().to_string())
+            .with_message(Message::user(prompt))
+            .with_temperature(0.1)
+            .with_max_tokens(4000);
+        let response = llm
+            .chat(request)
+            .await
+            .map_err(|e| ExtractError::extraction(format!("LLM call failed: {e}")))?;
+        let answer = response
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|choice| choice.message)
+            .map(|message| message.content)
+            .unwrap_or_default();
+        crate::llm_extract::parse_response(&answer, ontology_id)
+    }
+
     /// Create a new extraction service
     pub async fn new(storage: KgStorage) -> Result<Self> {
         let storage = Arc::new(storage);
@@ -36,6 +104,7 @@ impl ExtractionService {
             ontology_manager,
             prompt_engine,
             linker,
+            llm: None,
         })
     }
     
@@ -102,9 +171,29 @@ impl ExtractionService {
         // Store the document first (required for foreign key constraints)
         self.storage.store_document(doc_id, text, None)?;
         
-        // TODO: Call actual LLM here
-        // For now, simulate extraction with mock entities based on text analysis
-        let entities = self.simulate_entity_extraction(doc_id, text, ontology_id).await?;
+        // With a model configured, extract for real. Without one, fall back
+        // to the built-in keyword demo (ten well-known names).
+        let (entities, llm_calls) = if self.has_llm() {
+            let extraction = self.extract_graph(text, ontology_id).await?;
+            let entities = extraction
+                .entities
+                .into_iter()
+                .map(|e| {
+                    let mut entity = Entity::new(
+                        doc_id.to_string(),
+                        ontology_id.to_string(),
+                        e.entity_type,
+                        e.name,
+                        f64::from(e.confidence),
+                    );
+                    entity.properties = e.attributes;
+                    entity
+                })
+                .collect();
+            (entities, 1)
+        } else {
+            (self.simulate_entity_extraction(doc_id, text, ontology_id).await?, 0)
+        };
         let entity_count = entities.len();
         
         // Store extracted entities
@@ -126,7 +215,7 @@ impl ExtractionService {
             entity_count,
             relationship_count: 0,
             argument_count: 0,
-            llm_calls: 1,
+            llm_calls,
             tokens_used,
         };
         

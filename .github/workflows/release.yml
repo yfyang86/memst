@@ -1,0 +1,60 @@
+name: Release
+
+# Builds the `memst` program for Linux and macOS. On a tag `v*` the archives
+# are attached to a GitHub release; run by hand, they are kept as artifacts
+# of the run only.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  HELIX_TELEMETRY_LEVEL: "off"
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked -p memst-cli
+      - name: Check that it runs
+        run: ./target/release/memst --version
+      - name: Package
+        run: |
+          name="memst-${GITHUB_REF_NAME//\//-}-${{ matrix.target }}"
+          mkdir "$name"
+          cp target/release/memst README.md LICENSE "$name/"
+          cp -r integrations/pi "$name/pi-extension"
+          rm -rf "$name/pi-extension/node_modules"
+          tar czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: memst-${{ matrix.target }}
+          path: |
+            memst-*.tar.gz
+            memst-*.tar.gz.sha256
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            memst-*.tar.gz
+            memst-*.tar.gz.sha256

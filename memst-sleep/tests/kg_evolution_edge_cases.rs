@@ -229,9 +229,9 @@ fn test_merge_already_deprecated_entity() {
     let engine = KgEvolutionEngine::new();
     
     // First deprecate entity
-    if let Some(entity) = graph.get_entity_mut(entity_ids[1]) {
+    graph.update_entity(entity_ids[1], |entity| {
         entity.deprecate("Test deprecation".to_string());
-    }
+    }).unwrap();
     
     // Try to merge deprecated entity
     let action = KgEvolutionAction::MergeEntities {
@@ -255,10 +255,10 @@ fn test_evolution_with_no_entities() {
     let engine = KgEvolutionEngine::new();
     
     // Should not panic with empty graph
-    let candidates = engine.detect_merge_candidates(&graph);
+    let candidates = engine.detect_merge_candidates(&graph).unwrap();
     assert!(candidates.is_empty(), "Should return empty candidates for empty graph");
     
-    let actions = engine.evolve(&graph);
+    let actions = engine.evolve(&graph).unwrap();
     assert!(actions.is_empty(), "Should return empty actions for empty graph");
 }
 
@@ -270,20 +270,20 @@ fn test_merge_preserves_attributes() {
     let session_id = uuid::Uuid::new_v4();
     
     // Add attributes to keep entity
-    if let Some(entity) = graph.get_entity_mut(entity_ids[0]) {
+    graph.update_entity(entity_ids[0], |entity| {
         entity.attributes = serde_json::json!({
             "website": "rust-lang.org",
             "creator": "Graydon Hoare"
         });
-    }
+    }).unwrap();
     
     // Add different attributes to merge entity
-    if let Some(entity) = graph.get_entity_mut(entity_ids[1]) {
+    graph.update_entity(entity_ids[1], |entity| {
         entity.attributes = serde_json::json!({
             "paradigm": "systems programming",
             "memory_model": "ownership"
         });
-    }
+    }).unwrap();
     
     let engine = KgEvolutionEngine::new();
     let action = KgEvolutionAction::MergeEntities {
@@ -296,7 +296,7 @@ fn test_merge_preserves_attributes() {
     assert!(result.is_ok());
     
     // Verify keep entity has merged attributes
-    let keep_entity = graph.get_entity(entity_ids[0]).unwrap();
+    let keep_entity = graph.get_entity(entity_ids[0]).unwrap().unwrap();
     let attrs = keep_entity.attributes.as_object().unwrap();
     assert!(attrs.contains_key("website"), "Should preserve original attributes");
     assert!(attrs.contains_key("paradigm"), "Should add new attributes from merged entity");
@@ -324,7 +324,7 @@ fn test_cascade_operations() {
     engine.apply_action(&mut graph, &merge_action).expect("Merge failed");
     
     // Verify relationship was migrated
-    let rels = graph.get_relationships(entity_ids[1]);
+    let rels = graph.get_relationships(entity_ids[1]).unwrap();
     assert!(!rels.is_empty(), "Relationship should be migrated");
     
     // Get the migrated relationship ID (it should be the same, but let's verify)

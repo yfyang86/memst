@@ -518,3 +518,91 @@ class OntologyManager:
     def get(self, id: str) -> Optional[Ontology]: ...
 
 __version__: str
+
+
+class Graph:
+    """The knowledge graph of a MemSt store, shared by all its sessions."""
+
+    @staticmethod
+    def open(
+        store_path: str,
+        session_id: Optional[str] = None,
+        owner: str = "default",
+        backend: str = "auto",
+        read_only: bool = False,
+    ) -> "Graph": ...
+    @property
+    def backend(self) -> str: ...
+    @property
+    def is_shared(self) -> bool: ...
+    @property
+    def owner(self) -> str: ...
+    def stats(self) -> Dict[str, Any]: ...
+    def add_entity(
+        self,
+        session_id: str,
+        name: str,
+        entity_type: str,
+        attributes: Optional[str] = None,
+        resolve: bool = True,
+    ) -> Dict[str, Any]: ...
+    def add_relationship(
+        self,
+        session_id: str,
+        subject_id: str,
+        predicate: str,
+        object_id: str,
+        confidence: float = 1.0,
+    ) -> Dict[str, Any]: ...
+    def entities(
+        self,
+        session_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 0,
+        include_deprecated: bool = False,
+    ) -> List[Dict[str, Any]]: ...
+    def relationships(
+        self, session_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]: ...
+    def search(
+        self,
+        text: Optional[str] = None,
+        limit: int = 10,
+        session_id: Optional[str] = None,
+        embedding: Optional[List[float]] = None,
+        include_deprecated: bool = False,
+    ) -> Dict[str, Any]: ...
+    def search_relationships(self, text: str, limit: int = 10) -> Dict[str, Any]: ...
+    def neighbors(self, entity_id: str, hops: int = 2, direction: str = "both") -> List[Dict[str, Any]]: ...
+    def ingest_extraction(
+        self,
+        session_id: str,
+        extraction: str,
+        message_id: Optional[str] = None,
+        embedder: str = "none",
+    ) -> Dict[str, int]: ...
+    def ingest_messages(
+        self,
+        session_id: str,
+        messages: List[Tuple[str, str]],
+        llm_api_url: str,
+        llm_model: str,
+        llm_api_key: Optional[str] = None,
+        embedder: str = "auto",
+        batch_chars: int = 6000,
+        max_tokens: int = 16000,
+        llm_extra: Optional[str] = None,
+        timestamps: Optional[List[Optional[str]]] = None,
+    ) -> Dict[str, Any]: ...
+    def embed_pending(self, embedder: str = "auto") -> int: ...
+    @staticmethod
+    def embed_text(text: str, embedder: str = "auto") -> List[float]: ...
+
+
+class Embedder:
+    """A text embedding model, kept loaded. kind: "auto", "local" or "http"."""
+
+    def __init__(self, kind: str = "auto") -> None: ...
+    @property
+    def id(self) -> str: ...
+    def embed(self, texts: List[str]) -> List[List[float]]: ...

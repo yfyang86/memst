@@ -1,16 +1,12 @@
-//! Storage abstraction layer for KG extraction
+//! Storage for KG extraction: ontologies, extraction jobs and their results.
 //!
-//! Supports multiple backends:
-//! - DuckDB: High-performance OLAP for production (feature: "duckdb")
-//! - SQLite: Lightweight for development and testing (feature: "sqlite")
+//! SQLite is the only backend. (A `duckdb` feature existed, but its backend
+//! was a stub that returned "not implemented" and the crate did not compile
+//! with it; it has been removed.)
 
-use crate::error::{ExtractError, Result};
+use crate::error::Result;
 use async_trait::async_trait;
 
-
-#[cfg(feature = "duckdb")]
-pub mod duckdb;
-#[cfg(feature = "sqlite")]
 pub mod sqlite;
 
 /// Storage backend trait
@@ -27,11 +23,9 @@ pub struct StorageConfig {
     pub connection_string: String,
 }
 
+/// Available storage backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendType {
-    #[cfg(feature = "duckdb")]
-    DuckDb,
-    #[cfg(feature = "sqlite")]
     Sqlite,
 }
 
@@ -40,34 +34,13 @@ pub struct StorageFactory;
 
 impl StorageFactory {
     /// Create storage backend from configuration
-    #[allow(unused_variables)]
     pub async fn create(config: StorageConfig) -> Result<Box<dyn StorageBackend>> {
         match config.backend {
-            #[cfg(feature = "duckdb")]
-            BackendType::DuckDb => {
-                #[cfg(feature = "duckdb")]
-                return Ok(Box::new(duckdb::DuckDbStorage::new(&config.connection_string).await?));
-                #[cfg(not(feature = "duckdb"))]
-                return Err(ExtractError::Database("DuckDB feature not enabled".to_string()));
-            }
-            #[cfg(feature = "sqlite")]
-            BackendType::Sqlite => {
-                #[cfg(feature = "sqlite")]
-                return Ok(Box::new(sqlite::SqliteStorage::new(&config.connection_string).await?));
-                #[cfg(not(feature = "sqlite"))]
-                return Err(ExtractError::Database("SQLite feature not enabled".to_string()));
-            }
-            #[allow(unreachable_patterns)]
-            _ => Err(ExtractError::Database(
-                "No storage backend available. Enable 'duckdb' or 'sqlite' feature.".to_string()
+            BackendType::Sqlite => Ok(Box::new(
+                sqlite::SqliteStorage::new(&config.connection_string).await?,
             )),
         }
     }
 }
 
-/// Re-export storage implementations based on enabled features
-#[cfg(feature = "duckdb")]
-pub use duckdb::DuckDbStorage as KgStorage;
-
-#[cfg(all(feature = "sqlite", not(feature = "duckdb")))]
 pub use sqlite::SqliteStorage as KgStorage;

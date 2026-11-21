@@ -1,0 +1,87 @@
+{
+  "settings": {
+    "pi_version": "0.73.1",
+    "model": "deepseek-proxy/deepseek-flash",
+    "dream_model": "deepseek-flash",
+    "runs": 80
+  },
+  "table": {
+    "recall": {
+      "memory@500": [
+        10,
+        10
+      ],
+      "memory@5000": [
+        9,
+        10
+      ]
+    },
+    "update": {
+      "memory@500": [
+        10,
+        10
+      ],
+      "memory@5000": [
+        10,
+        10
+      ]
+    },
+    "stale": {
+      "memory@500": [
+        8,
+        10
+      ],
+      "memory@5000": [
+        6,
+        10
+      ]
+    },
+    "abstain": {
+      "memory@500": [
+        10,
+        10
+      ],
+      "memory@5000": [
+        10,
+        10
+      ]
+    }
+  },
+  "criteria": {
+    "S1": {
+      "passed": true,
+      "detail": "recall: 10/10 at 500 notes; 9/10 at 5000 notes"
+    },
+    "S2": {
+      "passed": true,
+      "detail": "update: 10/10 at 500 notes; 10/10 at 5000 notes"
+    },
+    "S3": {
+      "passed": false,
+      "detail": "stale: 8/10 at 500 notes; 6/10 at 5000 notes"
+    },
+    "S4": {
+      "passed": true,
+      "detail": "abstain: 10/10 at 500 notes; 10/10 at 5000 notes"
+    },
+    "S5": {
+      "passed": true,
+      "detail": "prompt tokens of the final session: 20,672 at 500 notes; 25,031 at 5000 notes"
+    }
+  },
+  "cost_of_final_session": {
+    "memory@500": {
+      "prompt_tokens_mean": 20672,
+      "model_calls_mean": 2.95,
+      "tool_calls_mean": 2.65,
+      "seconds_mean": 5.8
+    },
+    "memory@5000": {
+      "prompt_tokens_mean": 25031,
+      "model_calls_mean": 2.88,
+      "tool_calls_mean": 2.7,
+      "seconds_mean": 7.0
+    }
+  },
+  "errors": 0
+}

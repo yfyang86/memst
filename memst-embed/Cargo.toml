@@ -1,0 +1,15 @@
+[package]
+name = "memst-embed"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Local CPU text embeddings for MemSt (BGE-M3 via ONNX Runtime)"
+
+[dependencies]
+memst-core = { path = "../memst-core" }
+# ONNX Runtime wrapper with ready-made model definitions and tokenizers.
+fastembed = "7"
+dirs = "5"
+
+[dev-dependencies]

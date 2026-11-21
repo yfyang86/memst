@@ -1,0 +1,338 @@
+# Knowledge-graph backend: HelixDB
+
+The MemSt knowledge graph (`memst_core::graph::KnowledgeGraph`) stores its data
+through a `GraphBackend`. There are two:
+
+| Backend | Crate | Storage | Use |
+|---------|-------|---------|-----|
+| HelixDB | `memst-graph-helix` | `<store>/graph.helix/`, one embedded database shared by every session | Default |
+| JSON | `memst-core` | `<session>/graph.json`, whole graph in memory, file rewritten on every change | Tests, tiny graphs, MemSt 1.0 stores |
+
+[HelixDB](https://github.com/yfyang86/helix-db) is a graph database with vector
+and BM25 search in one transactional engine. MemSt uses it **embedded**: the
+engine is compiled into the process and writes to a directory. There is no
+server to run.
+
+## One graph per store
+
+A store has one graph, shared by all its sessions, so something mentioned in
+two conversations is one entity with edges from both.
+
+- **Sessions.** Every entity records the session that created it and any other
+  session that later mentions it. `resolve_or_add_entity` is how a mention is
+  written: an entity with the same name (ignoring case) and type is reused and
+  linked to the new session; otherwise a new one is created. Queries and
+  searches can be narrowed to one session.
+- **Owners.** The database holds every owner's graph. Each entity is stamped
+  with its owner, every read and write is restricted to the handle's owner, and
+  the search indexes are partitioned by owner. A handle cannot read, change,
+  link to, or take over the id of another owner's entity. The default owner is
+  `default`.
+- **One writer.** The process that opens the graph for writing holds a lock
+  file (`<store>/graph.helix.lock`). A second writer fails immediately with a
+  message naming the holder; it does not disturb the first. Read-only handles
+  open alongside the writer and see what it has made durable.
+
+## Using it
+
+```bash
+memst --store ./data graph add-entity <session> Alice person
+memst --store ./data graph add-rel <session> <subject-id> uses <object-id>
+memst --store ./data graph neighbors <session> <entity-id> --hops 2 --direction out
+memst --store ./data graph stats <session>          # prints "Backend: helix"
+```
+
+Search:
+
+```bash
+memst --store ./data graph search <session> "systems programming"      # BM25
+memst --store ./data graph embed <session>                             # store entity embeddings
+memst --store ./data graph search <session> "who writes code" --semantic   # BM25 + vectors
+```
+
+Options that apply to every `graph` command:
+
+- `--owner NAME` selects whose graph to use (default `default`).
+- `--all-sessions` makes `query` and `search` cover every session instead of
+  only the one given.
+- `--backend auto|json|helix` (default `auto`).
+
+`add-entity` reuses an existing entity with the same name and type and links it
+to the session; `--new` forces a separate entity.
+
+If another process is writing the graph, commands that only read (`query`,
+`search`, `stats`, `neighbors`) carry on read-only and say so; commands that
+write stop with the lock message.
+
+### Stores from older versions
+
+A session that still has its own graph (`graph.json` from MemSt 1.0, or a
+per-session `graph.helix/`) keeps using it, with a note, until the store is
+migrated:
+
+```bash
+memst --store ./data graph migrate
+```
+
+This copies every per-session graph into the shared graph for the chosen
+owner. Ids, embeddings and session links are preserved, the old graphs are
+kept and marked as migrated, and running it again copies only what is new.
+Entities are copied as they are: the same name in two sessions arrives as two
+entities, which the evolution engine can then propose to merge.
+
+From Rust:
+
+```rust
+use memst_graph_helix::{open_store, StoreGraphOptions};
+
+let options = StoreGraphOptions { owner: "alice".into(), ..Default::default() };
+let (mut graph, _location) = open_store(store_dir, session_dir, &options)?;
+let (entity, created) = graph.resolve_or_add_entity(entity)?;
+let nearby = graph.neighborhood(entity_id, 2, memst_core::graph::Direction::Both)?;
+```
+
+Everything else (`memst-sleep` decay and evolution, the CLI) takes a
+`KnowledgeGraph` and does not know which backend is behind it.
+
+## Entity search
+
+`KnowledgeGraph::search_entities` takes keywords, a query embedding, or both.
+
+```rust
+use memst_core::graph::{EntitySearch, SearchMethod};
+
+let result = graph.search_entities(
+    &EntitySearch::text("systems programming").with_embedding(query_vector).with_limit(5),
+)?;
+for hit in &result.hits { println!("{:.3} {}", hit.score, hit.entity.name); }
+if result.method == SearchMethod::Fallback {
+    eprintln!("fallback: {}", result.fallback_reason.unwrap());
+}
+```
+
+**HelixDB first.** One request runs both searches inside the database:
+
+- **BM25** over the `search_text` property, which holds the entity's name,
+  type, and the keys and values of its attributes. Query words are ORed and
+  ranked; matching is on whole lower-cased words, with no stemming, prefixes
+  or fuzziness.
+- **Vector search** (cosine) over the `embedding` property, stored with
+  `set_entity_embedding`. The vector index is created on the first embedding,
+  with that embedding's dimension.
+
+With both, the two rankings are fused by reciprocal rank, the same fusion
+MemSt's message search uses.
+
+**Then MemSt's own matching.** The fallback runs when HelixDB's search
+
+- fails: an index that is not built yet, no vector index because nothing has
+  been embedded, a query vector of the wrong dimension, or any other error;
+- returns nothing: typically a partial word such as `pyth`, which BM25 does not
+  match;
+- does not exist: the JSON backend.
+
+The fallback is what MemSt did before: case-insensitive substring matching on
+entity names, ranked by importance, applied per query word (a name containing
+the whole query ranks first). If a query embedding was given it adds a
+brute-force cosine comparison against every stored embedding and fuses the two
+by reciprocal rank. It reads the whole graph, so it is slower on large graphs,
+and it only looks at names, not attributes.
+
+`result.method` and `result.fallback_reason` say which path answered and why.
+
+`search_with_context(query)` returns the entity hits together with the
+current relationships around them, fetched in one further round trip, and
+`to_text()` renders that as one fact per line for a prompt (CLI:
+`graph search ... --expand`).
+
+Relationships are searchable too. `search_relationships("alice uses rust", 10)`
+(CLI: `graph search <session> "..." --relationships`) matches the words of
+"subject predicate object": BM25 over an edge index in HelixDB, word matching
+as the fallback. An edge is indexed under its endpoints' names at the time it
+is written; renaming an entity later does not re-index its edges.
+Deprecated entities are left out unless `include_deprecated` is set.
+
+Two behaviours worth knowing:
+
+- Vector search returns the nearest entities however far away they are. A
+  semantic query always fills its limit once embeddings exist, so judge by
+  score, not by presence.
+- An entity is searchable by vector once it has an embedding. `graph ingest`
+  embeds what it writes. Entities added another way are embedded by
+  `memst graph embed` (or `KnowledgeGraph::embed_pending`), which only touches
+  entities that are new, have changed, or were embedded by a different model.
+
+### Where embeddings come from
+
+`--embedder auto|local|http|none` (default `auto`):
+
+- `http`: the OpenAI-compatible endpoint from `config.toml` or
+  `MEMST_EMBEDDING_API_URL`.
+- `local`: BGE-M3 running on the CPU through ONNX Runtime (`memst-embed`).
+  1024 dimensions, multilingual, no API key. The model is about 2.2 GB,
+  downloaded from Hugging Face on first use into `~/.cache/memst/models`
+  (override with `MEMST_MODEL_DIR`), and needs no network afterwards. On four
+  cores it embeds roughly 45 short texts a second.
+- `auto`: `http` when an endpoint is configured, otherwise `local`.
+
+Each stored vector records the model and a fingerprint of the entity's text,
+so vectors from different models are never mixed and a renamed or extended
+entity is re-embedded. Use the same embedder for queries as for entities.
+
+## From conversation to graph
+
+```bash
+memst --store ./data graph ingest <session>
+```
+
+reads the session's messages that have not been ingested yet, extracts
+entities, relationships and events with the configured LLM (`config.toml`, or
+`MEMST_LLM_API_URL`, `MEMST_LLM_MODEL`, `MEMST_LLM_API_KEY`), and writes them
+into the shared graph (`memst_sleep::kg_ingest`):
+
+- an entity the graph already has (same name and type) is reused and linked to
+  the session;
+- a relationship already present is reinforced (confidence raised, relevance
+  restored) rather than repeated;
+- events become entities, with a `participated_in` edge from each participant;
+- each relationship records the exact message that states it (the model is
+  shown labelled messages and cites one), when that message was sent
+  (`stated_at`), and, only if the text gives it, when the fact became true
+  (`valid_from`, with `valid_precision` saying whether a day, a month or a
+  year is known). The two are kept apart: "we went to the park two weeks
+  ago", sent on 9 September, is stated on 9 September and true from late
+  August. A fact whose text gives no time has no `valid_from`;
+- everything records its session, and each entity the extraction run that
+  last wrote it;
+- a relationship whose endpoint cannot be identified is skipped and counted;
+- new and changed entities are embedded.
+
+From Python the same graph is `memst.Graph` (`open`, `add_entity`,
+`add_relationship`, `entities`, `relationships`, `search`, `neighbors`,
+`ingest_extraction`, `ingest_messages`, `embed_pending`). The server's
+knowledge-graph endpoints use it.
+
+Embeddings are kept when an entity is updated, are copied by `graph migrate`,
+and are also stored by the JSON backend (inside `graph.json`).
+
+## Facts that change
+
+A relationship records when it was written (`created_at`), when it was said
+(`stated_at`) and, separately, when the fact held: `valid_from`, `valid_to`,
+and `superseded_by`. When a fact replaces another, the old one ends at the
+new one's `valid_from`, or, if that is not known, at when the new one was
+said.
+
+- `assert_single_valued(fact)` is for predicates with one value at a time
+  ("lives_in", "works_at"). If the subject already has that predicate with a
+  different object, the old relationship is given an end time and a pointer to
+  the new one. If it has the same object, it is reinforced.
+- `supersede_relationship(old_id, new)` does the same for one named
+  relationship.
+- Nothing is deleted. A superseded relationship no longer appears in queries,
+  traversals or search, so a stale fact cannot compete with the current one.
+  It is still returned by `relationship_history(subject, predicate)`, by
+  queries built `with_superseded()`, and by `relationships_as_of(time)`, which
+  gives the graph as it was known at that moment.
+
+`graph ingest` applies this to a default list of single-valued predicates
+(`memst_sleep::kg_ingest::SINGLE_VALUED_PREDICATES`; change it with
+`IngestPolicy`). It also stores predicates in one form, lower case with
+underscores, so "lives in", "Lives_In" and "lives-in" are the same predicate.
+Deciding which predicates are single-valued is a judgement the list encodes;
+a predicate missing from it accumulates values instead of replacing them.
+
+## Merging entities, and undoing it
+
+`merge_entities(keep, merged)` treats two entities as the same thing: `keep`
+gains the other's missing attributes, access count and sessions, every
+relationship of `merged` is re-pointed at `keep`, and `merged` is deprecated.
+The record of what changed is stored on the deprecated entity, and
+`undo_merge(merged)` reverses it: relationships return with their original
+ids and state, and `keep` loses what the merge gave it. Changes made to `keep`
+after the merge are left in place. The sleep-time evolution engine merges
+through this, so its merges can be undone too.
+
+## Data model
+
+| MemSt | HelixDB |
+|-------|---------|
+| `Entity` | Node labelled `Entity`; each field is a typed property |
+| `Entity::id` | Property `uid`, with a unique index |
+| `Entity::entity_type` | Property `entity_type`, with an equality index |
+| owner | Property `owner`, with an equality index; also the partition key of the search indexes |
+| sessions mentioning the entity | Property `sessions`, a list of ids, creating session first |
+| name and type, for recognising the same entity again | Property `resolve_key`, with an equality index |
+| `Entity::attributes` | Property `attributes`, a JSON string (HelixDB stores scalars and flat lists, not nested maps) |
+| name, type and attribute text | Property `search_text`, with a BM25 text index |
+| entity embedding | Property `embedding`, with a cosine vector index |
+| `Relationship` | Edge of type `REL`, subject to object |
+| `Relationship::predicate` | Edge property `predicate` |
+
+Predicates are free text ("works at", "就职于"), so they are stored as data
+rather than used as edge types. Every query is a fixed, parameterised Cypher
+statement; no user value is ever spliced into query text.
+
+Timestamps are fixed-width RFC 3339 strings, which sort chronologically.
+`f32` scores are written with their shortest decimal form so they round-trip
+exactly and compare correctly against query parameters.
+
+## What runs inside the database
+
+- Point lookups and batched lookups by `uid` (index probes).
+- Entity filters: type, case-insensitive name substring, minimum confidence.
+- Relationship filters: subject, object, predicate, minimum confidence.
+- One-hop expansion of a whole frontier in one request. `neighborhood` is
+  breadth-first over this, one request per hop.
+- Counts, and deleting an entity together with its edges.
+- BM25 and vector search over entities (see above).
+
+Importance ranking, relationship migration on merge, and decay arithmetic stay
+in `KnowledgeGraph`, so both backends behave identically. That is enforced:
+`memst_core::graph::conformance` is one test suite that both backends must
+pass.
+
+## Things to know
+
+- **One writer per store.** See above. HelixDB on its own would let a second
+  writer in and fence the first, whose writes would then fail part-way; the
+  lock file reverses that.
+- **Telemetry is off.** HelixDB's embedded mode sends anonymous usage telemetry
+  by default. The backend sets `HELIX_TELEMETRY_LEVEL=off` before opening unless
+  `HelixGraphOptions { telemetry: true }` is passed or the variable is already
+  set.
+- **Indexes build in the background.** Creating an index returns at once and
+  searching it fails until the build activates (about half a second on a small
+  graph). The backend waits up to ten seconds for an index it has just
+  requested, so a one-shot CLI command does not exit before the index exists.
+  Past that limit it carries on and searches fall back until the build is done.
+- **Session filters are not indexed.** Narrowing to a session filters the
+  owner's entities by their session list; it is not an index lookup.
+- **Read-only handles lag.** A reader sees a write once the writer has made it
+  durable, not at the instant it is written.
+- **Sync over async.** `GraphBackend` is synchronous and HelixDB is async, so
+  the backend owns a two-thread Tokio runtime and blocks per call. Inside
+  another async runtime, call it from `spawn_blocking`.
+- **Build cost.** HelixDB is built from source: about four minutes on a clean
+  debug build, and large debug artifacts. `cargo build -p memst-cli
+  --no-default-features` leaves it out and gives a JSON-only binary.
+- **Pinned revision.** `memst-graph-helix/Cargo.toml` pins the fork to an exact
+  commit. The crates.io `helix-db` release is the HTTP client only and has no
+  embedded engine. Adding HelixDB raised two shared dependencies in
+  `Cargo.lock` (`chrono` 0.4.31 to 0.4.45, `arrayvec` 0.7.6 to 0.7.8).
+- **Query shape matters.** Batched updates use
+  `UNWIND $rows AS row WITH row.uid AS k ... MATCH (e:Entity {uid: k})`.
+  Without the `WITH`, HelixDB's planner scans the label once per row instead of
+  probing the index: 1,000 rows took over 30 seconds (the query deadline)
+  against 0.8 seconds with it, in a debug build.
+- **HelixDB's Cypher is a subset.** No `MERGE`, no variable-length paths, no
+  `CREATE INDEX`. Upserts are "look up, then update or create"; indexes are
+  created through the native API; multi-hop is done hop by hop.
+
+## Not done yet
+
+- **Ontology-guided extraction** (`memst-extract-v2`) can now call an LLM and
+  returns a result `kg_ingest` can write here, but only as a library call;
+  `graph ingest` uses the general extractor.
+- **Validity of entities.** Relationships carry validity in time; entities
+  only have deprecation.

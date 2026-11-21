@@ -1,0 +1,344 @@
+//! Extraction results are written into the graph, deduplicated, linked to
+//! their source, and embedded.
+
+mod common;
+
+use common::MockLlmProvider;
+use memst_core::graph::conformance::KeywordEmbedder;
+use memst_core::graph::{EntitySearch, KnowledgeGraph};
+use memst_core::types::{DatePrecision, EntityQuery, RelationshipQuery};
+use memst_sleep::kg_extract::KgExtractionService;
+use memst_sleep::kg_ingest::{GraphIngestor, IngestReport, SourceMessage, PARTICIPATED_IN, RUN_ATTRIBUTE};
+use std::sync::Arc;
+use uuid::Uuid;
+
+const FIRST: &str = r#"{
+  "entities": [
+    {"name": "Alice", "type": "person", "attributes": {"role": "engineer"}, "confidence": 0.9, "temporal_relevance": "long_term"},
+    {"name": "Rust", "type": "language", "attributes": {}, "confidence": 0.95, "temporal_relevance": "permanent"}
+  ],
+  "relationships": [
+    {"subject": "Alice", "predicate": "uses", "object": "Rust", "confidence": 0.7, "temporal_type": "long_term"},
+    {"subject": "Alice", "predicate": "knows", "object": "Nobody Mentioned", "confidence": 0.9, "temporal_type": "short_term"}
+  ],
+  "events": [
+    {"name": "RustConf 2026", "type": "conference", "participants": ["Alice"], "timestamp": "2026-09-01T09:00:00Z", "attributes": {"city": "Paris"}, "confidence": 0.8}
+  ]
+}"#;
+
+// A later conversation: Rust again (different case), Alice again, a new entity.
+const SECOND: &str = r#"```json
+{
+  "entities": [
+    {"name": "rust", "entity_type": "language", "attributes": {"paradigm": "systems"}, "confidence": 0.9, "temporal_relevance": "permanent"},
+    {"name": "Tokio", "entity_type": "library", "attributes": {}, "confidence": 0.9, "temporal_relevance": "long_term"}
+  ],
+  "relationships": [
+    {"subject": "Alice", "predicate": "uses", "object": "Rust", "confidence": 0.95, "temporal_type": "long_term"},
+    {"subject": "Tokio", "predicate": "written_in", "object": "rust", "confidence": 0.9, "temporal_type": "permanent"}
+  ],
+  "events": []
+}
+```"#;
+
+fn graph() -> (KnowledgeGraph, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    (KnowledgeGraph::new(dir.path()).unwrap(), dir)
+}
+
+fn ingestor(responses: &[&str]) -> GraphIngestor {
+    let llm = MockLlmProvider::new(responses.iter().map(|r| r.to_string()).collect());
+    GraphIngestor::new(KgExtractionService::new(Arc::new(llm)))
+}
+
+#[tokio::test]
+async fn extraction_lands_in_the_graph_searchable() {
+    let (mut graph, _dir) = graph();
+    let embedder = KeywordEmbedder::new("test-model");
+    let (first_session, second_session) = (Uuid::new_v4(), Uuid::new_v4());
+    let (first_message, second_message) = (Uuid::new_v4(), Uuid::new_v4());
+
+    let report = ingestor(&[FIRST])
+        .ingest_messages(
+            &mut graph,
+            first_session,
+            &[(first_message, "Alice, an engineer, uses Rust and went to RustConf.".to_string())],
+            4000,
+            Some(&embedder),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        report,
+        IngestReport {
+            entities_created: 3,
+            entities_reused: 0,
+            relationships_created: 2,
+            relationships_reinforced: 0,
+            relationships_superseded: 0,
+            relationships_skipped: 1,
+            entities_embedded: 3,
+            llm_calls: 1,
+            llm_failures: 0,
+            llm_input_chars: 56,
+        }
+    );
+
+    // Provenance: session, message, run; temporal relevance sets the decay.
+    let alice = graph.find_entities(EntityQuery::new().with_type("person")).unwrap().remove(0);
+    assert_eq!(alice.session_id, first_session);
+    assert_eq!(alice.source_message_id, Some(first_message));
+    assert!(alice.attributes[RUN_ATTRIBUTE].as_str().unwrap().starts_with("run-"));
+    assert_eq!(alice.attributes["role"], "engineer");
+    assert!(!alice.search_text().contains("run-"), "the run id is not searchable text");
+    let rust = graph.find_entities(EntityQuery::new().with_type("language")).unwrap().remove(0);
+    assert!(rust.is_stable, "a permanent fact does not decay");
+    assert_eq!(alice.half_life_days, 90.0);
+
+    // The event is an entity, linked from its participant.
+    let event = graph.find_entities(EntityQuery::new().with_type("conference")).unwrap().remove(0);
+    assert_eq!(event.attributes["city"], "Paris");
+    assert!(event.attributes["timestamp"].as_str().unwrap().starts_with("2026-09-01"));
+    let attended = graph
+        .find_relationships(RelationshipQuery::new().with_predicate(PARTICIPATED_IN))
+        .unwrap();
+    assert_eq!(attended.len(), 1);
+    assert_eq!((attended[0].1.id, attended[0].2.id), (alice.id, event.id));
+
+    // No manual step: the entities are already searchable, by words and by meaning.
+    let by_text = graph.search_entities(&EntitySearch::text("alice")).unwrap();
+    assert_eq!(by_text.hits[0].entity.id, alice.id);
+    let by_meaning = EntitySearch { embedding: Some(vec![1.0, 0.05, 0.05]), limit: 1, ..Default::default() };
+    assert_eq!(graph.search_entities(&by_meaning).unwrap().hits[0].entity.id, rust.id);
+
+    // A second conversation, in another session.
+    let report = ingestor(&[SECOND])
+        .ingest_messages(
+            &mut graph,
+            second_session,
+            &[(second_message, "Tokio is written in Rust; Alice still uses Rust.".to_string())],
+            4000,
+            Some(&embedder),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        report,
+        IngestReport {
+            entities_created: 1,
+            entities_reused: 1,
+            relationships_created: 1,
+            relationships_reinforced: 1,
+            relationships_superseded: 0,
+            relationships_skipped: 0,
+            // Tokio is new; Rust gained an attribute, so its text changed.
+            entities_embedded: 2,
+            llm_calls: 1,
+            llm_failures: 0,
+            llm_input_chars: 53,
+        }
+    );
+
+    // Rust is still one entity, now known to both sessions.
+    let languages = graph.find_entities(EntityQuery::new().with_type("language")).unwrap();
+    assert_eq!(languages.len(), 1);
+    assert_eq!(languages[0].id, rust.id);
+    assert_eq!(languages[0].session_id, first_session);
+    assert_eq!(languages[0].seen_in, vec![second_session]);
+    assert_eq!(languages[0].attributes["paradigm"], "systems");
+
+    // "Alice uses Rust" was reinforced, not duplicated; Alice was found
+    // although the second extraction did not list her as an entity.
+    let uses = graph.find_relationships(RelationshipQuery::new().with_predicate("uses")).unwrap();
+    assert_eq!(uses.len(), 1);
+    assert_eq!(uses[0].0.confidence, 0.95);
+    assert_eq!(uses[0].0.session_id, first_session, "the original provenance is kept");
+    let written_in = graph.find_relationships(RelationshipQuery::new().with_predicate("written_in")).unwrap();
+    assert_eq!(written_in[0].0.source_message_id, Some(second_message));
+    assert_eq!(written_in[0].2.id, rust.id);
+
+    // Everything is embedded and current.
+    assert!(graph.entities_needing_embedding("test-model").unwrap().is_empty());
+    assert_eq!(graph.all_entities().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn long_conversations_are_extracted_in_batches() {
+    let (mut graph, _dir) = graph();
+    let messages: Vec<(Uuid, String)> = (0..3).map(|i| (Uuid::new_v4(), format!("message {i} {}", "x".repeat(40)))).collect();
+    let llm = Arc::new(MockLlmProvider::new(vec![FIRST.to_string(); 3]));
+    let ingestor = GraphIngestor::new(KgExtractionService::new(llm.clone()));
+
+    // 60 characters per batch: one message each.
+    let report = ingestor.ingest_messages(&mut graph, Uuid::new_v4(), &messages, 60, None).await.unwrap();
+    assert_eq!(llm.call_count(), 3);
+    // The same extraction three times: created once, then reused and reinforced.
+    assert_eq!((report.entities_created, report.entities_reused), (3, 6));
+    assert_eq!((report.relationships_created, report.relationships_reinforced), (2, 4));
+    assert_eq!(report.entities_embedded, 0, "no embedder was given");
+}
+
+#[tokio::test]
+async fn a_bad_llm_answer_is_an_error_and_writes_nothing() {
+    let (mut graph, _dir) = graph();
+    let result = ingestor(&["I could not find anything to extract."])
+        .ingest_messages(&mut graph, Uuid::new_v4(), &[(Uuid::new_v4(), "hello".to_string())], 4000, None)
+        .await;
+    assert!(result.is_err());
+    assert!(graph.all_entities().unwrap().is_empty());
+}
+
+const IN_PARIS: &str = r#"{"entities": [
+    {"name": "Alice", "type": "person", "confidence": 0.9},
+    {"name": "Paris", "type": "city", "confidence": 0.9},
+    {"name": "Rust", "type": "language", "confidence": 0.9}],
+  "relationships": [
+    {"subject": "Alice", "predicate": "lives in", "object": "Paris", "confidence": 0.8},
+    {"subject": "Alice", "predicate": "uses", "object": "Rust", "confidence": 0.8}], "events": []}"#;
+
+const IN_LYON: &str = r#"{"entities": [
+    {"name": "Alice", "type": "person", "confidence": 0.9},
+    {"name": "Lyon", "type": "city", "confidence": 0.9},
+    {"name": "Python", "type": "language", "confidence": 0.9}],
+  "relationships": [
+    {"subject": "Alice", "predicate": "lives_in", "object": "Lyon", "confidence": 0.9},
+    {"subject": "Alice", "predicate": "uses", "object": "Python", "confidence": 0.8}], "events": []}"#;
+
+#[tokio::test]
+async fn a_later_conversation_updates_a_single_valued_fact() {
+    let (mut graph, _dir) = graph();
+    let session = Uuid::new_v4();
+    let message = |text: &str| vec![(Uuid::new_v4(), text.to_string())];
+
+    ingestor(&[IN_PARIS])
+        .ingest_messages(&mut graph, session, &message("I live in Paris and use Rust."), 4000, None)
+        .await
+        .unwrap();
+    let report = ingestor(&[IN_LYON])
+        .ingest_messages(&mut graph, session, &message("I moved to Lyon. I also use Python now."), 4000, None)
+        .await
+        .unwrap();
+    assert_eq!(report.relationships_superseded, 1);
+    assert_eq!(report.relationships_created, 2);
+
+    // Where she lives has one answer; what she uses has two.
+    let alice = graph.find_entities(EntityQuery::new().with_type("person")).unwrap().remove(0);
+    let objects = |graph: &KnowledgeGraph, query: RelationshipQuery| -> Vec<String> {
+        let mut names: Vec<String> = graph.find_relationships(query).unwrap().into_iter().map(|t| t.2.name).collect();
+        names.sort();
+        names
+    };
+    let lives = RelationshipQuery::new().with_subject(alice.id);
+    assert_eq!(objects(&graph, lives.clone().with_predicate("lives_in")), vec!["Lyon"]);
+    assert_eq!(objects(&graph, RelationshipQuery::new().with_predicate("uses")), vec!["Python", "Rust"]);
+
+    // The old answer is history, not gone. ("lives in" and "lives_in" are
+    // stored as the same predicate.)
+    let all = graph.find_relationships(RelationshipQuery::new().with_subject(alice.id).with_superseded()).unwrap();
+    let paris = all.iter().find(|t| t.2.name == "Paris").expect("still on record");
+    assert!(!paris.0.is_current());
+    assert!(paris.0.superseded_by.is_some());
+}
+
+#[tokio::test]
+async fn one_failed_batch_does_not_lose_the_rest() {
+    let (mut graph, _dir) = graph();
+    let messages: Vec<(Uuid, String)> = (0..3).map(|i| (Uuid::new_v4(), format!("message {i} {}", "x".repeat(40)))).collect();
+    // The mock hands out answers last-first: good, unusable, good.
+    let ingestor = ingestor(&[FIRST, "not json at all", IN_PARIS]);
+    let report = ingestor.ingest_messages(&mut graph, Uuid::new_v4(), &messages, 60, None).await.unwrap();
+    assert_eq!((report.llm_calls, report.llm_failures), (3, 1));
+    // Alice, Rust and RustConf from one good batch; Paris from the other
+    // (Alice and Rust are the same entities in both).
+    assert_eq!(graph.all_entities().unwrap().len(), 4, "both good batches were written");
+}
+
+/// Real models do not follow the schema exactly. One odd item must not cost
+/// the batch: readable items go in, unreadable ones are skipped.
+#[tokio::test]
+async fn imperfect_model_output_is_read_item_by_item() {
+    let (mut graph, _dir) = graph();
+    let sloppy = r#"{
+      "entities": [
+        {"name": "Alice", "type": "person", "confidence": null, "attributes": null},
+        {"name": "Lyon", "type": "city", "confidence": "0.9"},
+        {"name": 2023, "type": "year"},
+        {"type": "person"},
+        "not an object"
+      ],
+      "relationships": [
+        {"subject": "Alice", "predicate": "lives_in", "object": "Lyon", "confidence": "high"},
+        {"subject": "Alice", "predicate": "born_in", "object": 2023, "temporal_type": null},
+        {"subject": "Alice", "object": "Lyon"}
+      ],
+      "events": [
+        {"name": "Move to Lyon", "type": "relocation", "participants": ["Alice", 7, null], "timestamp": 2021}
+      ]
+    }"#;
+    let report = ingestor(&[sloppy])
+        .ingest_messages(&mut graph, Uuid::new_v4(), &[(Uuid::new_v4(), "text".to_string())], 4000, None)
+        .await
+        .unwrap();
+    assert_eq!(report.llm_failures, 0);
+    // Alice, Lyon, "2023", and the event; the nameless entity and the string are skipped.
+    assert_eq!(report.entities_created, 4);
+    // lives_in, born_in, and Alice's participation; the relation without a predicate is skipped.
+    assert_eq!(report.relationships_created, 3);
+    let lyon = graph.find_entities(EntityQuery::new().with_type("city")).unwrap().remove(0);
+    assert_eq!(lyon.confidence, 0.9);
+}
+
+/// Each fact records the message that states it, when that was said, and,
+/// only if the text gives it, when the fact became true.
+#[tokio::test]
+async fn facts_cite_their_message_and_carry_a_date() {
+    let (mut graph, _dir) = graph();
+    let at = |day: u32| chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2023, 7, day, 12, 0, 0).unwrap();
+    let messages = vec![
+        SourceMessage { id: Uuid::new_v4(), text: "Hi! I use Rust at work.".into(), timestamp: Some(at(10)) },
+        SourceMessage { id: Uuid::new_v4(), text: "I joined a mentorship program last weekend.".into(), timestamp: Some(at(17)) },
+        SourceMessage { id: Uuid::new_v4(), text: "I also like hiking.".into(), timestamp: Some(at(18)) },
+    ];
+    // m0: no date in the text. m1: the model resolves "last weekend".
+    // The third relation cites a label that does not exist; the fourth cites none.
+    let answer = r#"{"entities": [
+        {"name": "Alice", "type": "person"}, {"name": "Rust", "type": "language"},
+        {"name": "Mentorship program", "type": "program"}, {"name": "Hiking", "type": "activity"},
+        {"name": "Acme", "type": "organization"}],
+      "relationships": [
+        {"subject": "Alice", "predicate": "uses", "object": "Rust", "source": "m0", "when": null},
+        {"subject": "Alice", "predicate": "joined", "object": "Mentorship program", "source": "[m1]", "when": "2023-07-15"},
+        {"subject": "Alice", "predicate": "likes", "object": "Hiking", "source": "m9"},
+        {"subject": "Alice", "predicate": "started", "object": "Hiking", "source": "m2", "when": "2022"},
+        {"subject": "Alice", "predicate": "works at", "object": "Acme"}],
+      "events": []}"#;
+    let llm = Arc::new(MockLlmProvider::new(vec![answer.to_string()]));
+    let ingestor = GraphIngestor::new(KgExtractionService::new(llm.clone()));
+    ingestor.ingest_dated_messages(&mut graph, Uuid::new_v4(), &messages, 4000, None).await.unwrap();
+
+    // The model was shown each message under its label.
+    let prompt = &llm.get_calls()[0].messages[0].content;
+    assert!(prompt.contains("[m0] Hi! I use Rust at work.") && prompt.contains("[m2] I also like hiking."));
+
+    let fact = |predicate: &str| {
+        graph.find_relationships(RelationshipQuery::new().with_predicate(predicate)).unwrap().remove(0).0
+    };
+    // Cited, no date in the text: we know when it was said, not since when
+    // it has been true.
+    assert_eq!(fact("uses").source_message_id, Some(messages[0].id));
+    assert_eq!((fact("uses").valid_from, fact("uses").stated_at), (None, Some(at(10))));
+    // Cited, with a date the model worked out: true from that date, said on
+    // the message's.
+    let joined = fact("joined");
+    assert_eq!(joined.source_message_id, Some(messages[1].id));
+    assert_eq!(joined.valid_from.unwrap().to_rfc3339(), "2023-07-15T00:00:00+00:00");
+    assert_eq!((joined.valid_precision, joined.stated_at), (Some(DatePrecision::Day), Some(at(17))));
+    // Only a year is known: kept as a year.
+    let started = fact("started");
+    assert_eq!(started.valid_from.unwrap().to_rfc3339(), "2022-01-01T00:00:00+00:00");
+    assert_eq!(started.valid_precision, Some(DatePrecision::Year));
+    // Unknown or missing citation: attributed to the batch, undated.
+    assert_eq!(fact("likes").source_message_id, Some(messages[0].id));
+    assert_eq!((fact("likes").valid_from, fact("likes").stated_at), (None, None));
+    assert_eq!(fact("works_at").valid_from, None);
+}

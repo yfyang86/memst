@@ -173,6 +173,9 @@ pub trait SearchIndexBackend: Send + Sync {
     /// Delete all documents for a session.
     fn delete_session(&self, session_id: Uuid) -> Result<()>;
 
+    /// Delete one document (a message or a memory) by its id.
+    fn delete_document(&self, doc_id: Uuid) -> Result<()>;
+
     /// Commit pending changes.
     fn commit(&self) -> Result<()>;
 
@@ -346,6 +349,15 @@ impl SearchIndexBackend for SearchIndex {
             SearchIndex::Native(idx) => idx.delete_session(session_id),
             #[cfg(feature = "tantivy-backend")]
             SearchIndex::Tantivy(idx) => idx.delete_session(session_id),
+        }
+    }
+
+    fn delete_document(&self, doc_id: Uuid) -> Result<()> {
+        match self {
+            #[cfg(feature = "native-backend")]
+            SearchIndex::Native(idx) => idx.delete_document(doc_id),
+            #[cfg(feature = "tantivy-backend")]
+            SearchIndex::Tantivy(idx) => idx.delete_document(doc_id),
         }
     }
 

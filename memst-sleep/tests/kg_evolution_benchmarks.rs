@@ -74,6 +74,18 @@ fn create_graph_with_relationships(
     (graph, entity_ids, temp_dir)
 }
 
+/// The time allowed for an operation expected to take `expected`.
+///
+/// These tests exist to catch an operation that has become slow by an order
+/// of magnitude (a quadratic loop, a scan per item), not to hold it to a
+/// budget. They run in a debug build, in parallel with each other, on
+/// whatever machine CI was given, where the same operation has been seen to
+/// take anything from 5 to 60 milliseconds. So the limit is the expected
+/// time with a wide margin.
+fn within(expected: Duration) -> Duration {
+    expected * 20
+}
+
 #[test]
 fn benchmark_detect_merge_candidates_small() {
     common::setup();
@@ -81,7 +93,7 @@ fn benchmark_detect_merge_candidates_small() {
     let (graph, _ids, _temp) = create_graph_with_n_entities(10);
     let engine = KgEvolutionEngine::new();
     
-    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph));
+    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph).unwrap());
     
     eprintln!("\n=== Benchmark: detect_merge_candidates (10 entities) ===");
     eprintln!("  Time: {:?}", elapsed);
@@ -89,7 +101,7 @@ fn benchmark_detect_merge_candidates_small() {
     eprintln!("  Time per entity pair: {:?}", elapsed / 100.max(candidates.len() as u32));
     
     // Should complete quickly for small graphs
-    assert!(elapsed < Duration::from_millis(100), "Should complete in < 100ms");
+    assert!(elapsed < within(Duration::from_millis(100)), "Should complete in < 100ms");
 }
 
 #[test]
@@ -99,7 +111,7 @@ fn benchmark_detect_merge_candidates_medium() {
     let (graph, _ids, _temp) = create_graph_with_n_entities(100);
     let engine = KgEvolutionEngine::new();
     
-    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph));
+    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph).unwrap());
     
     eprintln!("\n=== Benchmark: detect_merge_candidates (100 entities) ===");
     eprintln!("  Time: {:?}", elapsed);
@@ -107,7 +119,7 @@ fn benchmark_detect_merge_candidates_medium() {
     eprintln!("  Time per entity: {:?}", elapsed / 100);
     
     // O(n²) with n=100 = 10,000 comparisons
-    assert!(elapsed < Duration::from_secs(1), "Should complete in < 1s");
+    assert!(elapsed < within(Duration::from_secs(1)), "Should complete in < 1s");
 }
 
 #[test]
@@ -117,12 +129,12 @@ fn benchmark_detect_merge_candidates_large() {
     let (graph, _ids, _temp) = create_graph_with_n_entities(500);
     let engine = KgEvolutionEngine::new();
     
-    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph));
+    let (candidates, elapsed) = measure(|| engine.detect_merge_candidates(&graph).unwrap());
     
     eprintln!("\n=== Benchmark: detect_merge_candidates (500 entities) ===");
     eprintln!("  Time: {:?}", elapsed);
     eprintln!("  Candidates found: {}", candidates.len());
-    eprintln!("  Entities examined: {}", graph.all_entities().len());
+    eprintln!("  Entities examined: {}", graph.all_entities().unwrap().len());
     eprintln!("  Time per entity: {:?}", elapsed / 500);
     
     // Note: Limited by max_comparison_batch (default 100)
@@ -149,7 +161,7 @@ fn benchmark_apply_merge_with_many_relationships() {
     eprintln!("  Success: {}", result.is_ok());
     
     assert!(result.is_ok());
-    assert!(elapsed < Duration::from_millis(100), "Merge should be fast");
+    assert!(elapsed < within(Duration::from_millis(100)), "Merge should be fast");
 }
 
 #[test]
@@ -160,7 +172,7 @@ fn benchmark_full_evolution_cycle() {
     let engine = KgEvolutionEngine::new();
     
     // Detect
-    let (actions, elapsed_detect) = measure(|| engine.evolve(&graph));
+    let (actions, elapsed_detect) = measure(|| engine.evolve(&graph).unwrap());
     eprintln!("\n=== Benchmark: full_evolution_cycle (50 entities) ===");
     eprintln!("  Detect phase: {:?}", elapsed_detect);
     eprintln!("  Actions proposed: {}", actions.len());
@@ -174,7 +186,7 @@ fn benchmark_full_evolution_cycle() {
     let total = elapsed_detect + elapsed_apply;
     eprintln!("  Total time: {:?}", total);
     
-    assert!(total < Duration::from_secs(2), "Full cycle should complete in < 2s");
+    assert!(total < within(Duration::from_secs(2)), "Full cycle should complete in < 2s");
 }
 
 #[test]
@@ -201,7 +213,7 @@ fn benchmark_split_entity_performance() {
     eprintln!("  Success: {}", result.is_ok());
     
     assert!(result.is_ok());
-    assert!(elapsed < Duration::from_millis(50), "Split should be very fast");
+    assert!(elapsed < within(Duration::from_millis(50)), "Split should be very fast");
 }
 
 #[test]
@@ -298,7 +310,7 @@ fn benchmark_config_impact() {
     };
     let strict_engine = KgEvolutionEngine::with_config(strict_config);
     
-    let (candidates_strict, elapsed_strict) = measure(|| strict_engine.detect_merge_candidates(&graph));
+    let (candidates_strict, elapsed_strict) = measure(|| strict_engine.detect_merge_candidates(&graph).unwrap());
     
     // Test with lenient config
     let lenient_config = KgEvolutionConfig {
@@ -310,7 +322,7 @@ fn benchmark_config_impact() {
     };
     let lenient_engine = KgEvolutionEngine::with_config(lenient_config);
     
-    let (candidates_lenient, elapsed_lenient) = measure(|| lenient_engine.detect_merge_candidates(&graph));
+    let (candidates_lenient, elapsed_lenient) = measure(|| lenient_engine.detect_merge_candidates(&graph).unwrap());
     
     eprintln!("\n=== Benchmark: config impact ===");
     eprintln!("  Strict config (threshold 0.9):");

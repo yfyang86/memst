@@ -475,6 +475,20 @@ pub struct MemoryItem {
     pub supersedes: Option<Uuid>,
 }
 
+/// The `source` of a memory made from the given messages and memories:
+/// `label`, then the ids. See [`MemoryItem::derived`].
+pub fn derivation(label: &str, messages: &[Uuid], memories: &[Uuid]) -> String {
+    let list = |ids: &[Uuid]| ids.iter().map(Uuid::to_string).collect::<Vec<_>>().join(",");
+    let mut source = label.to_string();
+    if !messages.is_empty() {
+        source.push_str(&format!(" messages={}", list(messages)));
+    }
+    if !memories.is_empty() {
+        source.push_str(&format!(" memories={}", list(memories)));
+    }
+    source
+}
+
 impl MemoryItem {
     /// Create a new memory item.
     pub fn new(content: impl Into<String>, source: impl Into<String>) -> Self {
@@ -494,6 +508,31 @@ impl MemoryItem {
             token_estimate: None,
             supersedes: None,
         }
+    }
+
+    /// A memory made from messages, from other memories, or from both, that
+    /// says so. Deleting a message can then find what was made from it.
+    ///
+    /// The record is kept in `source`, as words a person can read
+    /// (`derived messages=<id>,<id> memories=<id>`), since the stored form
+    /// of a memory item cannot gain a field without breaking existing
+    /// stores.
+    pub fn derived(content: impl Into<String>, messages: &[Uuid], memories: &[Uuid]) -> Self {
+        Self::new(content, derivation("derived", messages, memories))
+    }
+
+    /// The messages and the memories this one says it was made from. Both
+    /// are empty for a memory that does not say.
+    pub fn derived_from(&self) -> (Vec<Uuid>, Vec<Uuid>) {
+        let ids = |key: &str| -> Vec<Uuid> {
+            self.source
+                .split_whitespace()
+                .filter_map(|word| word.strip_prefix(key))
+                .flat_map(|list| list.split(','))
+                .filter_map(|id| Uuid::parse_str(id).ok())
+                .collect()
+        };
+        (ids("messages="), ids("memories="))
     }
 
     /// Add a tag to this memory.
@@ -659,6 +698,12 @@ pub struct Entity {
     /// Deprecation reason if deprecated
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deprecation_reason: Option<String>,
+
+    /// Other sessions that also mention this entity, besides `session_id`
+    /// (the session that first created it). Filled in when the graph is
+    /// shared across sessions and the same entity is met again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seen_in: Vec<Uuid>,
 }
 
 fn default_relevance() -> f32 { 1.0 }
@@ -683,6 +728,7 @@ impl Entity {
             last_decay_at: chrono::Utc::now(),
             is_deprecated: false,
             deprecation_reason: None,
+            seen_in: Vec::new(),
         }
     }
     
@@ -704,6 +750,7 @@ impl Entity {
             last_decay_at: chrono::Utc::now(),
             is_deprecated: false,
             deprecation_reason: None,
+            seen_in: Vec::new(),
         }
     }
 
@@ -723,6 +770,56 @@ impl Entity {
     pub fn with_confidence(mut self, confidence: f32) -> Self {
         self.confidence = confidence.clamp(0.0, 1.0);
         self
+    }
+
+    /// The entity as plain text: its name, its type, and every key, string
+    /// and number in its attributes (`{"city": "Paris"}` contributes both
+    /// "city" and "Paris"). Attribute keys starting with `_` are skipped.
+    /// This is what keyword search indexes and what an embedding of the
+    /// entity is computed from.
+    pub fn search_text(&self) -> String {
+        fn collect(value: &serde_json::Value, out: &mut String) {
+            match value {
+                serde_json::Value::String(text) => {
+                    out.push(' ');
+                    out.push_str(text);
+                }
+                serde_json::Value::Array(items) => items.iter().for_each(|item| collect(item, out)),
+                // Keys starting with `_` are bookkeeping (for example
+                // `_extraction_run`), not something the entity is about.
+                serde_json::Value::Object(map) => map
+                    .iter()
+                    .filter(|(key, _)| !key.starts_with('_'))
+                    .for_each(|(key, item)| {
+                        out.push(' ');
+                        out.push_str(key);
+                        collect(item, out);
+                    }),
+                serde_json::Value::Number(number) => {
+                    out.push(' ');
+                    out.push_str(&number.to_string());
+                }
+                serde_json::Value::Bool(_) | serde_json::Value::Null => {}
+            }
+        }
+        let mut text = format!("{} {}", self.name, self.entity_type);
+        collect(&self.attributes, &mut text);
+        text
+    }
+
+    /// Whether this entity was created in, or later seen in, `session`.
+    pub fn is_in_session(&self, session: Uuid) -> bool {
+        self.session_id == session || self.seen_in.contains(&session)
+    }
+
+    /// Record that `session` also mentions this entity.
+    /// Returns whether anything changed.
+    pub fn mark_seen_in(&mut self, session: Uuid) -> bool {
+        if self.is_in_session(session) {
+            return false;
+        }
+        self.seen_in.push(session);
+        true
     }
 
     /// Record an access to this entity.
@@ -793,6 +890,64 @@ pub struct Relationship {
     /// Last decay calculation timestamp
     #[serde(default = "chrono::Utc::now")]
     pub last_decay_at: chrono::DateTime<chrono::Utc>,
+
+    // ===== Validity in time =====
+    /// When the fact started to hold in the world, if known. (When it was
+    /// recorded is `created_at`; when it was said is `stated_at`.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// When the fact stopped holding. `None` while it still holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_to: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// The relationship that replaced this one, if it was superseded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<RelationshipId>,
+
+    /// How exactly `valid_from` is known. "In 2022" is stored as 1 January
+    /// 2022 with precision `Year`; without this it would read as a day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_precision: Option<DatePrecision>,
+
+    /// When the fact was stated: the time of the message it comes from.
+    /// This is not when it became true (`valid_from`): "we went to the park
+    /// two weeks ago" is stated today and true from two weeks earlier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// How exactly a date is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DatePrecision {
+    /// Only the year is known.
+    Year,
+    /// The year and month are known.
+    Month,
+    /// The day is known.
+    Day,
+}
+
+impl DatePrecision {
+    /// The name used in storage and in JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DatePrecision::Year => "year",
+            DatePrecision::Month => "month",
+            DatePrecision::Day => "day",
+        }
+    }
+
+    /// The inverse of [`as_str`](Self::as_str).
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "year" => Some(DatePrecision::Year),
+            "month" => Some(DatePrecision::Month),
+            "day" => Some(DatePrecision::Day),
+            _ => None,
+        }
+    }
 }
 
 impl Relationship {
@@ -816,6 +971,11 @@ impl Relationship {
             half_life_days: 30.0,
             is_stable: false,
             last_decay_at: chrono::Utc::now(),
+            valid_from: None,
+            valid_to: None,
+            superseded_by: None,
+            valid_precision: None,
+            stated_at: None,
         }
     }
     
@@ -839,6 +999,11 @@ impl Relationship {
             half_life_days: 365.0,
             is_stable: true,
             last_decay_at: chrono::Utc::now(),
+            valid_from: None,
+            valid_to: None,
+            superseded_by: None,
+            valid_precision: None,
+            stated_at: None,
         }
     }
 
@@ -853,6 +1018,17 @@ impl Relationship {
         self.confidence = confidence.clamp(0.0, 1.0);
         self
     }
+
+    /// Whether the fact still holds: not ended and not replaced.
+    pub fn is_current(&self) -> bool {
+        self.valid_to.is_none() && self.superseded_by.is_none()
+    }
+
+    /// Whether the fact was on record and held at `time`: recorded by then,
+    /// and not yet ended.
+    pub fn held_at(&self, time: chrono::DateTime<chrono::Utc>) -> bool {
+        self.created_at <= time && self.valid_to.map_or(true, |end| end > time)
+    }
 }
 
 /// Query for searching entities.
@@ -866,6 +1042,8 @@ pub struct EntityQuery {
     pub limit: usize,
     /// Minimum confidence threshold
     pub min_confidence: Option<f32>,
+    /// Only entities created in or seen in this session
+    pub session_id: Option<Uuid>,
 }
 
 impl EntityQuery {
@@ -877,6 +1055,12 @@ impl EntityQuery {
     /// Filter by entity type.
     pub fn with_type(mut self, entity_type: impl Into<String>) -> Self {
         self.entity_type = Some(entity_type.into());
+        self
+    }
+
+    /// Only entities created in or seen in this session.
+    pub fn with_session(mut self, session_id: Uuid) -> Self {
+        self.session_id = Some(session_id);
         self
     }
 
@@ -912,6 +1096,11 @@ pub struct RelationshipQuery {
     pub limit: usize,
     /// Minimum confidence threshold
     pub min_confidence: Option<f32>,
+    /// Only relationships recorded by this session
+    pub session_id: Option<Uuid>,
+    /// Also return relationships that have ended or been superseded.
+    /// By default only current facts are returned.
+    pub include_superseded: bool,
 }
 
 impl RelationshipQuery {
@@ -929,6 +1118,18 @@ impl RelationshipQuery {
     /// Filter by object.
     pub fn with_object(mut self, object_id: EntityId) -> Self {
         self.object_id = Some(object_id);
+        self
+    }
+
+    /// Only relationships recorded by this session.
+    pub fn with_session(mut self, session_id: Uuid) -> Self {
+        self.session_id = Some(session_id);
+        self
+    }
+
+    /// Also return relationships that have ended or been superseded.
+    pub fn with_superseded(mut self) -> Self {
+        self.include_superseded = true;
         self
     }
 
@@ -1050,6 +1251,14 @@ pub struct ExtractedRelationship {
     /// Temporal type
     #[serde(default)]
     pub temporal_type: TemporalRelevance,
+    /// Label of the message that states this fact (for example `"m3"`),
+    /// when the extractor was given labelled messages and cited one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// When the fact became true, as the text states or implies it
+    /// (an ISO 8601 date or datetime), if the extractor could tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
 }
 
 /// Result of KG extraction from text.

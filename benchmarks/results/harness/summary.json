@@ -1,0 +1,460 @@
+{
+  "settings": {
+    "dataset": "LoCoMo",
+    "reader_and_judge_model": "deepseek-flash",
+    "thinking": "off",
+    "embedder": "local",
+    "conversations": 3,
+    "questions_per_category_per_conversation": 10,
+    "seed": 7,
+    "questions": 138
+  },
+  "systems": {
+    "full-context": {
+      "n": 138,
+      "f1": 0.592,
+      "f1_low": 0.5228,
+      "f1_high": 0.6604,
+      "judged_accuracy": 0.7101,
+      "evidence_in_context": 1.0,
+      "prompt_tokens_mean": 24698,
+      "retrieval_p50_ms": 0.2,
+      "retrieval_p95_ms": 0.4,
+      "by_category": {
+        "adversarial": {
+          "n": 30,
+          "f1": 0.9,
+          "f1_low": 0.7667,
+          "f1_high": 1.0,
+          "judged_accuracy": 0.9,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 24342,
+          "retrieval_p50_ms": 0.3,
+          "retrieval_p95_ms": 0.4
+        },
+        "multi-hop": {
+          "n": 30,
+          "f1": 0.5341,
+          "f1_low": 0.3883,
+          "f1_high": 0.682,
+          "judged_accuracy": 0.6333,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 24339,
+          "retrieval_p50_ms": 0.2,
+          "retrieval_p95_ms": 0.4
+        },
+        "open-domain": {
+          "n": 18,
+          "f1": 0.1361,
+          "f1_low": 0.0381,
+          "f1_high": 0.2563,
+          "judged_accuracy": 0.2778,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 27084,
+          "retrieval_p50_ms": 0.3,
+          "retrieval_p95_ms": 0.5
+        },
+        "single-hop": {
+          "n": 30,
+          "f1": 0.6856,
+          "f1_low": 0.5643,
+          "f1_high": 0.8071,
+          "judged_accuracy": 0.9667,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 24342,
+          "retrieval_p50_ms": 0.2,
+          "retrieval_p95_ms": 0.4
+        },
+        "temporal": {
+          "n": 30,
+          "f1": 0.522,
+          "f1_low": 0.3957,
+          "f1_high": 0.6421,
+          "judged_accuracy": 0.6,
+          "evidence_in_context": 1.0,
+          "prompt_tokens_mean": 24340,
+          "retrieval_p50_ms": 0.2,
+          "retrieval_p95_ms": 0.3
+        }
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0
+    },
+    "raw-bm25": {
+      "n": 138,
+      "f1": 0.4551,
+      "f1_low": 0.3824,
+      "f1_high": 0.5261,
+      "judged_accuracy": 0.5435,
+      "evidence_in_context": 0.6176,
+      "prompt_tokens_mean": 1132,
+      "retrieval_p50_ms": 0.7,
+      "retrieval_p95_ms": 1.8,
+      "by_category": {
+        "adversarial": {
+          "n": 30,
+          "f1": 0.9,
+          "f1_low": 0.8,
+          "f1_high": 1.0,
+          "judged_accuracy": 0.9,
+          "evidence_in_context": 0.7333,
+          "prompt_tokens_mean": 1159,
+          "retrieval_p50_ms": 0.8,
+          "retrieval_p95_ms": 1.9
+        },
+        "multi-hop": {
+          "n": 30,
+          "f1": 0.2797,
+          "f1_low": 0.1516,
+          "f1_high": 0.4199,
+          "judged_accuracy": 0.3667,
+          "evidence_in_context": 0.4667,
+          "prompt_tokens_mean": 1151,
+          "retrieval_p50_ms": 0.7,
+          "retrieval_p95_ms": 1.3
+        },
+        "open-domain": {
+          "n": 18,
+          "f1": 0.0222,
+          "f1_low": 0.0,
+          "f1_high": 0.0667,
+          "judged_accuracy": 0.0556,
+          "evidence_in_context": 0.3125,
+          "prompt_tokens_mean": 1164,
+          "retrieval_p50_ms": 0.8,
+          "retrieval_p95_ms": 2.6
+        },
+        "single-hop": {
+          "n": 30,
+          "f1": 0.4969,
+          "f1_low": 0.3525,
+          "f1_high": 0.6473,
+          "judged_accuracy": 0.7,
+          "evidence_in_context": 0.6667,
+          "prompt_tokens_mean": 1092,
+          "retrieval_p50_ms": 0.6,
+          "retrieval_p95_ms": 1.8
+        },
+        "temporal": {
+          "n": 30,
+          "f1": 0.4037,
+          "f1_low": 0.2639,
+          "f1_high": 0.5356,
+          "judged_accuracy": 0.5,
+          "evidence_in_context": 0.7667,
+          "prompt_tokens_mean": 1106,
+          "retrieval_p50_ms": 0.5,
+          "retrieval_p95_ms": 8.8
+        }
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0
+    },
+    "raw-dense": {
+      "n": 138,
+      "f1": 0.5326,
+      "f1_low": 0.4612,
+      "f1_high": 0.5995,
+      "judged_accuracy": 0.6667,
+      "evidence_in_context": 0.7721,
+      "prompt_tokens_mean": 1074,
+      "retrieval_p50_ms": 180.5,
+      "retrieval_p95_ms": 446.4,
+      "by_category": {
+        "adversarial": {
+          "n": 30,
+          "f1": 0.9333,
+          "f1_low": 0.8333,
+          "f1_high": 1.0,
+          "judged_accuracy": 0.9333,
+          "evidence_in_context": 0.6667,
+          "prompt_tokens_mean": 1087,
+          "retrieval_p50_ms": 180.5,
+          "retrieval_p95_ms": 426.7
+        },
+        "multi-hop": {
+          "n": 30,
+          "f1": 0.3471,
+          "f1_low": 0.2158,
+          "f1_high": 0.4927,
+          "judged_accuracy": 0.4333,
+          "evidence_in_context": 0.8,
+          "prompt_tokens_mean": 1095,
+          "retrieval_p50_ms": 202.6,
+          "retrieval_p95_ms": 434.3
+        },
+        "open-domain": {
+          "n": 18,
+          "f1": 0.16,
+          "f1_low": 0.0504,
+          "f1_high": 0.2866,
+          "judged_accuracy": 0.3333,
+          "evidence_in_context": 0.625,
+          "prompt_tokens_mean": 1032,
+          "retrieval_p50_ms": 217.0,
+          "retrieval_p95_ms": 554.6
+        },
+        "single-hop": {
+          "n": 30,
+          "f1": 0.545,
+          "f1_low": 0.3932,
+          "f1_high": 0.6982,
+          "judged_accuracy": 0.7667,
+          "evidence_in_context": 0.7667,
+          "prompt_tokens_mean": 1062,
+          "retrieval_p50_ms": 179.4,
+          "retrieval_p95_ms": 543.5
+        },
+        "temporal": {
+          "n": 30,
+          "f1": 0.5284,
+          "f1_low": 0.3985,
+          "f1_high": 0.6486,
+          "judged_accuracy": 0.7333,
+          "evidence_in_context": 0.9333,
+          "prompt_tokens_mean": 1078,
+          "retrieval_p50_ms": 140.2,
+          "retrieval_p95_ms": 304.9
+        }
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0
+    },
+    "raw-hybrid": {
+      "n": 138,
+      "f1": 0.513,
+      "f1_low": 0.4455,
+      "f1_high": 0.5828,
+      "judged_accuracy": 0.6159,
+      "evidence_in_context": 0.6985,
+      "prompt_tokens_mean": 1116,
+      "retrieval_p50_ms": 193.6,
+      "retrieval_p95_ms": 388.0,
+      "by_category": {
+        "adversarial": {
+          "n": 30,
+          "f1": 0.9,
+          "f1_low": 0.8,
+          "f1_high": 1.0,
+          "judged_accuracy": 0.9,
+          "evidence_in_context": 0.7,
+          "prompt_tokens_mean": 1150,
+          "retrieval_p50_ms": 132.3,
+          "retrieval_p95_ms": 379.8
+        },
+        "multi-hop": {
+          "n": 30,
+          "f1": 0.3138,
+          "f1_low": 0.1789,
+          "f1_high": 0.4559,
+          "judged_accuracy": 0.3333,
+          "evidence_in_context": 0.6,
+          "prompt_tokens_mean": 1114,
+          "retrieval_p50_ms": 213.1,
+          "retrieval_p95_ms": 396.7
+        },
+        "open-domain": {
+          "n": 18,
+          "f1": 0.1476,
+          "f1_low": 0.0381,
+          "f1_high": 0.281,
+          "judged_accuracy": 0.2778,
+          "evidence_in_context": 0.5,
+          "prompt_tokens_mean": 1102,
+          "retrieval_p50_ms": 235.1,
+          "retrieval_p95_ms": 568.9
+        },
+        "single-hop": {
+          "n": 30,
+          "f1": 0.5021,
+          "f1_low": 0.3534,
+          "f1_high": 0.6559,
+          "judged_accuracy": 0.7,
+          "evidence_in_context": 0.6667,
+          "prompt_tokens_mean": 1088,
+          "retrieval_p50_ms": 226.2,
+          "retrieval_p95_ms": 383.4
+        },
+        "temporal": {
+          "n": 30,
+          "f1": 0.5553,
+          "f1_low": 0.415,
+          "f1_high": 0.6824,
+          "judged_accuracy": 0.7333,
+          "evidence_in_context": 0.9333,
+          "prompt_tokens_mean": 1119,
+          "retrieval_p50_ms": 185.2,
+          "retrieval_p95_ms": 329.7
+        }
+      },
+      "write_llm_calls_per_conversation": 0.0,
+      "write_llm_input_tokens_per_conversation_estimate": 0,
+      "write_seconds_per_conversation": 0.0
+    },
+    "memst-graph": {
+      "n": 138,
+      "f1": 0.3897,
+      "f1_low": 0.3197,
+      "f1_high": 0.4617,
+      "judged_accuracy": 0.4493,
+      "evidence_in_context": 0.2794,
+      "prompt_tokens_mean": 946,
+      "retrieval_p50_ms": 37.2,
+      "retrieval_p95_ms": 230.0,
+      "by_category": {
+        "adversarial": {
+          "n": 30,
+          "f1": 0.9,
+          "f1_low": 0.7667,
+          "f1_high": 1.0,
+          "judged_accuracy": 0.9,
+          "evidence_in_context": 0.2,
+          "prompt_tokens_mean": 923,
+          "retrieval_p50_ms": 199.1,
+          "retrieval_p95_ms": 252.0
+        },
+        "multi-hop": {
+          "n": 30,
+          "f1": 0.2931,
+          "f1_low": 0.1692,
+          "f1_high": 0.4187,
+          "judged_accuracy": 0.3,
+          "evidence_in_context": 0.3333,
+          "prompt_tokens_mean": 1201,
+          "retrieval_p50_ms": 34.0,
+          "retrieval_p95_ms": 86.9
+        },
+        "open-domain": {
+          "n": 18,
+          "f1": 0.0778,
+          "f1_low": 0.0,
+          "f1_high": 0.1889,
+          "judged_accuracy": 0.1111,
+          "evidence_in_context": 0.0625,
+          "prompt_tokens_mean": 763,
+          "retrieval_p50_ms": 37.7,
+          "retrieval_p95_ms": 87.0
+        },
+        "single-hop": {
+          "n": 30,
+          "f1": 0.2572,
+          "f1_low": 0.1172,
+          "f1_high": 0.425,
+          "judged_accuracy": 0.3,
+          "evidence_in_context": 0.2333,
+          "prompt_tokens_mean": 995,
+          "retrieval_p50_ms": 33.1,
+          "retrieval_p95_ms": 63.8
+        },
+        "temporal": {
+          "n": 30,
+          "f1": 0.2957,
+          "f1_low": 0.1589,
+          "f1_high": 0.4441,
+          "judged_accuracy": 0.5,
+          "evidence_in_context": 0.4667,
+          "prompt_tokens_mean": 776,
+          "retrieval_p50_ms": 33.0,
+          "retrieval_p95_ms": 62.9
+        }
+      },
+      "write_llm_calls_per_conversation": 15.3,
+      "write_llm_input_tokens_per_conversation_estimate": 23236,
+      "write_seconds_per_conversation": 88.0
+    },
+    "memst-graph+raw": {
+      "n": 138,
+      "f1": 0.5174,
+      "f1_low": 0.4504,
+      "f1_high": 0.5848,
+      "judged_accuracy": 0.6087,
+      "evidence_in_context": 0.6838,
+      "prompt_tokens_mean": 1423,
+      "retrieval_p50_ms": 80.5,
+      "retrieval_p95_ms": 597.0,
+      "by_category": {
+        "adversarial": {
+          "n": 30,
+          "f1": 0.9333,
+          "f1_low": 0.8333,
+          "f1_high": 1.0,
+          "judged_accuracy": 0.9333,
+          "evidence_in_context": 0.6333,
+          "prompt_tokens_mean": 1425,
+          "retrieval_p50_ms": 385.9,
+          "retrieval_p95_ms": 690.6
+        },
+        "multi-hop": {
+          "n": 30,
+          "f1": 0.4251,
+          "f1_low": 0.2882,
+          "f1_high": 0.5557,
+          "judged_accuracy": 0.4,
+          "evidence_in_context": 0.6,
+          "prompt_tokens_mean": 1641,
+          "retrieval_p50_ms": 69.4,
+          "retrieval_p95_ms": 227.5
+        },
+        "open-domain": {
+          "n": 18,
+          "f1": 0.1159,
+          "f1_low": 0.0222,
+          "f1_high": 0.2333,
+          "judged_accuracy": 0.2222,
+          "evidence_in_context": 0.5,
+          "prompt_tokens_mean": 1273,
+          "retrieval_p50_ms": 79.2,
+          "retrieval_p95_ms": 116.2
+        },
+        "single-hop": {
+          "n": 30,
+          "f1": 0.4911,
+          "f1_low": 0.3479,
+          "f1_high": 0.6496,
+          "judged_accuracy": 0.6667,
+          "evidence_in_context": 0.6333,
+          "prompt_tokens_mean": 1444,
+          "retrieval_p50_ms": 72.8,
+          "retrieval_p95_ms": 117.3
+        },
+        "temporal": {
+          "n": 30,
+          "f1": 0.461,
+          "f1_low": 0.3321,
+          "f1_high": 0.5776,
+          "judged_accuracy": 0.6667,
+          "evidence_in_context": 0.9667,
+          "prompt_tokens_mean": 1271,
+          "retrieval_p50_ms": 67.8,
+          "retrieval_p95_ms": 109.7
+        }
+      },
+      "write_llm_calls_per_conversation": 15.3,
+      "write_llm_input_tokens_per_conversation_estimate": 23236,
+      "write_seconds_per_conversation": 88.0
+    }
+  },
+  "categories": [
+    "adversarial",
+    "multi-hop",
+    "open-domain",
+    "single-hop",
+    "temporal"
+  ],
+  "oracle_router": {
+    "over": [
+      "raw-bm25",
+      "raw-dense",
+      "raw-hybrid",
+      "memst-graph",
+      "memst-graph+raw"
+    ],
+    "f1": 0.6518,
+    "best_single_system_f1": 0.5326
+  },
+  "full_context_prompt_tokens": 24698,
+  "conversation_tokens_estimate_mean": 22179
+}

@@ -1,0 +1,23 @@
+{
+  "settings": {
+    "pi_version": "0.73.1",
+    "client": "pi",
+    "model": "deepseek-proxy/deepseek-flash",
+    "dream_model": "deepseek-flash",
+    "runs": 30
+  },
+  "table": {
+    "stale-paraphrase": [
+      27,
+      30
+    ]
+  },
+  "note_corrected": 27,
+  "embedder": "local",
+  "cost_of_final_session": {
+    "prompt_tokens_mean": 9752,
+    "tool_calls_mean": 3.13,
+    "seconds_mean": 9.7
+  },
+  "errors": 0
+}
