@@ -1052,6 +1052,40 @@ reads, searches and corrects, where before it answered from the index),
 and four seconds more, most of it loading the model for each session's
 server.
 
+## Round 13 (sprint 24): a plain client that records what is said
+
+Round 6 showed what a client without the Pi extension loses: it records no
+sessions, so memory holds only what the model chose to note, and of eighty
+facts said in passing it noted four and answered four. The server cannot
+record a conversation it is not shown. From sprint 24 it asks: its
+instructions tell a client to call `transcript_append` with each message
+from the user before answering it, and the tool needs only the text.
+Written before the first run.
+
+```bash
+python -m benchmarks.sessions.hard --client mcp --memst target/release/memst --model <model> \
+    --out benchmarks/results/sessions-round13-plain-mcp-recording
+```
+
+Round 6 again for the plain MCP client, with nothing changed but the
+build: the same eight histories of 24 sessions, the same questions, the
+same model, the same one-sentence system prompt and the server's
+instructions (which are what changed).
+
+| # | Criterion | Passes if |
+|---|---|---|
+| H2 | A plain client keeps up with a long history of things said in passing | at least 80% correct in each of the four kinds (round 6: 0/32, 1/24, 3/24, 16/16) |
+
+Reported: how often the latest value was in a transcript by the end of the
+history, which is whether the model did as the instructions ask.
+
+Expected beforehand. This depends on one thing, whether the model calls a
+tool it was only asked to call, on every message, before doing what the
+user wants. We expect it to do so most of the time and not always, and
+the result to track that: where the message was recorded the fact should
+be found (Pi's 96 of 96 in round 6 came from exactly such transcripts).
+Each message will cost one more model call.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

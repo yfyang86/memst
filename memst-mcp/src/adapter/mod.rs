@@ -196,13 +196,15 @@ impl McpManifest {
             ));
             tools.push(tool(
                 "transcript_append",
-                "Record one entry of the current session (what the user or the assistant said) so that later sessions can search it.",
+"Record what was just said, so that a later conversation can find it. This server does not see the conversation: \
+                 unless something else records it for you, call this with each message from the user as it arrives, before you answer it. \
+                 It is what keeps the things a user mentions in passing, which nobody thought to write a note about.",
                 json!({
-                    "session": { "type": "string", "description": "An id for this session: letters, digits, '-', '_' or '.'" },
-                    "role": { "type": "string", "enum": ["user", "assistant", "tool", "system"] },
-                    "text": { "type": "string", "description": "What was said" },
+                    "text": { "type": "string", "description": "What was said, as it was said" },
+                    "role": { "type": "string", "enum": ["user", "assistant", "tool", "system"], "description": "Who said it (default: user)" },
+                    "session": { "type": "string", "description": "An id for this session, if you have one: letters, digits, '-', '_' or '.'. Leave out to use this connection's" },
                 }),
-                &["session", "role", "text"],
+                &["text"],
             ));
         }
         Self { tools }
@@ -427,7 +429,9 @@ impl McpAdapter {
                 } + &rest)
             }
             "transcript_append" => {
-                let number = service.record(args.text("session")?, args.text("role")?, args.text("text")?).map_err(refused)?;
+                let session = args.optional_text("session")?.unwrap_or_else(|| service.session_id());
+                let role = args.optional_text("role")?.unwrap_or("user");
+                let number = service.record(session, role, args.text("text")?).map_err(refused)?;
                 Ok(format!("Recorded as entry {number}."))
             }
             other => Err(format!("unknown tool: {other}")),

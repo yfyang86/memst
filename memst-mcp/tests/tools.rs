@@ -170,3 +170,26 @@ async fn the_as_of_tool_takes_a_date_or_a_time_and_says_it_is_the_past() {
     assert_eq!(call(&adapter, "memory_as_of", json!({"at": "2001-01-01"})).await.unwrap(), "Memory held no notes at that time.");
     assert!(call(&adapter, "memory_as_of", json!({"at": "last week"})).await.unwrap_err().contains("is a date"));
 }
+
+#[tokio::test]
+async fn a_client_can_record_what_is_said_without_naming_a_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let memory = service(dir.path(), "alice", false);
+    let adapter = McpAdapter::connected(memory.clone());
+    // Only the text is needed: the session is this connection's, the speaker the user.
+    assert_eq!(call(&adapter, "transcript_append", json!({"text": "What time is 4pm Pacific for me? I work from Lisbon."})).await.unwrap(), "Recorded as entry 1.");
+    assert_eq!(call(&adapter, "transcript_append", json!({"text": "That is midnight in Lisbon.", "role": "assistant"})).await.unwrap(), "Recorded as entry 2.");
+    let session = memory.session_id().to_string();
+    assert_eq!(memory.sessions().unwrap(), [session.clone()]);
+    let turns = memory.transcript(&session).unwrap();
+    assert_eq!((turns[0].role.as_str(), turns[1].role.as_str()), ("user", "assistant"));
+
+    // A later connection is another session, and finds what was said.
+    let later = service(dir.path(), "alice", false);
+    assert_ne!(later.session_id(), session);
+    let found = call(&McpAdapter::connected(later), "memory_read", json!({"query": "which city do I work from", "scope": "all"})).await.unwrap();
+    assert!(found.contains("I work from Lisbon"));
+    // A named session still works.
+    call(&adapter, "transcript_append", json!({"session": "mine", "role": "user", "text": "x y z"})).await.unwrap();
+    assert!(memory.sessions().unwrap().contains(&"mine".to_string()));
+}
