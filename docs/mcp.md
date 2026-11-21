@@ -98,7 +98,7 @@ notes, whose first lines may then appear in it.
 |---|---|
 | `memory_context` | The index. Call it once at the start of a session |
 | `memory_search` | Notes matching some words, best first, with their ids. With `scope` set to `pages`, `transcripts` or `all`, pages and entries of earlier sessions too |
-| `memory_read` | The notes most relevant to a question, as text that fits a token budget |
+| `memory_read` | What memory holds that bears on a question, within a token budget. `scope`: `notes` (default), `transcripts`, or `all`, which adds what was said in earlier sessions, in order and with how to read it |
 | `memory_get` | One note by id |
 | `memory_as_of` | The notes as they stood at an earlier time (`at`: a date or a UTC time; `query` optional). Notes forgotten since are not shown |
 | `memory_history` | Recent changes to the notes: when, by whom, which notes |
@@ -267,6 +267,25 @@ its text as the body.
 - **The store is not encrypted.**
 - **Other ways into the store bypass all of this.** The checks are in the
   MCP server. The command line and the Python module write without them.
+
+## Reading what was said
+
+`memory_read` with `scope` set to `all` (or `transcripts`) is the way to
+answer a question about earlier conversations. It returns up to forty
+transcript entries that match, in the order they were said and with their
+dates, after any notes and pages that match, and ends with how to read
+them: pick out the statements that bear on the question with their dates;
+where two disagree the later holds; count step by step.
+
+It is built this way because of what the evaluations showed. An answer
+about a long history is rarely in the single best match: it is a count
+across sessions, or the latest of several statements. In the
+question-answering harness, working through the retrieved evidence before
+answering was worth some twenty points over answering at once. An agent
+given ten search results and no guidance scored 61.7% on sixty
+LongMemEval-S questions; with this read, 71.7% (`benchmarks/sessions`,
+round 10). Matching is still by keyword, and the harness's best read path,
+which retrieves by embedding, is ten points further on.
 
 ## What the offline pass is shown
 

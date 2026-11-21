@@ -301,10 +301,11 @@ export default function memst(pi: ExtensionAPI, settings: Settings = settingsFro
 	tool(
 		"memory_read",
 		"Read memory",
-		"Get the stored notes most relevant to a question, as text that fits a token budget.",
+		"Get what memory holds that bears on a question, as text that fits a token budget. With scope \"all\" it also returns what was said in earlier sessions: many entries, in order, with their dates. Use that for any question about earlier conversations, and above all for one that needs several of them (how many, how often, what changed).",
 		Type.Object({
 			query: Type.String({ description: "The question or topic" }),
-			token_budget: Type.Optional(Type.Integer({ minimum: 50, maximum: 100000, description: "Most tokens to return (default 1000)" })),
+			scope: Type.Optional(Type.String({ description: "notes (default): what was written down; transcripts: what was said in earlier sessions; all: both, and pages" })),
+			token_budget: Type.Optional(Type.Integer({ minimum: 50, maximum: 100000, description: "Most tokens to return (default 1000 for notes, 6000 otherwise)" })),
 		}),
 	);
 	tool("memory_get", "Get a note", "Get one stored note in full, by the id shown in the index or in search results.", Type.Object({ id: Type.String({ description: "The note's id" }) }), {

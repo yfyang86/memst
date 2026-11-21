@@ -835,6 +835,72 @@ So pages and notes from the pass did not hurt and may help on questions
 that span sessions; thirty questions cannot say more. Both conditions
 remain about twenty points below the harness's reasoning read path.
 
+## Round 10 (sprint 21): the read path in the memory tools
+
+Round 7 found an agent with the memory tools 20 to 30 points below the
+harness's reasoning read paths on the same questions. The harness's own
+pilots say where that gain comes from: reading the top matches and
+answering at once scored 67%; the same matches with the reader told to
+work through the evidence first scored 83%; widening retrieval added
+little by itself. Sprint 21 puts that into the tools: `memory_read` with
+scope `all` returns up to forty transcript entries in the order they were
+said, with dates, followed by how to read them (pick out the statements
+that bear on the question with their dates; the later holds; count step
+by step). Retrieval is still by keyword. Written before the first run.
+
+```bash
+python -m benchmarks.sessions.lme --data third/longmemeval/longmemeval_s_cleaned.json \
+    --memst target/release/memst --model <model> \
+    --compare benchmarks/results/sessions-round7-longmemeval/answers.jsonl \
+    --out benchmarks/results/sessions-round10-read-path
+```
+
+Round 7 again, with nothing changed but the build: the same sixty
+questions, the same plain MCP client and model, the same three tools, the
+same judge.
+
+| # | Criterion | Passes if |
+|---|---|---|
+| T1 | The read path helps | at least 10 points above round 7's run on the same sixty questions, as scored |
+| T2 | It reaches one-shot dense retrieval | not below `raw-dense` on the same questions, as scored |
+
+Reported without a threshold: the distance left to `dense-wide-reason`;
+the figures with abstentions read fairly; by question type; prompt tokens.
+
+Expected beforehand. T1 should pass if the model uses the wide read at
+all; the risk is that it keeps calling `memory_search` with ten results as
+before, since nothing forces it. We expect to stay below
+`dense-wide-reason`: keyword retrieval put the answer's turn in context
+for 91% of questions in the harness against 99% by embedding, and an agent
+decides for itself when it has read enough.
+
+### Round 10 results
+
+One run, nothing changed afterwards (`sessions-round10-read-path`).
+
+| | All 60 | knowledge-update (27) | multi-session (27) | abstention (6) | Prompt tokens |
+|---|---|---|---|---|---|
+| Round 7 (the build before) | 61.7% | 81.5% | 55.6% | 0.0% | 6,395 |
+| Round 10 (the wide read) | 71.7% | 92.6% | 66.7% | 0.0% | 12,411 |
+| `raw-dense` | 68.3% | 85.2% | 44.4% | 100.0% | 4,413 |
+| `dense-wide-reason` | 91.7% | 96.3% | 85.2% | 100.0% | 8,640 |
+
+**T1 and T2 pass**, the first at its threshold exactly: 10.0 points above
+round 7 on the same questions (95% interval -1.7 to +21.7), and 3.3 above
+`raw-dense`. The interval includes no difference; three more questions
+right in each of the two answerable types is what the ten points are.
+
+The model took to the tool without being made to: it called `memory_read`
+for 54 of the 60 questions (60 calls, beside 46 searches), where in round
+7 it searched. A question now costs twice the prompt tokens.
+
+With abstentions read fairly (all six answers say they do not know, in
+both rounds) the agent is at 81.7%, against 71.7% in round 7 and 91.7% for
+`dense-wide-reason`: half the distance closed, ten points left. What is
+left is most likely retrieval by keyword where the harness retrieves by
+embedding, and an agent that stops reading when it thinks it has enough;
+this run does not separate the two.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were

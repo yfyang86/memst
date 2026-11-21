@@ -30,6 +30,7 @@ from benchmarks.harness.data import load_longmemeval
 from benchmarks.harness.llm import ChatClient
 
 from . import mcp_agent
+from .scenarios import ABSTAIN
 
 TOOLS = "memory_search,memory_read,memory_get"
 PIPELINES = ["raw-bm25", "raw-dense", "dense-wide-reason", "rerank-reason"]
@@ -111,6 +112,16 @@ def interval(values, samples=2000, seed=0):
     return sum(values) / n, means[int(0.025 * samples)], means[int(0.975 * samples) - 1]
 
 
+def fair(row) -> float:
+    """The harness knows an abstention by a list of phrases its own reader
+    is prompted to use; an agent that says "I don't know" is marked wrong.
+    This counts an abstention question as right when the answer says, in
+    any of the usual ways, that it does not know."""
+    if row["category"] == "abstention":
+        return float(bool(re.search(ABSTAIN, row["prediction"].lower())))
+    return row["judged_correct"]
+
+
 def summarise(rows, reference: Path) -> dict:
     ids = {r["question_id"] for r in rows}
     others = {name: {} for name in PIPELINES}
@@ -141,6 +152,7 @@ def summarise(rows, reference: Path) -> dict:
     l1 = "raw-dense" in paired and paired["raw-dense"]["difference"] >= 0
     return {
         "table": table, "agent_minus": paired,
+        "agent_reading_abstentions_fairly": round(100 * sum(fair(r) for r in rows) / max(1, len(rows)), 1),
         "criterion": {"name": "L1", "passed": bool(l1), "detail": f"agent minus raw-dense: {paired.get('raw-dense', {}).get('difference', 'n/a')} points"},
         "agent": {"tool_calls_mean": round(sum(len(r["tools"]) for r in rows) / max(1, len(rows)), 2), "model_calls_mean": round(sum(r["model_calls"] for r in rows) / max(1, len(rows)), 2), "seconds_mean": round(sum(r["seconds"] for r in rows) / max(1, len(rows)), 1), "errors": sum(1 for r in rows if r.get("error")), "no_answer": sum(1 for r in rows if not r["prediction"])},
     }
@@ -161,6 +173,7 @@ def render(summary, settings) -> str:
     lines += ["", "The agent against each pipeline on the same questions, in points (95% interval):", ""]
     lines += [f"- against `{name}`: {d['difference']:+} ({d['low']:+} to {d['high']:+})" for name, d in summary["agent_minus"].items()]
     c, a = summary["criterion"], summary["agent"]
+    lines += ["", f"Reading abstentions fairly, the agent is at {summary['agent_reading_abstentions_fairly']}%."]
     lines += ["", f"L1: {'**pass**' if c['passed'] else '**fail**'} ({c['detail']}).", "", f"The agent, per question: {a['model_calls_mean']} model calls, {a['tool_calls_mean']} tool calls, {a['seconds_mean']} s. {a['errors']} question(s) had an error; {a['no_answer']} got no answer.", ""]
     return "\n".join(lines)
 
@@ -207,6 +220,10 @@ def main():
             "n": len(shared), "this": round(100 * sum(r["judged_correct"] for r in shared) / len(shared), 1),
             "other": round(100 * sum(other[r["question_id"]]["judged_correct"] for r in shared) / len(shared), 1),
             "difference": round(mean, 1), "low": round(low, 1), "high": round(high, 1),
+            "this_fair": round(100 * sum(fair(r) for r in shared) / len(shared), 1),
+            "other_fair": round(100 * sum(fair(other[r["question_id"]]) for r in shared) / len(shared), 1),
+            "this_prompt_tokens": round(sum(r.get("prompt_tokens", 0) for r in shared) / len(shared)),
+            "by_category": {c: [sum(r["judged_correct"] for r in shared if r["category"] == c), sum(other[r["question_id"]]["judged_correct"] for r in shared if r["category"] == c), sum(1 for r in shared if r["category"] == c)] for c in sorted({r["category"] for r in shared})},
             "other_prompt_tokens": round(sum(other[r["question_id"]].get("prompt_tokens", 0) for r in shared) / len(shared)),
         }
     if args.with_pass:
@@ -218,7 +235,7 @@ def main():
         report += f"\nBefore the question, the offline pass read the history in {p['passes_mean']} passes on average ({p['seconds_mean']} s) and left {p['notes_mean']} notes and {p['pages_mean']} pages.\n"
     if "against_compared_run" in summary:
         c = summary["against_compared_run"]
-        report += f"\nAgainst the compared run on the same {c['n']} questions: {c['this']}% here, {c['other']}% there; {c['difference']:+} points ({c['low']:+} to {c['high']:+}).\n"
+        report += f"\nAgainst the compared run on the same {c['n']} questions: {c['this']}% here, {c['other']}% there; {c['difference']:+} points ({c['low']:+} to {c['high']:+}). Reading abstentions fairly: {c['this_fair']}% here, {c['other_fair']}% there. By type (correct here, there, of): {c['by_category']}. Prompt tokens per question: {c['this_prompt_tokens']:,} here, {c['other_prompt_tokens']:,} there.\n"
     (out / "REPORT.md").write_text(report)
     print(report)
 
