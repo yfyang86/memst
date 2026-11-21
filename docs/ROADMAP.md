@@ -555,8 +555,23 @@ note, the agent answered from the stale note in 30 of 30 runs without the
 embedder and from the statement in 27 of 30 with it, correcting the note
 each time. The three misses are one pair whose nearness is 0.43.
 
-Next: have a plain client's sessions recorded (round 6); then **24**, the
-release and a client we did not write.
+**24. A plain client's sessions, and the lock** *(done; the main result
+is negative)*.
+
+- The lock on a memory directory can be taken again by the thread that
+  holds it; new code had twice waited on itself.
+- `transcript_append` needs only the text, and the server's instructions
+  ask a client to record each message. **Round 13** (criterion first):
+  round 6 for the plain client again. The model recorded nothing: none of
+  eighty facts was in a transcript. 28 of 80 were answered, from notes,
+  against 4 in round 6; the criterion (80% in each kind) fails. Asking a
+  model to record is not a way to have a session recorded.
+- `memst mcp record` records one message from outside the conversation,
+  for a client that can run a command on each message. Tested as a
+  command; not tried with such a client.
+
+Next: **25**, the release and a client we did not write, which is also
+where recording through a client's hooks would be tried.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost

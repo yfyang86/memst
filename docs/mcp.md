@@ -287,6 +287,28 @@ LongMemEval-S questions; with this read, 71.7% (`benchmarks/sessions`,
 round 10). Matching is still by keyword, and the harness's best read path,
 which retrieves by embedding, is ten points further on.
 
+## Recording what is said
+
+The transcripts are what let memory hold things nobody decided to keep:
+with them, an agent answered 96 of 96 questions about facts mentioned in
+passing over long histories; without them, a client's memory holds only
+the notes its model chose to write, and it answered 4 of 80
+(`benchmarks/sessions`, round 6).
+
+The server does not see the conversation, so something has to give it
+each message.
+
+- **The Pi extension** does, on every message.
+- **A client with hooks** can run, on each message from the user:
+  ```bash
+  memst --store ~/.memst mcp --owner alice record --session "$SESSION_ID" "$MESSAGE"
+  ```
+  (`--role assistant` for a reply; the text is read from standard input
+  when it is not given.) This has not been tried with such a client.
+- **The model can be asked to**: `transcript_append` needs only the text,
+  and the server's instructions ask for it on every message. Do not rely
+  on it. In round 13 a model asked this way recorded none of eighty facts.
+
 ## Search by meaning
 
 By default search is by keyword. With an embedder it is also by meaning:

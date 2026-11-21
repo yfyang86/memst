@@ -1086,6 +1086,39 @@ the result to track that: where the message was recorded the fact should
 be found (Pi's 96 of 96 in round 6 came from exactly such transcripts).
 Each message will cost one more model call.
 
+### Round 13 results
+
+One run, nothing changed afterwards
+(`sessions-round13-plain-mcp-recording`).
+
+| Kind of fact | Round 6 | Round 13 | Latest value in a note | In a transcript |
+|---|---|---|---|---|
+| stable | 0/32 | 6/32 | 6/32 | 0/32 |
+| changed once | 1/24 | 7/24 | 8/24 | 0/24 |
+| changed twice | 3/24 | 15/24 | 15/24 | 0/24 |
+| never told | 16/16 | 16/16 | | |
+
+**H2 fails.** We expected the model to record most messages and not all.
+It recorded none: at the end of the eight histories not one of the eighty
+facts was in a transcript. Asked by the server to call a tool on every
+message before doing what the user wanted, the model did what the user
+wanted. (It can call the tool: it did so fifteen times in the final
+sessions, where the message was a question about memory.)
+
+The answers that improved, 28 of 80 against 4, came from notes: the model
+wrote more of them than in round 6, which the new instructions may have
+prompted and which this run does not let us say. Facts that changed twice
+were noted most, as in round 6: a change reads as worth writing down and a
+passing mention does not.
+
+So asking is not a way to have a session recorded. What records Pi's
+sessions is code that runs on every message whatever the model does, and a
+client needs the same. For clients that can run a command on each message
+(Claude Code's hooks, for one) there is now
+`memst mcp --owner <name> record --session <id> [--role user] "<text>"`,
+which does what the Pi extension does. It is tested as a command and has
+not been tried with such a client.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
