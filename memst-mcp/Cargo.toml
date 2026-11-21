@@ -15,6 +15,7 @@ memst-repo = { path = "../memst-repo" }
 
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
+bincode = "1.3"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = "0.4"
 tokio = { version = "1", features = ["rt", "macros"] }

@@ -122,6 +122,13 @@ enum Command {
         #[arg(long, global = true)]
         owner: Option<String>,
 
+        /// Search by meaning as well as by word, with this embedder: none,
+        /// local (BGE-M3 on this machine, about 2.2 GB, downloaded on first
+        /// use), http, or auto. Vectors are kept under the owner's memory
+        /// and removed when their text is forgotten.
+        #[arg(long = "embedder", global = true, env = "MEMST_EMBEDDER", default_value = "none")]
+        memory_embedder: String,
+
         #[command(subcommand)]
         command: McpCommand,
     },
@@ -186,6 +193,10 @@ enum McpCommand {
         /// A revision id (or its first characters) from `history`
         revision: String,
     },
+    /// Make the vectors that search by meaning needs, for every note and
+    /// transcript entry that has none. Search makes a few as it goes; this
+    /// makes them all. Needs `--embedder`.
+    Embed,
     /// Merge another copy of this owner's memory (from another machine or
     /// another agent) into this one. Changes made in one copy are kept;
     /// notes changed differently in both are both kept, for you to decide;
@@ -570,6 +581,46 @@ fn select_embedder(kind: &str) -> Result<Option<Box<dyn memst_core::embed::Embed
         "http" | "auto" => Ok(Some(Box::new(HttpEmbedder::from_config()?))),
         "local" => anyhow::bail!("this memst was built without the 'local-embeddings' feature"),
         other => anyhow::bail!("unknown embedder '{other}' (expected auto, local, http or none)"),
+    }
+}
+
+/// An embedder that loads its model the first time it is asked for a
+/// vector. Loading BGE-M3 takes seconds and two gigabytes of memory, which
+/// a server that is never asked a question should not pay.
+struct LazyEmbedder {
+    kind: String,
+    loaded: std::sync::OnceLock<std::result::Result<Box<dyn memst_core::embed::Embedder>, String>>,
+}
+
+impl LazyEmbedder {
+    fn new(kind: &str) -> Self {
+        Self { kind: kind.to_string(), loaded: std::sync::OnceLock::new() }
+    }
+
+    fn get(&self) -> memst_core::error::Result<&dyn memst_core::embed::Embedder> {
+        let loaded = self.loaded.get_or_init(|| match select_embedder(&self.kind) {
+            Ok(Some(embedder)) => Ok(embedder),
+            Ok(None) => Err("no embedder".to_string()),
+            Err(error) => Err(error.to_string()),
+        });
+        match loaded {
+            Ok(embedder) => Ok(embedder.as_ref()),
+            Err(reason) => Err(memst_core::error::Error::InvalidOperation(format!("the embedder could not be loaded: {reason}"))),
+        }
+    }
+}
+
+impl memst_core::embed::Embedder for LazyEmbedder {
+    fn id(&self) -> String {
+        // Known without loading the model, so that the vectors' directory is too.
+        match self.kind.as_str() {
+            "local" => "local:bge-m3".to_string(),
+            other => self.get().map(|e| e.id()).unwrap_or_else(|_| other.to_string()),
+        }
+    }
+
+    fn embed(&self, texts: &[String]) -> memst_core::error::Result<Vec<Vec<f32>>> {
+        self.get()?.embed(texts)
     }
 }
 
@@ -1114,7 +1165,7 @@ fn main() -> Result<()> {
             println!("  Long-term: {}", long_term);
         }
 
-        Command::Mcp { owner, command } => {
+        Command::Mcp { owner, memory_embedder, command } => {
             use memst_mcp::service::MemoryService;
             use memst_mcp::{McpAdapter, McpServer, Scope, Screening, WritePolicy};
             use memst_repo::versioned_dir::{Change, Past};
@@ -1124,7 +1175,13 @@ fn main() -> Result<()> {
             };
             let open = |read_only: bool, policy: WritePolicy| -> Result<MemoryService> {
                 let scope = Scope::new(owner, read_only).map_err(anyhow::Error::msg)?;
-                MemoryService::open(&args.store, scope, policy).map_err(|e| anyhow::anyhow!("{e}"))
+                let service = MemoryService::open(&args.store, scope, policy).map_err(|e| anyhow::anyhow!("{e}"))?;
+                Ok(match memory_embedder.as_str() {
+                    "none" => service,
+                    // The model is loaded when it is first needed, not when
+                    // the server starts.
+                    kind => service.with_embedder(std::sync::Arc::new(LazyEmbedder::new(kind))),
+                })
             };
             let refused = |e: memst_mcp::Refusal| anyhow::anyhow!("{e}");
             // The owner's own commands: full access, default limits.
@@ -1244,6 +1301,13 @@ fn main() -> Result<()> {
                     if skipped > 0 {
                         println!("{skipped} note(s) that were forgotten since then were not brought back.");
                     }
+                }
+                McpCommand::Embed => {
+                    if memory_embedder == "none" {
+                        anyhow::bail!("choose an embedder: --embedder local (or http, or auto)");
+                    }
+                    let (have, lack) = mine()?.embed_all().map_err(refused)?;
+                    println!("{have} notes and transcript entries have a vector; {lack} do not.");
                 }
                 McpCommand::Merge { other_store, other_owner } => {
                     let other = other_store.join("memory").join(other_owner.as_deref().unwrap_or(owner));

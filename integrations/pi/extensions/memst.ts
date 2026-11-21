@@ -15,6 +15,8 @@
  *   MEMST_STORE      the store directory                (default: ~/.memst)
  *   MEMST_OWNER      whose memory this is               (default: your user name)
  *   MEMST_READ_ONLY  set to 1 to read memory and never change it
+ *   MEMST_EMBEDDER   none (default), local, http or auto: search by meaning as
+ *                    well as by word. local is BGE-M3 on this machine (2.2 GB)
  *   MEMST_SCREENING  quarantine (default), reject or off: what happens to a
  *                    note that reads like an instruction to a model
  *   MEMST_RECORD     set to 0 to keep no transcript
@@ -34,6 +36,7 @@ export interface Settings {
 	owner: string;
 	readOnly: boolean;
 	screening: string;
+	embedder: string;
 	record: boolean;
 }
 
@@ -52,6 +55,7 @@ export function settingsFromEnv(env: NodeJS.ProcessEnv = process.env): Settings 
 		owner: plain(env.MEMST_OWNER || user),
 		readOnly: env.MEMST_READ_ONLY === "1",
 		screening: env.MEMST_SCREENING || "quarantine",
+		embedder: env.MEMST_EMBEDDER || "none",
 		record: env.MEMST_RECORD !== "0",
 	};
 }
@@ -80,7 +84,7 @@ export class MemstClient {
 
 	private start(): Promise<void> {
 		if (this.ready) return this.ready;
-		const args = ["--store", this.settings.store, "mcp", "--owner", this.settings.owner, "serve", "--screening", this.settings.screening];
+		const args = ["--store", this.settings.store, "mcp", "--owner", this.settings.owner, "--embedder", this.settings.embedder, "serve", "--screening", this.settings.screening];
 		if (this.settings.readOnly) args.push("--read-only");
 		const child = spawn(this.settings.bin, args, { stdio: ["pipe", "pipe", "pipe"] });
 		this.child = child;
