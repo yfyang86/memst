@@ -243,9 +243,11 @@ impl MemoryService {
         if self.scope.read_only {
             return Err(Refusal::ReadOnly);
         }
-        let _lock = self.dir()?;
+        // The directory is opened once, here: opening it again from inside
+        // would wait on its own lock.
+        let dir = self.dir()?;
         let (mut have, mut lack) = (0, 0);
-        let notes = self.readable()?;
+        let notes: Vec<Note> = self.notes_in(&dir)?.into_iter().filter(|n| n.status == Status::Active).collect();
         let bodies: Vec<&str> = notes.iter().map(|n| n.body.as_str()).collect();
         let (made, left, _) = vectors.for_texts(crate::vectors::NOTES, &bodies, usize::MAX, true);
         have += made.iter().flatten().count();
@@ -263,7 +265,7 @@ impl MemoryService {
 
     /// Drop the vectors of anything that is no longer in memory. Called
     /// after every forgetting, so that a vector does not outlive its text.
-    fn prune_vectors(&self) -> Result<(), Refusal> {
+    fn prune_vectors(&self, dir: &VersionedDir) -> Result<(), Refusal> {
         let Some(vectors) = &self.vectors else {
             // Vectors made under another run with an embedder are still on
             // disk; without the model's name we cannot find its directory,
@@ -271,7 +273,7 @@ impl MemoryService {
             let _ = fs::remove_dir_all(self.root.join("vectors"));
             return Ok(());
         };
-        let notes = self.all()?;
+        let notes = self.notes_in(dir)?;
         vectors.prune(crate::vectors::NOTES, &notes.iter().map(|n| n.body.as_str()).collect::<Vec<_>>());
         let sessions = self.sessions()?;
         for group in vectors.groups() {
@@ -622,7 +624,7 @@ impl MemoryService {
             self.purge_pages_citing(&dir, &Source::Note { id }.key())?;
             let _ = fs::remove_file(self.pending_path());
             self.write_index(&dir)?;
-            self.prune_vectors()
+            self.prune_vectors(&dir)
         })();
         self.audit("memory_forget", outcome.clone().map(|_| Some(id)), None);
         outcome
@@ -693,7 +695,7 @@ impl MemoryService {
                 }
             }
             self.write_index(&dir)?;
-            self.prune_vectors()?;
+            self.prune_vectors(&dir)?;
             Ok(removed)
         })();
         self.audit(
@@ -868,7 +870,7 @@ impl MemoryService {
             }
             let _ = fs::remove_file(self.pending_path());
             self.write_index(&dir)?;
-            self.prune_vectors()?;
+            self.prune_vectors(&dir)?;
             Ok(removed)
         })();
         self.audit("forget_entries", outcome.clone().map(|_| None), outcome.as_ref().ok().map(|n| format!("{n} transcript entries removed")));
@@ -970,7 +972,7 @@ impl MemoryService {
                 self.purge_pages_citing(&dir, &format!("session:{session}#"))?;
                 let _ = fs::remove_file(self.pending_path());
                 self.write_index(&dir)?;
-                self.prune_vectors()
+                self.prune_vectors(&dir)
             })
         } else {
             Err(Refusal::NotFound)
@@ -1349,7 +1351,7 @@ impl MemoryService {
             self.merge_transcripts(&dir, other, &mut merged)?;
             let _ = fs::remove_file(self.pending_path());
             self.write_index(&dir)?;
-            self.prune_vectors()?;
+            self.prune_vectors(&dir)?;
             Ok(merged)
         })();
         self.audit(
