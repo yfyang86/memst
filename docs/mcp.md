@@ -287,6 +287,31 @@ LongMemEval-S questions; with this read, 71.7% (`benchmarks/sessions`,
 round 10). Matching is still by keyword, and the harness's best read path,
 which retrieves by embedding, is ten points further on.
 
+## Search by meaning
+
+By default search is by keyword. With an embedder it is also by meaning:
+
+```bash
+memst --store ~/.memst mcp --owner alice --embedder local serve   # or MEMST_EMBEDDER=local
+memst --store ~/.memst mcp --owner alice --embedder local embed   # make every missing vector now
+```
+
+`local` is the BGE-M3 model on this machine (2.2 GB, downloaded on first
+use); `http` and `auto` use an embedding endpoint if one is configured.
+Each candidate gets a place in the keyword order and a place in the order
+of nearness to the question, and the two are joined, so that something
+found both ways comes first and something that shares no word with the
+question can still be found. A text counts as near at a cosine of 0.45 or
+more.
+
+The vectors are a cache under `memory/<owner>/vectors/`. They are made as
+they are needed (a search makes at most 64; `embed` makes them all, which
+for a long history takes minutes on a CPU) and can be deleted at any time.
+A vector can be turned back into an approximation of its text, so it is
+removed when its text is forgotten, at once. Whether search by meaning
+improves answers has not yet been measured (`benchmarks/sessions`, round
+11).
+
 ## What the offline pass is shown
 
 A pass reads the transcript since its last run, up to a budget, beside the

@@ -531,11 +531,18 @@ points (-1.7 to +21.7), and above one-shot dense retrieval. With
 abstentions read fairly, 81.7% against 91.7% for the harness's best read
 path. Retrieval is still by keyword. A question costs twice the tokens.
 
-Next, in the order we would take them: retrieval by embedding in the
-memory tools (the ten points left, and matching by meaning for forgetting
-and stale notes, both need an embedding model at read time); have a plain
-client's sessions recorded (round 6); then **22**, the release and a
-client we did not write.
+**22. Search by meaning in the memory tools** *(built; not yet measured)*.
+With an embedder, memory search joins the keyword order with nearness of
+meaning. `--embedder local` is BGE-M3 on the machine; vectors are kept per
+owner, made as needed or all at once with `memst mcp embed`, and removed
+when their text is forgotten. Tested with a stand-in model and run once
+with the real one (five and a half minutes to embed a 500-turn history on
+four cores). Round 11, whether it helps, has its criterion written and
+its full run left for a faster machine: see `task/handover.md`.
+
+Next: matching by meaning for forgetting and stale notes, on the same
+embedder; have a plain client's sessions recorded (round 6); then **23**,
+the release and a client we did not write.
 
 Open after sprint 11: three-way merge; deletion of single messages with
 cascade to derived facts, and from history, for the session store; the cost
