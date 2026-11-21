@@ -94,8 +94,9 @@ In order. Each is one command; all need the model key in the environment
   cargo test --workspace
   (cd integrations/pi && npm ci && MEMST_BIN=$PWD/../../target/release/memst npm test)
   ```
-  Expect 521 Rust tests and 6 Pi tests. If `cargo test` fails in
-  `memst-mcp`, stop and fix that first.
+  There were 519 Rust tests before this sprint and it adds two, so about
+  521, and 6 Pi tests; the whole set was not run here after the change.
+  If anything fails, stop and fix that first.
 
 - [ ] **1. Round 11 in full: does search by meaning help?** The criterion
   and what we expected are already in `benchmarks/sessions/README.md`,
