@@ -5,9 +5,9 @@ Written 2026-11-20 and updated on 2026-11-21 after sprint 22. Sprints 1 to
 (commit `31f7914`).
 
 Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
-`CodeReview/CR-20261114.md` (findings 1 to 108, each marked fixed or open),
+`CodeReview/CR-20261114.md` (findings 1 to 110, each marked fixed or open),
 `benchmarks/sessions/README.md` (the memory-in-use evaluation, rounds 1 to
-11), `docs/mcp.md` (the agent memory and its tools),
+12), `docs/mcp.md` (the agent memory and its tools),
 `docs/deletion-design.md`.
 
 ## Sprints
@@ -38,7 +38,8 @@ Where to read more: `docs/ROADMAP.md` (what each sprint did, in detail),
 | 20 | Pages and the offline pass at size | Done: the pass is bounded at 5,000 notes and corrects 8 of 10 after a fix; pages and notes not shown to help or hurt |
 | 21 | The read path in the memory tools | Done: 61.7% to 71.7% on sixty LongMemEval-S questions; ten points still to the harness's best |
 | 22 | Search by meaning in the memory tools | Done: 71.7% to 83.3% on sixty LongMemEval-S questions (+11.7 points, interval +1.7 to +21.7) |
-| 23 | Release and a client we did not write | Planned |
+| 23 | Matching by meaning for stale notes and forgetting | Done: 0 of 30 without the embedder, 27 of 30 with it, on notes changed since in other words |
+| 24 | Release and a client we did not write | Planned |
 
 Candidates ahead of 21, by size of the known gap: give `memory_read` the
 harness's read path (finding 98); record a plain client's sessions
@@ -80,8 +81,8 @@ model: a 551-turn history embedded in 332 s on four CPU cores, a read in
   18 of 27 to 24 of 27. With abstentions read fairly, 93.3%. The agent is
   8.3 points behind `dense-wide-reason` as scored, with an interval that
   includes no difference. One run; not replicated.
-- Matching by meaning for forgetting and for stale notes (finding 103) is
-  not built. The embedder it waited on is now there.
+- Matching by meaning for stale notes and for forgetting was built on the
+  embedder in sprint 23 (round 12: 27 of 30 against 0 of 30).
 
 ## Tasks for the Mac
 
@@ -231,9 +232,8 @@ From the code review log, the ones most likely to matter next:
 - **101.** Deleting a message removes memory items that say they were
   made from it; ones that do not say, and the operations log, are not
   reached.
-- **103.** Forgetting and the stale-note match are by shared words. The
-  embedder they waited on exists from sprint 22; the matching is not yet
-  built on it.
+- **110.** The memory directory's lock is not re-entrant, and new code has
+  twice waited on itself. Worth fixing before more is built on it.
 - **102.** The native search index is loaded afresh for every operation,
   so indexing is still linear in its size (12.6 ms a message at 2,000).
   Finding 91, as first written, was wrong; see the log.

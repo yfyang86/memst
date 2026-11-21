@@ -1023,6 +1023,35 @@ either. Not none, because an agent sometimes reads the transcripts anyway.
 With it, most; where it fails we expect the nearness of a particular pair
 to fall under the limit.
 
+### Round 12 results
+
+One run of each, nothing changed afterwards
+(`sessions-round12-paraphrase`).
+
+| The memory server | Answered from the later statement | Corrected the note | Prompt tokens | Seconds |
+|---|---|---|---|---|
+| without the embedder | 0/30 | 0/30 | 6,519 | 5.6 |
+| with BGE-M3 | 27/30 | 27/30 | 9,752 | 9.7 |
+
+**M1 and M2 pass.** Without the embedder the agent answered from the stale
+note every time: we had expected a few right answers from an agent reading
+the transcripts unprompted, and there were none. With it, the later
+statement was shown beside the note, and the agent answered from it and
+corrected the note, in 27 of 30.
+
+The three failures are one fact, three times: the note "Our staging server
+is stg-quokka.internal" and the statement "The pre-production box was
+replaced by one called wombat". Their nearness is 0.43, under the limit
+of 0.52, as expected of a failure. Nothing in the note's words says
+staging and pre-production are the same thing to this model strongly
+enough. Lowering the limit to catch it would be fitting it to this test;
+it is left where the sixteen calibration pairs put it.
+
+A session costs half as much again with the embedder here (the agent
+reads, searches and corrects, where before it answered from the index),
+and four seconds more, most of it loading the model for each session's
+server.
+
 ## Limits
 
 The second runs of both rounds were made on the scenarios the fixes were
