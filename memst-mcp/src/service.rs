@@ -476,6 +476,11 @@ impl MemoryService {
                 }
             }
         }
+        // Everything has some nearness to everything. Below this, a text is
+        // not about the question, and listing it would make every search
+        // return the whole of memory. The figure suits BGE-M3, whose
+        // unrelated texts sit around 0.3 to 0.4.
+        near.retain(|(_, nearness)| *nearness >= NEAR_ENOUGH);
         near.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         let by_word = bm25(query, &candidates.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>());
         let mut word_order: Vec<(usize, f32)> = by_word.iter().copied().enumerate().filter(|(_, score)| *score > 0.0).collect();
@@ -1750,6 +1755,9 @@ fn stem(word: &str) -> String {
 /// BM25 over the candidates. An owner holds at most tens of thousands of
 /// short notes, so ranking them in memory is fast, and nothing has to be
 /// kept in an index that forgetting would then have to reach.
+/// The least cosine similarity at which a text counts as near a question.
+const NEAR_ENOUGH: f32 = 0.45;
+
 /// The BM25 score of each text for `query`, in the order given; zero for a
 /// text that shares no word with it.
 fn bm25(query: &str, texts: &[&str]) -> Vec<f32> {
